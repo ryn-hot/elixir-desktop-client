@@ -1,0 +1,35 @@
+{
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "ElixirClient",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.elixir.client",
+      "icon": [],
+      "resources": []
+    },
+    "allowlist": {
+      "shell": {
+        "all": false,
+        "open": true
+      }
+    },
+    "windows": [
+      {
+        "title": "Elixir",
+        "width": 1200,
+        "height": 800,
+        "resizable": true
+      }
+    ]
+  }
+}
