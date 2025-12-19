@@ -1,35 +1,38 @@
 {
+  "$schema": "../node_modules/@tauri-apps/cli/schema.json",
+  "productName": "ElixirClient",
+  "version": "0.1.0",
+  "identifier": "com.elixir.client",
   "build": {
     "beforeBuildCommand": "npm run build",
     "beforeDevCommand": "npm run dev",
-    "devPath": "http://localhost:5173",
-    "distDir": "../dist"
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "ElixirClient",
-    "version": "0.1.0"
-  },
-  "tauri": {
-    "bundle": {
-      "active": true,
-      "targets": "all",
-      "identifier": "com.elixir.client",
-      "icon": [],
-      "resources": []
-    },
-    "allowlist": {
-      "shell": {
-        "all": false,
-        "open": true
-      }
+  "app": {
+    "security": {
+      "csp": null,
+      "devCsp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      },
+      "capabilities": []
     },
     "windows": [
       {
+        "label": "main",
         "title": "Elixir",
         "width": 1200,
         "height": 800,
         "resizable": true
       }
     ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [],
+    "resources": []
   }
 }

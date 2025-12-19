@@ -117,12 +117,25 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.list li.active {
+  border-color: #3c6eff;
+  box-shadow: 0 0 0 1px rgba(60, 110, 255, 0.2);
 }
 
 .row {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.row.space-between {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .row small {
@@ -133,6 +146,12 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 label {
@@ -209,6 +228,12 @@ button.ghost {
   color: #71829a;
 }
 
+.video-placeholder.overlay-active {
+  position: relative;
+  background: #05080f;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+}
+
 .controls {
   display: flex;
   flex-direction: column;
@@ -235,4 +260,34 @@ button.ghost {
 .actions {
   display: flex;
   gap: 8px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #1e293b;
+  border: 1px solid #2f3a4f;
+  color: #9fb3c8;
+  font-size: 12px;
+  align-self: flex-start;
+}
+.hint {
+  color: #8ea0b6;
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+button.small {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.status-line {
+  color: #e5ecf7;
+  min-height: 22px;
+}
+
+.error {
+  color: #ff9b9b;
 }

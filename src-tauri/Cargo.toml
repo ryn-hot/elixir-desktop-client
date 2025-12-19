@@ -6,12 +6,16 @@ authors = ["Elixir"]
 edition = "2021"
 
 [build-dependencies]
-tauri-build = { version = "1", features = [] }
+tauri-build = { version = "2.5.3", features = [] }
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "1", features = ["shell-open"] }
+tauri = { version = "2.9.5", features = ["wry", "protocol-asset"] }
+mdns-sd = "0.11"
+which = "4"
+vlc-rs = "0.3"
+raw-window-handle = "0.6"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
