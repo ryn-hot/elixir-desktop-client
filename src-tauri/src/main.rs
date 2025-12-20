@@ -10,6 +10,8 @@ use std::{
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::Serialize;
+use std::ffi::CStr;
+use vlc::{self, sys, MediaPlayerAudioEx};
 use which::which;
 
 #[derive(Serialize)]
@@ -41,6 +43,78 @@ impl LibVlcPlayer {
             instance,
             player: Mutex::new(player),
         })
+    }
+
+    fn is_playing(&self) -> Result<bool, String> {
+        let player = self.player.lock().map_err(|e| e.to_string())?;
+        Ok(player.is_playing())
+    }
+
+    fn set_pause(&self, paused: bool) -> Result<(), String> {
+        let player = self.player.lock().map_err(|e| e.to_string())?;
+        player.set_pause(paused);
+        Ok(())
+    }
+
+    fn audio_tracks(&self) -> Result<Vec<TrackOption>, String> {
+        let player = self.player.lock().map_err(|e| e.to_string())?;
+        let desc = player.get_audio_track_description().unwrap_or_default();
+        Ok(desc
+            .into_iter()
+            .map(|t| TrackOption {
+                id: t.id,
+                name: t.name.unwrap_or_else(|| "Unknown".to_string()),
+            })
+            .collect())
+    }
+
+    fn current_audio_track(&self) -> Result<i32, String> {
+        let player = self.player.lock().map_err(|e| e.to_string())?;
+        Ok(unsafe { sys::libvlc_audio_get_track(player.raw()) })
+    }
+
+    fn set_audio_track(&self, id: i32) -> Result<(), String> {
+        let player = self.player.lock().map_err(|e| e.to_string())?;
+        unsafe {
+            sys::libvlc_audio_set_track(player.raw(), id);
+        }
+        Ok(())
+    }
+
+    fn subtitle_tracks(&self) -> Result<Vec<TrackOption>, String> {
+        let player = self.player.lock().map_err(|e| e.to_string())?;
+        let p0 = unsafe { sys::libvlc_video_get_spu_description(player.raw()) };
+        if p0.is_null() {
+            return Ok(Vec::new());
+        }
+        let mut results = Vec::new();
+        let mut p = p0;
+        unsafe {
+            while !(*p).p_next.is_null() {
+                let name = if (*p).psz_name.is_null() {
+                    "Unknown".to_string()
+                } else {
+                    CStr::from_ptr((*p).psz_name).to_string_lossy().into_owned()
+                };
+                results.push(TrackOption { id: (*p).i_id, name });
+                p = (*p).p_next;
+            }
+            sys::libvlc_track_description_list_release(p0);
+        }
+        Ok(results)
+    }
+
+    fn current_subtitle_track(&self) -> Result<i32, String> {
+        let player = self.player.lock().map_err(|e| e.to_string())?;
+        Ok(unsafe { sys::libvlc_video_get_spu(player.raw()) })
+    }
+
+    fn set_subtitle_track(&self, id: i32) -> Result<(), String> {
+        let player = self.player.lock().map_err(|e| e.to_string())?;
+        unsafe {
+            sys::libvlc_video_set_spu(player.raw(), id);
+        }
+        Ok(())
     }
 
     fn set_drawable(&self, window: &tauri::Window) -> Result<(), String> {
@@ -237,6 +311,58 @@ fn vlc_embed_ping(window: tauri::Window, state: tauri::State<ManagedLibVlc>) -> 
     Ok(false)
 }
 
+#[derive(Serialize)]
+struct TrackOption {
+    id: i32,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct TrackInfo {
+    audio: Vec<TrackOption>,
+    current_audio: i32,
+    subtitles: Vec<TrackOption>,
+    current_subtitle: i32,
+}
+
+#[tauri::command]
+fn vlc_embed_toggle_pause(state: tauri::State<ManagedLibVlc>) -> Result<bool, String> {
+    let guard = state.ensure()?;
+    let player = guard.as_ref().ok_or_else(|| "libVLC not available".to_string())?;
+    let playing = player.is_playing()?;
+    player.set_pause(playing)?;
+    Ok(!playing)
+}
+
+#[tauri::command]
+fn vlc_embed_tracks(state: tauri::State<ManagedLibVlc>) -> Result<TrackInfo, String> {
+    let guard = state.ensure()?;
+    let player = guard.as_ref().ok_or_else(|| "libVLC not available".to_string())?;
+    Ok(TrackInfo {
+        audio: player.audio_tracks()?,
+        current_audio: player.current_audio_track()?,
+        subtitles: player.subtitle_tracks()?,
+        current_subtitle: player.current_subtitle_track()?,
+    })
+}
+
+#[tauri::command]
+fn vlc_embed_set_audio_track(state: tauri::State<ManagedLibVlc>, track_id: i32) -> Result<(), String> {
+    let guard = state.ensure()?;
+    let player = guard.as_ref().ok_or_else(|| "libVLC not available".to_string())?;
+    player.set_audio_track(track_id)
+}
+
+#[tauri::command]
+fn vlc_embed_set_subtitle_track(
+    state: tauri::State<ManagedLibVlc>,
+    track_id: i32,
+) -> Result<(), String> {
+    let guard = state.ensure()?;
+    let player = guard.as_ref().ok_or_else(|| "libVLC not available".to_string())?;
+    player.set_subtitle_track(track_id)
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -254,7 +380,11 @@ fn main() {
             vlc_embed_available,
             vlc_embed_play,
             vlc_embed_stop,
-            vlc_embed_ping
+            vlc_embed_ping,
+            vlc_embed_toggle_pause,
+            vlc_embed_tracks,
+            vlc_embed_set_audio_track,
+            vlc_embed_set_subtitle_track
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

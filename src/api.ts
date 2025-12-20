@@ -316,6 +316,31 @@ export async function vlcEmbedPing(): Promise<boolean> {
   }
 }
 
+export type TrackOption = { id: number; name: string }
+
+export type TrackInfo = {
+  audio: TrackOption[]
+  current_audio: number
+  subtitles: TrackOption[]
+  current_subtitle: number
+}
+
+export async function vlcEmbedTogglePause(): Promise<boolean> {
+  return invoke<boolean>('vlc_embed_toggle_pause')
+}
+
+export async function vlcEmbedTracks(): Promise<TrackInfo> {
+  return invoke<TrackInfo>('vlc_embed_tracks')
+}
+
+export async function vlcEmbedSetAudioTrack(trackId: number): Promise<void> {
+  await invoke('vlc_embed_set_audio_track', { trackId })
+}
+
+export async function vlcEmbedSetSubtitleTrack(trackId: number): Promise<void> {
+  await invoke('vlc_embed_set_subtitle_track', { trackId })
+}
+
 export async function seekSession(
   baseUrl: string,
   token: string,

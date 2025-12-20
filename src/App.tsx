@@ -155,6 +155,11 @@ export default function App() {
   const [vlcEmbedReady, setVlcEmbedReady] = useState(false)
   const [vlcEmbedEnabled, setVlcEmbedEnabled] = useState(false)
   const [vlcEmbedOverlay, setVlcEmbedOverlay] = useState(false)
+  const [vlcEmbedPlaying, setVlcEmbedPlaying] = useState(false)
+  const [vlcAudioTracks, setVlcAudioTracks] = useState<{ id: number; name: string }[]>([])
+  const [vlcSubtitleTracks, setVlcSubtitleTracks] = useState<{ id: number; name: string }[]>([])
+  const [vlcCurrentAudio, setVlcCurrentAudio] = useState<number | null>(null)
+  const [vlcCurrentSubtitle, setVlcCurrentSubtitle] = useState<number | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<Hls | null>(null)
@@ -484,7 +489,7 @@ export default function App() {
         hlsRef.current = null
       }
     }
-  }, [playbackUrl, vlcEnabled])
+  }, [playbackUrl, vlcEnabled, vlcEmbedEnabled])
 
   useEffect(() => {
     const key = normalizeEndpoint(selectedServer?.baseUrl ?? manualBase)
@@ -610,6 +615,10 @@ export default function App() {
   }
 
   const handlePlay = async (preferredFileId?: string | null) => {
+    if (!vlcEnabled && !vlcEmbedEnabled) {
+      setStatus('Enable VLC (external) or embed libVLC to start playback.')
+      return
+    }
     if (!selectedServer || !token || !selectedItem) {
       setStatus('Select server, login, and choose an item first.')
       return
@@ -635,6 +644,17 @@ export default function App() {
         setVlcStatus('Embedding libVLC...')
         await vlcEmbedPlay(authedUrl)
         setVlcStatus('libVLC embedded')
+        setVlcEmbedPlaying(true)
+        // Load tracks after playback starts.
+        try {
+          const tracks = await vlcEmbedTracks()
+          setVlcAudioTracks(tracks.audio)
+          setVlcSubtitleTracks(tracks.subtitles)
+          setVlcCurrentAudio(tracks.current_audio)
+          setVlcCurrentSubtitle(tracks.current_subtitle)
+        } catch (err) {
+          setVlcStatus(`libVLC tracks unavailable: ${String(err)}`)
+        }
       } else if (vlcEnabled && vlcReady) {
         setVlcStatus('Launching VLC...')
         await vlcPlay(authedUrl)
@@ -664,6 +684,11 @@ export default function App() {
       if (vlcEmbedEnabled) {
         await vlcEmbedStop()
         setVlcStatus('libVLC stopped')
+        setVlcEmbedPlaying(false)
+        setVlcAudioTracks([])
+        setVlcSubtitleTracks([])
+        setVlcCurrentAudio(null)
+        setVlcCurrentSubtitle(null)
       } else if (vlcEnabled) {
         await vlcStop()
         setVlcStatus('VLC stopped')
@@ -1180,15 +1205,106 @@ export default function App() {
                 )}
               </div>
             ) : (
-              <video
-                controls
-                ref={videoRef}
-                style={{ width: '100%', maxHeight: '320px', background: '#000' }}
-              >
-                {playbackUrl ? 'Loading...' : 'Start playback to preview'}
-              </video>
+              <div className="stack">
+                <div className="hint">
+                  Enable VLC (external) or embed libVLC to play. The in-browser HTML player is
+                  disabled for reliability.
+                </div>
+                {playbackUrl && (
+                  <a href={playbackUrl} target="_blank" rel="noreferrer">
+                    Stream URL
+                  </a>
+                )}
+              </div>
             )}
           </div>
+          {vlcEmbedEnabled && (
+            <div className="controls">
+              <div className="actions">
+                <button
+                  className="ghost"
+                  onClick={async () => {
+                    try {
+                      const playing = await vlcEmbedTogglePause()
+                      setVlcEmbedPlaying(playing)
+                      setStatus(playing ? 'Playing' : 'Paused')
+                    } catch (err) {
+                      setStatus(`Pause failed: ${String(err)}`)
+                    }
+                  }}
+                  disabled={!playbackUrl}
+                >
+                  {vlcEmbedPlaying ? 'Pause' : 'Play'}
+                </button>
+                <button
+                  className="ghost"
+                  onClick={async () => {
+                    try {
+                      const tracks = await vlcEmbedTracks()
+                      setVlcAudioTracks(tracks.audio)
+                      setVlcSubtitleTracks(tracks.subtitles)
+                      setVlcCurrentAudio(tracks.current_audio)
+                      setVlcCurrentSubtitle(tracks.current_subtitle)
+                      setStatus('Tracks refreshed')
+                    } catch (err) {
+                      setStatus(`Track refresh failed: ${String(err)}`)
+                    }
+                  }}
+                  disabled={!playbackUrl}
+                >
+                  Refresh tracks
+                </button>
+              </div>
+              <div className="row space-between">
+                <label className="inline">
+                  Audio track
+                  <select
+                    value={vlcCurrentAudio ?? undefined}
+                    onChange={async (e) => {
+                      const id = Number(e.target.value)
+                      setVlcCurrentAudio(id)
+                      try {
+                        await vlcEmbedSetAudioTrack(id)
+                        setStatus('Audio track set')
+                      } catch (err) {
+                        setStatus(`Audio track failed: ${String(err)}`)
+                      }
+                    }}
+                    disabled={!vlcAudioTracks.length || !playbackUrl}
+                  >
+                    {vlcAudioTracks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="inline">
+                  Subtitles
+                  <select
+                    value={vlcCurrentSubtitle ?? undefined}
+                    onChange={async (e) => {
+                      const id = Number(e.target.value)
+                      setVlcCurrentSubtitle(id)
+                      try {
+                        await vlcEmbedSetSubtitleTrack(id)
+                        setStatus('Subtitle track set')
+                      } catch (err) {
+                        setStatus(`Subtitle track failed: ${String(err)}`)
+                      }
+                    }}
+                    disabled={!vlcSubtitleTracks.length || !playbackUrl}
+                  >
+                    {vlcSubtitleTracks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+          )}
           {playbackUrl && (
             <div className="stack">
               <label>

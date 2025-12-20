@@ -10,8 +10,11 @@ export DYLD_LIBRARY_PATH="${LIBVLC_LIB_DIR}:${DYLD_LIBRARY_PATH}"
 export DYLD_FALLBACK_LIBRARY_PATH="${LIBVLC_LIB_DIR}:${DYLD_FALLBACK_LIBRARY_PATH}"
 export LIBRARY_PATH="${LIBVLC_LIB_DIR}:${LIBRARY_PATH}"
 export PKG_CONFIG_PATH="${LIBVLC_LIB_DIR}/pkgconfig:${PKG_CONFIG_PATH}"
+# Ensure VLC can find its plugins at runtime (macOS bundle layout).
+export VLC_PLUGIN_PATH="/Applications/VLC.app/Contents/MacOS/plugins"
 # Force an rpath so the app can locate libvlc.dylib at runtime.
 export RUSTFLAGS="${RUSTFLAGS} -C link-arg=-Wl,-rpath,${LIBVLC_LIB_DIR}"
 
 echo "libVLC env configured for macOS (path: ${LIBVLC_LIB_DIR})"
+echo "VLC plugin path set to ${VLC_PLUGIN_PATH}"
 echo "If the app still cannot load libvlc, try: export DYLD_FALLBACK_LIBRARY_PATH=${LIBVLC_LIB_DIR}"
