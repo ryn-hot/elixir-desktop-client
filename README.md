@@ -22,6 +22,18 @@ cmake --build .
 ./elixir-client
 ```
 
+## macOS packaging (macdeployqt)
+
+```
+./scripts/package_macos.sh build
+```
+
+Pass a custom app bundle path if needed:
+
+```
+./scripts/package_macos.sh build /path/to/elixir-client.app
+```
+
 ## mpvqt (Qt 6) install on macOS (Homebrew)
 
 ```
