@@ -3,6 +3,8 @@
 #include <QQmlContext>
 #include <QtQml>
 #include <QQuickStyle>
+#include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QUrl>
 
 #include "backend/ApiClient.h"
@@ -12,6 +14,9 @@
 #include "backend/SessionManager.h"
 
 int main(int argc, char *argv[]) {
+    qputenv("QSG_RHI_BACKEND", "opengl");
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+
     QGuiApplication app(argc, argv);
     QCoreApplication::setOrganizationName("ElixirMedia");
     QCoreApplication::setApplicationName("Elixir");
