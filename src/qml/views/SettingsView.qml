@@ -7,6 +7,8 @@ import Elixir 1.0
 
 Item {
     id: root
+    objectName: "settingsView"
+    property StackView stackView: null
 
     ColumnLayout {
         anchors.fill: parent
@@ -81,8 +83,8 @@ Item {
                     Button {
                         text: "Back"
                         onClicked: {
-                            if (StackView.view) {
-                                StackView.view.pop()
+                            if (root.stackView) {
+                                root.stackView.pop()
                             }
                         }
                         background: Rectangle {

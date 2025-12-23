@@ -7,6 +7,8 @@ import Elixir 1.0
 
 Item {
     id: root
+    objectName: "connectView"
+    property StackView stackView: null
 
     property string statusText: ""
 
@@ -226,8 +228,9 @@ Item {
         function onLoginSucceeded() {
             statusText = "Login successful. Loading library..."
             apiClient.fetchLibrary()
-            if (StackView.view) {
-                StackView.view.push(Qt.resolvedUrl("HomeView.qml"))
+            if (root.stackView) {
+                root.stackView.clear()
+                root.stackView.push(Qt.resolvedUrl("HomeView.qml"), { stackView: root.stackView })
             }
         }
         function onLoginFailed(error) {

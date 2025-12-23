@@ -7,6 +7,8 @@ import Elixir 1.0
 
 Item {
     id: root
+    objectName: "detailsView"
+    property StackView stackView: null
     property string mediaId: ""
     property var details: null
     property string statusText: ""
@@ -114,8 +116,8 @@ Item {
                         Button {
                             text: "Back"
                             onClicked: {
-                                if (StackView.view) {
-                                    StackView.view.pop()
+                                if (root.stackView) {
+                                    root.stackView.pop()
                                 }
                             }
                             background: Rectangle {

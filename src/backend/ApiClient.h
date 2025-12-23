@@ -34,6 +34,7 @@ public:
     Q_INVOKABLE void startPlayback(const QString &mediaItemId, const QString &preferredFileId);
     Q_INVOKABLE void seekPlayback(const QString &sessionId, double seconds);
     Q_INVOKABLE void endSession(const QString &sessionId);
+    Q_INVOKABLE void runScan(bool forceMetadata);
 
 signals:
     void baseUrlChanged();
@@ -45,6 +46,7 @@ signals:
     void libraryReceived(const QVariantList &items);
     void mediaDetailsReceived(const QVariantMap &details);
     void playbackStarted(const QVariantMap &info);
+    void scanCompleted();
     void requestFailed(const QString &endpoint, const QString &error);
 
 private:

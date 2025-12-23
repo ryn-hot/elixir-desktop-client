@@ -141,6 +141,13 @@ void ApiClient::endSession(const QString &sessionId) {
                 [](const QJsonDocument &) {});
 }
 
+void ApiClient::runScan(bool forceMetadata) {
+    const QString path = QString("/api/v1/library/scan?force_metadata=%1")
+                             .arg(forceMetadata ? "true" : "false");
+    sendRequest("POST", path, QJsonObject(),
+                [this](const QJsonDocument &) { emit scanCompleted(); });
+}
+
 QString ApiClient::normalizeBaseUrl(const QString &value) const {
     QString trimmed = value.trimmed();
     if (trimmed.isEmpty()) {

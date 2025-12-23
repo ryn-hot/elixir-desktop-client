@@ -9,6 +9,7 @@ import Elixir 1.0
 Item {
     id: root
     objectName: "playerView"
+    property StackView stackView: null
 
     function formatTime(seconds) {
         var s = Math.floor(seconds || 0)
@@ -82,8 +83,8 @@ Item {
                 onClicked: {
                     playerController.endSession()
                     mpv.commandAsync(["stop"])
-                    if (StackView.view) {
-                        StackView.view.pop()
+                    if (root.stackView) {
+                        root.stackView.pop()
                     }
                 }
             }

@@ -14,6 +14,15 @@ ApplicationWindow {
     title: "Elixir"
     color: Theme.backgroundDark
 
+    function goHome() {
+        stackView.clear()
+        if (apiClient.authToken !== "") {
+            stackView.push(Qt.resolvedUrl("views/HomeView.qml"), { stackView: stackView })
+        } else {
+            stackView.push(Qt.resolvedUrl("views/ConnectServerView.qml"), { stackView: stackView })
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
@@ -42,10 +51,12 @@ ApplicationWindow {
         TopBar {
             Layout.fillWidth: true
             onHomeRequested: {
-                stackView.pop(null)
+                root.goHome()
             }
             onSettingsRequested: {
-                stackView.push(Qt.resolvedUrl("views/SettingsView.qml"), { stackView: stackView })
+                if (!stackView.currentItem || stackView.currentItem.objectName !== "settingsView") {
+                    stackView.push(Qt.resolvedUrl("views/SettingsView.qml"), { stackView: stackView })
+                }
             }
         }
 
@@ -53,7 +64,7 @@ ApplicationWindow {
             id: stackView
             Layout.fillWidth: true
             Layout.fillHeight: true
-            initialItem: Qt.resolvedUrl("views/ConnectServerView.qml")
+            initialItem: ConnectServerView { stackView: stackView }
         }
     }
 
