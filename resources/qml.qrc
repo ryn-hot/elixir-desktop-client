@@ -1,0 +1,17 @@
+<RCC>
+    <qresource prefix="/qml">
+        <file>../src/qml/main.qml</file>
+        <file>../src/qml/Theme.qml</file>
+        <file>../src/qml/components/TopBar.qml</file>
+        <file>../src/qml/components/IconButton.qml</file>
+        <file>../src/qml/components/PillTag.qml</file>
+        <file>../src/qml/components/MediaCard.qml</file>
+        <file>../src/qml/components/MediaRow.qml</file>
+        <file>../src/qml/components/HeroBanner.qml</file>
+        <file>../src/qml/views/ConnectServerView.qml</file>
+        <file>../src/qml/views/HomeView.qml</file>
+        <file>../src/qml/views/DetailsView.qml</file>
+        <file>../src/qml/views/PlayerView.qml</file>
+        <file>../src/qml/views/SettingsView.qml</file>
+    </qresource>
+</RCC>
