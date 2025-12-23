@@ -3,8 +3,8 @@ import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
 import Elixir.Mpv 1.0
 
-import "../"
 import "../components"
+import Elixir 1.0
 
 Item {
     id: root

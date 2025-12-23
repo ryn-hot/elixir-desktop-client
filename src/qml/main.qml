@@ -4,7 +4,7 @@ import QtQuick.Layouts 6.5
 
 import "components"
 import "views"
-import "."
+import Elixir 1.0
 
 ApplicationWindow {
     id: root

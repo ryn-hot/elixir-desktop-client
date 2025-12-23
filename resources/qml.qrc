@@ -1,17 +1,17 @@
 <RCC>
     <qresource prefix="/qml">
-        <file>../src/qml/main.qml</file>
-        <file>../src/qml/Theme.qml</file>
-        <file>../src/qml/components/TopBar.qml</file>
-        <file>../src/qml/components/IconButton.qml</file>
-        <file>../src/qml/components/PillTag.qml</file>
-        <file>../src/qml/components/MediaCard.qml</file>
-        <file>../src/qml/components/MediaRow.qml</file>
-        <file>../src/qml/components/HeroBanner.qml</file>
-        <file>../src/qml/views/ConnectServerView.qml</file>
-        <file>../src/qml/views/HomeView.qml</file>
-        <file>../src/qml/views/DetailsView.qml</file>
-        <file>../src/qml/views/PlayerView.qml</file>
-        <file>../src/qml/views/SettingsView.qml</file>
+        <file alias="main.qml">../src/qml/main.qml</file>
+        <file alias="Theme.qml">../src/qml/Theme.qml</file>
+        <file alias="components/TopBar.qml">../src/qml/components/TopBar.qml</file>
+        <file alias="components/IconButton.qml">../src/qml/components/IconButton.qml</file>
+        <file alias="components/PillTag.qml">../src/qml/components/PillTag.qml</file>
+        <file alias="components/MediaCard.qml">../src/qml/components/MediaCard.qml</file>
+        <file alias="components/MediaRow.qml">../src/qml/components/MediaRow.qml</file>
+        <file alias="components/HeroBanner.qml">../src/qml/components/HeroBanner.qml</file>
+        <file alias="views/ConnectServerView.qml">../src/qml/views/ConnectServerView.qml</file>
+        <file alias="views/HomeView.qml">../src/qml/views/HomeView.qml</file>
+        <file alias="views/DetailsView.qml">../src/qml/views/DetailsView.qml</file>
+        <file alias="views/PlayerView.qml">../src/qml/views/PlayerView.qml</file>
+        <file alias="views/SettingsView.qml">../src/qml/views/SettingsView.qml</file>
     </qresource>
 </RCC>

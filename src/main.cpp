@@ -3,6 +3,7 @@
 #include <QQmlContext>
 #include <QtQml>
 #include <QQuickStyle>
+#include <QUrl>
 
 #include "backend/ApiClient.h"
 #include "backend/LibraryModel.h"
@@ -23,6 +24,7 @@ int main(int argc, char *argv[]) {
     PlayerController playerController;
 
     qmlRegisterType<MpvItem>("Elixir.Mpv", 1, 0, "MpvItem");
+    qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/Theme.qml")), "Elixir", 1, 0, "Theme");
 
     apiClient.setBaseUrl(sessionManager.baseUrl());
     apiClient.setAuthToken(sessionManager.authToken());
