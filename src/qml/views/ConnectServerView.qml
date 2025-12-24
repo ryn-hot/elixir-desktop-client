@@ -185,14 +185,14 @@ Item {
                     spacing: Theme.spacingMedium
 
                     Label {
-                        text: "Why Qt + QTMPV"
+                        text: "Server discovery"
                         color: Theme.textPrimary
                         font.pixelSize: 16
                         font.family: Theme.fontDisplay
                     }
 
                     Label {
-                        text: "Native playback control, smooth timeline sync, and reliable codec support. This client keeps playback local and lets the server do the heavy lifting."
+                        text: "Find servers on your LAN or via the registry, then pick the endpoint that matches your network profile."
                         color: Theme.textSecondary
                         font.pixelSize: 12
                         font.family: Theme.fontBody
@@ -206,17 +206,165 @@ Item {
                     }
 
                     Label {
-                        text: "Status"
+                        text: "Local servers (mDNS)"
                         color: Theme.textPrimary
                         font.pixelSize: 14
                         font.family: Theme.fontDisplay
                     }
 
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        Button {
+                            text: "Refresh LAN"
+                            onClicked: serverDiscovery.refreshMdns()
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCard
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        Button {
+                            text: "Probe"
+                            onClicked: serverDiscovery.probeAll()
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCard
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        Repeater {
+                            model: serverDiscovery.mdnsModel
+                            delegate: ServerListItem {
+                                Layout.fillWidth: true
+                                name: model.name
+                                source: model.source
+                                status: model.status
+                                lastSeenAt: model.lastSeenAt
+                                selectedEndpoint: model.selectedEndpoint
+                                selectedNetwork: model.selectedNetwork
+                                selectedReachable: model.selectedReachable
+                                onUseRequested: function(endpoint, network) {
+                                    sessionManager.baseUrl = endpoint
+                                }
+                            }
+                        }
+
+                        Label {
+                            text: "No local servers discovered yet."
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            visible: serverDiscovery.mdnsModel.count === 0
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1
+                        color: Theme.border
+                        Layout.fillWidth: true
+                    }
+
                     Label {
-                        text: apiClient.authToken !== "" ? "Authenticated" : "Not signed in"
-                        color: apiClient.authToken !== "" ? Theme.accent : Theme.textMuted
-                        font.pixelSize: 12
+                        text: "Registry servers"
+                        color: Theme.textPrimary
+                        font.pixelSize: 14
+                        font.family: Theme.fontDisplay
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        Button {
+                            text: "Refresh registry"
+                            enabled: apiClient.authToken !== ""
+                            onClicked: serverDiscovery.refreshRegistry()
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCard
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                    }
+
+                    Label {
+                        text: apiClient.authToken === "" ? "Sign in to load registry servers." : ""
+                        color: Theme.textMuted
+                        font.pixelSize: 11
                         font.family: Theme.fontBody
+                        visible: apiClient.authToken === ""
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+                        visible: apiClient.authToken !== ""
+
+                        Repeater {
+                            model: serverDiscovery.registryModel
+                            delegate: ServerListItem {
+                                Layout.fillWidth: true
+                                name: model.name
+                                source: model.source
+                                status: model.status
+                                lastSeenAt: model.lastSeenAt
+                                selectedEndpoint: model.selectedEndpoint
+                                selectedNetwork: model.selectedNetwork
+                                selectedReachable: model.selectedReachable
+                                onUseRequested: function(endpoint, network) {
+                                    sessionManager.baseUrl = endpoint
+                                }
+                            }
+                        }
+
+                        Label {
+                            text: "No registry servers found."
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            visible: serverDiscovery.registryModel.count === 0
+                        }
+                    }
+
+                    Label {
+                        text: serverDiscovery.statusMessage
+                        color: Theme.textMuted
+                        font.pixelSize: 10
+                        font.family: Theme.fontBody
+                        visible: serverDiscovery.statusMessage !== ""
                     }
                 }
             }
@@ -228,6 +376,7 @@ Item {
         function onLoginSucceeded() {
             statusText = "Login successful. Loading library..."
             apiClient.fetchLibrary()
+            serverDiscovery.refreshRegistry()
             if (root.stackView) {
                 root.stackView.clear()
                 root.stackView.push(Qt.resolvedUrl("HomeView.qml"), { stackView: root.stackView })
@@ -238,6 +387,13 @@ Item {
         }
         function onRequestFailed(endpoint, error) {
             statusText = "Request failed: " + error
+        }
+    }
+
+    Component.onCompleted: {
+        serverDiscovery.refreshMdns()
+        if (apiClient.authToken !== "") {
+            serverDiscovery.refreshRegistry()
         }
     }
 }

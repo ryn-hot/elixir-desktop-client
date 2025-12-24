@@ -2,6 +2,7 @@
 
 namespace {
 constexpr const char *kBaseUrlKey = "session/baseUrl";
+constexpr const char *kRegistryUrlKey = "session/registryUrl";
 constexpr const char *kAuthTokenKey = "session/authToken";
 constexpr const char *kEmailKey = "session/email";
 constexpr const char *kNetworkTypeKey = "session/networkType";
@@ -10,6 +11,7 @@ constexpr const char *kNetworkTypeKey = "session/networkType";
 SessionManager::SessionManager(QObject *parent)
     : QObject(parent),
       m_baseUrl(m_settings.value(kBaseUrlKey, "http://127.0.0.1:44301").toString()),
+      m_registryUrl(m_settings.value(kRegistryUrlKey, m_baseUrl).toString()),
       m_authToken(m_settings.value(kAuthTokenKey, "").toString()),
       m_email(m_settings.value(kEmailKey, "").toString()),
       m_networkType(m_settings.value(kNetworkTypeKey, "auto").toString()) {}
@@ -25,6 +27,19 @@ void SessionManager::setBaseUrl(const QString &value) {
     m_baseUrl = value;
     storeValue(kBaseUrlKey, m_baseUrl);
     emit baseUrlChanged();
+}
+
+QString SessionManager::registryUrl() const {
+    return m_registryUrl;
+}
+
+void SessionManager::setRegistryUrl(const QString &value) {
+    if (m_registryUrl == value) {
+        return;
+    }
+    m_registryUrl = value;
+    storeValue(kRegistryUrlKey, m_registryUrl);
+    emit registryUrlChanged();
 }
 
 QString SessionManager::authToken() const {

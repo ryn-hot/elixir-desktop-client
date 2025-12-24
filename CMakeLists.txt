@@ -19,6 +19,8 @@ set(SOURCES
     src/backend/LibraryModel.cpp
     src/backend/MpvItem.cpp
     src/backend/PlayerController.cpp
+    src/backend/ServerDiscovery.cpp
+    src/backend/ServerListModel.cpp
     src/backend/SessionManager.cpp
     resources/qml.qrc
 )

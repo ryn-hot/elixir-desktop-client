@@ -59,6 +59,204 @@ Item {
                     onActivated: sessionManager.networkType = model[index]
                 }
 
+                Label {
+                    text: "Registry URL"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                TextField {
+                    text: sessionManager.registryUrl
+                    placeholderText: "https://control.elixir.media"
+                    onTextChanged: sessionManager.registryUrl = text
+                }
+
+                Rectangle {
+                    height: 1
+                    color: Theme.border
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: "Discovery"
+                    color: Theme.textPrimary
+                    font.pixelSize: 16
+                    font.family: Theme.fontDisplay
+                }
+
+                RowLayout {
+                    spacing: Theme.spacingSmall
+
+                    Button {
+                        text: "Refresh LAN"
+                        onClicked: serverDiscovery.refreshMdns()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "Refresh registry"
+                        enabled: apiClient.authToken !== ""
+                        onClicked: serverDiscovery.refreshRegistry()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "Probe"
+                        onClicked: serverDiscovery.probeAll()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 260
+                    clip: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: Theme.spacingSmall
+
+                        Label {
+                            text: "Local servers"
+                            color: Theme.textSecondary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                        }
+
+                        Repeater {
+                            model: serverDiscovery.mdnsModel
+                            delegate: ServerListItem {
+                                Layout.fillWidth: true
+                                name: model.name
+                                source: model.source
+                                status: model.status
+                                lastSeenAt: model.lastSeenAt
+                                selectedEndpoint: model.selectedEndpoint
+                                selectedNetwork: model.selectedNetwork
+                                selectedReachable: model.selectedReachable
+                                onUseRequested: function(endpoint, network) {
+                                    sessionManager.baseUrl = endpoint
+                                    if (network !== "") {
+                                        sessionManager.networkType = network
+                                    }
+                                    sessionManager.clearAuth()
+                                    if (root.stackView) {
+                                        root.stackView.clear()
+                                        root.stackView.push(Qt.resolvedUrl("ConnectServerView.qml"), { stackView: root.stackView })
+                                    }
+                                }
+                            }
+                        }
+
+                        Label {
+                            text: "No local servers yet."
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            visible: serverDiscovery.mdnsModel.count === 0
+                        }
+
+                        Rectangle {
+                            height: 1
+                            color: Theme.border
+                            Layout.fillWidth: true
+                        }
+
+                        Label {
+                            text: "Registry servers"
+                            color: Theme.textSecondary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                        }
+
+                        Label {
+                            text: apiClient.authToken === "" ? "Sign in to load registry servers." : ""
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            visible: apiClient.authToken === ""
+                        }
+
+                        Repeater {
+                            model: serverDiscovery.registryModel
+                            delegate: ServerListItem {
+                                Layout.fillWidth: true
+                                name: model.name
+                                source: model.source
+                                status: model.status
+                                lastSeenAt: model.lastSeenAt
+                                selectedEndpoint: model.selectedEndpoint
+                                selectedNetwork: model.selectedNetwork
+                                selectedReachable: model.selectedReachable
+                                onUseRequested: function(endpoint, network) {
+                                    sessionManager.baseUrl = endpoint
+                                    if (network !== "") {
+                                        sessionManager.networkType = network
+                                    }
+                                    sessionManager.clearAuth()
+                                    if (root.stackView) {
+                                        root.stackView.clear()
+                                        root.stackView.push(Qt.resolvedUrl("ConnectServerView.qml"), { stackView: root.stackView })
+                                    }
+                                }
+                            }
+                        }
+
+                        Label {
+                            text: "No registry servers yet."
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            visible: serverDiscovery.registryModel.count === 0
+                        }
+                    }
+                }
+
+                Label {
+                    text: serverDiscovery.statusMessage
+                    color: Theme.textMuted
+                    font.pixelSize: 10
+                    font.family: Theme.fontBody
+                    visible: serverDiscovery.statusMessage !== ""
+                }
+
                 RowLayout {
                     spacing: Theme.spacingMedium
 

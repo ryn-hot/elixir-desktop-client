@@ -11,6 +11,7 @@
 #include "backend/LibraryModel.h"
 #include "backend/MpvItem.h"
 #include "backend/PlayerController.h"
+#include "backend/ServerDiscovery.h"
 #include "backend/SessionManager.h"
 
 int main(int argc, char *argv[]) {
@@ -27,6 +28,7 @@ int main(int argc, char *argv[]) {
     ApiClient apiClient;
     LibraryModel libraryModel;
     PlayerController playerController;
+    ServerDiscovery serverDiscovery;
 
     qmlRegisterType<MpvItem>("Elixir.Mpv", 1, 0, "MpvItem");
     qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/Theme.qml")), "Elixir", 1, 0, "Theme");
@@ -34,6 +36,9 @@ int main(int argc, char *argv[]) {
     apiClient.setBaseUrl(sessionManager.baseUrl());
     apiClient.setAuthToken(sessionManager.authToken());
     apiClient.setNetworkType(sessionManager.networkType());
+    serverDiscovery.setRegistryBaseUrl(sessionManager.registryUrl());
+    serverDiscovery.setAuthToken(sessionManager.authToken());
+    serverDiscovery.setPreferredNetworkType(sessionManager.networkType());
 
     QObject::connect(&sessionManager, &SessionManager::baseUrlChanged, &apiClient, [&]() {
         apiClient.setBaseUrl(sessionManager.baseUrl());
@@ -44,9 +49,18 @@ int main(int argc, char *argv[]) {
     QObject::connect(&sessionManager, &SessionManager::networkTypeChanged, &apiClient, [&]() {
         apiClient.setNetworkType(sessionManager.networkType());
     });
+    QObject::connect(&sessionManager, &SessionManager::registryUrlChanged, &serverDiscovery, [&]() {
+        serverDiscovery.setRegistryBaseUrl(sessionManager.registryUrl());
+    });
+    QObject::connect(&sessionManager, &SessionManager::networkTypeChanged, &serverDiscovery, [&]() {
+        serverDiscovery.setPreferredNetworkType(sessionManager.networkType());
+    });
 
     QObject::connect(&apiClient, &ApiClient::authTokenChanged, &sessionManager, [&]() {
         sessionManager.setAuthToken(apiClient.authToken());
+    });
+    QObject::connect(&apiClient, &ApiClient::authTokenChanged, &serverDiscovery, [&]() {
+        serverDiscovery.setAuthToken(apiClient.authToken());
     });
 
     QObject::connect(&apiClient, &ApiClient::libraryReceived, &libraryModel, &LibraryModel::setItems);
@@ -57,6 +71,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("apiClient", &apiClient);
     engine.rootContext()->setContextProperty("libraryModel", &libraryModel);
     engine.rootContext()->setContextProperty("playerController", &playerController);
+    engine.rootContext()->setContextProperty("serverDiscovery", &serverDiscovery);
     engine.rootContext()->setContextProperty("sessionManager", &sessionManager);
 
     const QUrl url(QStringLiteral("qrc:/qml/main.qml"));
