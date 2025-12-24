@@ -8,6 +8,7 @@
         <file alias="components/MediaCard.qml">../src/qml/components/MediaCard.qml</file>
         <file alias="components/MediaRow.qml">../src/qml/components/MediaRow.qml</file>
         <file alias="components/HeroBanner.qml">../src/qml/components/HeroBanner.qml</file>
+        <file alias="components/PosterGrid.qml">../src/qml/components/PosterGrid.qml</file>
         <file alias="components/ServerListItem.qml">../src/qml/components/ServerListItem.qml</file>
         <file alias="views/ConnectServerView.qml">../src/qml/views/ConnectServerView.qml</file>
         <file alias="views/HomeView.qml">../src/qml/views/HomeView.qml</file>

@@ -1,19 +1,17 @@
-#include "backend/ApiClient.h"
+#include "backend/ControlPlaneClient.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
 #include <QNetworkReply>
-#include <QUrlQuery>
 
-ApiClient::ApiClient(QObject *parent)
+ControlPlaneClient::ControlPlaneClient(QObject *parent)
     : QObject(parent) {}
 
-QString ApiClient::baseUrl() const {
+QString ControlPlaneClient::baseUrl() const {
     return m_baseUrl;
 }
 
-void ApiClient::setBaseUrl(const QString &value) {
+void ControlPlaneClient::setBaseUrl(const QString &value) {
     const QString normalized = normalizeBaseUrl(value);
     if (m_baseUrl == normalized) {
         return;
@@ -22,11 +20,11 @@ void ApiClient::setBaseUrl(const QString &value) {
     emit baseUrlChanged();
 }
 
-QString ApiClient::authToken() const {
+QString ControlPlaneClient::authToken() const {
     return m_authToken;
 }
 
-void ApiClient::setAuthToken(const QString &value) {
+void ControlPlaneClient::setAuthToken(const QString &value) {
     if (m_authToken == value) {
         return;
     }
@@ -34,11 +32,11 @@ void ApiClient::setAuthToken(const QString &value) {
     emit authTokenChanged();
 }
 
-QString ApiClient::accessTokenExpiresAt() const {
+QString ControlPlaneClient::accessTokenExpiresAt() const {
     return m_accessTokenExpiresAt;
 }
 
-void ApiClient::setAccessTokenExpiresAt(const QString &value) {
+void ControlPlaneClient::setAccessTokenExpiresAt(const QString &value) {
     if (m_accessTokenExpiresAt == value) {
         return;
     }
@@ -46,19 +44,7 @@ void ApiClient::setAccessTokenExpiresAt(const QString &value) {
     emit accessTokenExpiresAtChanged();
 }
 
-QString ApiClient::networkType() const {
-    return m_networkType;
-}
-
-void ApiClient::setNetworkType(const QString &value) {
-    if (m_networkType == value) {
-        return;
-    }
-    m_networkType = value;
-    emit networkTypeChanged();
-}
-
-void ApiClient::login(const QString &email, const QString &password) {
+void ControlPlaneClient::login(const QString &email, const QString &password) {
     QJsonObject body{{"email", email.trimmed()}, {"password", password}};
     sendRequest(
         "POST",
@@ -83,7 +69,7 @@ void ApiClient::login(const QString &email, const QString &password) {
         [this](const QString &error) { emit loginFailed(error); });
 }
 
-void ApiClient::signup(const QString &email, const QString &password) {
+void ControlPlaneClient::signup(const QString &email, const QString &password) {
     QJsonObject body{{"email", email.trimmed()}, {"password", password}};
     sendRequest(
         "POST",
@@ -108,108 +94,7 @@ void ApiClient::signup(const QString &email, const QString &password) {
         [this](const QString &error) { emit loginFailed(error); });
 }
 
-void ApiClient::startPasswordReset(const QString &email) {
-    QJsonObject body{{"email", email.trimmed()}};
-    sendRequest(
-        "POST",
-        "/api/v1/auth/reset/start",
-        body,
-        [this](const QJsonDocument &doc) {
-            if (!doc.isObject()) {
-                emit passwordResetFailed("Reset response was not an object.");
-                return;
-            }
-            const QJsonObject obj = doc.object();
-            emit passwordResetStarted(obj.value("token").toString(), obj.value("expires_at").toString());
-        },
-        [this](const QString &error) { emit passwordResetFailed(error); });
-}
-
-void ApiClient::completePasswordReset(const QString &token, const QString &newPassword) {
-    QJsonObject body{{"token", token.trimmed()}, {"new_password", newPassword}};
-    sendRequest(
-        "POST",
-        "/api/v1/auth/reset/complete",
-        body,
-        [this](const QJsonDocument &) { emit passwordResetCompleted(); },
-        [this](const QString &error) { emit passwordResetFailed(error); });
-}
-
-void ApiClient::fetchLibrary() {
-    sendRequest("GET", "/api/v1/library/items", QJsonObject(),
-                [this](const QJsonDocument &doc) {
-                    if (!doc.isArray()) {
-                        emit requestFailed("/api/v1/library/items", "Library response was not a list.");
-                        return;
-                    }
-                    emit libraryReceived(doc.array().toVariantList());
-                });
-}
-
-void ApiClient::fetchMediaDetails(const QString &mediaItemId) {
-    sendRequest("GET", QString("/api/v1/library/items/%1").arg(mediaItemId), QJsonObject(),
-                [this](const QJsonDocument &doc) {
-                    if (!doc.isObject()) {
-                        emit requestFailed("/api/v1/library/items/:id", "Details response was not an object.");
-                        return;
-                    }
-                    emit mediaDetailsReceived(doc.object().toVariantMap());
-                });
-}
-
-void ApiClient::startPlayback(const QString &mediaItemId, const QString &preferredFileId) {
-    QJsonObject body{{"media_item_id", mediaItemId}};
-    if (!preferredFileId.trimmed().isEmpty()) {
-        body.insert("preferred_file_id", preferredFileId);
-    } else {
-        body.insert("preferred_file_id", QJsonValue::Null);
-    }
-    if (!m_networkType.isEmpty() && m_networkType != "auto") {
-        body.insert("network_type", m_networkType);
-    }
-    sendRequest("POST", "/api/v1/play", body,
-                [this](const QJsonDocument &doc) {
-                    if (!doc.isObject()) {
-                        emit requestFailed("/api/v1/play", "Playback response was not an object.");
-                        return;
-                    }
-                    emit playbackStarted(doc.object().toVariantMap());
-                });
-}
-
-void ApiClient::seekPlayback(const QString &sessionId, double seconds) {
-    QJsonObject body{{"position_seconds", seconds}};
-    sendRequest("POST", QString("/api/v1/sessions/%1/seek").arg(sessionId), body,
-                [](const QJsonDocument &) {});
-}
-
-void ApiClient::pollSession(const QString &sessionId) {
-    if (sessionId.trimmed().isEmpty()) {
-        return;
-    }
-    sendRequest("GET", QString("/api/v1/sessions/%1/poll").arg(sessionId), QJsonObject(),
-                [this](const QJsonDocument &doc) {
-                    if (!doc.isObject()) {
-                        emit requestFailed("/api/v1/sessions/:id/poll", "Session poll response was not an object.");
-                        return;
-                    }
-                    emit sessionPolled(doc.object().toVariantMap());
-                });
-}
-
-void ApiClient::endSession(const QString &sessionId) {
-    sendRequest("POST", QString("/api/v1/sessions/%1/end").arg(sessionId), QJsonObject(),
-                [](const QJsonDocument &) {});
-}
-
-void ApiClient::runScan(bool forceMetadata) {
-    const QString path = QString("/api/v1/library/scan?force_metadata=%1")
-                             .arg(forceMetadata ? "true" : "false");
-    sendRequest("POST", path, QJsonObject(),
-                [this](const QJsonDocument &) { emit scanCompleted(); });
-}
-
-QString ApiClient::normalizeBaseUrl(const QString &value) const {
+QString ControlPlaneClient::normalizeBaseUrl(const QString &value) const {
     QString trimmed = value.trimmed();
     if (trimmed.isEmpty()) {
         return trimmed;
@@ -223,13 +108,13 @@ QString ApiClient::normalizeBaseUrl(const QString &value) const {
     return trimmed;
 }
 
-QUrl ApiClient::makeUrl(const QString &path) const {
+QUrl ControlPlaneClient::makeUrl(const QString &path) const {
     const QUrl base(normalizeBaseUrl(m_baseUrl));
     QUrl relative(path.startsWith('/') ? path : QString("/%1").arg(path));
     return base.resolved(relative);
 }
 
-void ApiClient::sendRequest(
+void ControlPlaneClient::sendRequest(
     const QString &method,
     const QString &path,
     const QJsonObject &body,

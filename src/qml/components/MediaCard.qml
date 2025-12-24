@@ -59,7 +59,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.margins: 10
-            text: root.title
+            text: root.title !== "" ? root.title : "Untitled"
             color: Theme.textPrimary
             font.pixelSize: 12
             font.family: Theme.fontBody

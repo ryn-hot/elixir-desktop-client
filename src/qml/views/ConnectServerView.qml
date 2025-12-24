@@ -9,8 +9,12 @@ Item {
     id: root
     objectName: "connectView"
     property StackView stackView: null
+    property string notice: ""
 
     property string statusText: ""
+    property string controlPlaneStatusText: ""
+    property string resetStatusText: ""
+    property string resetToken: ""
 
     ColumnLayout {
         anchors.fill: parent
@@ -70,6 +74,121 @@ Item {
                     anchors.fill: parent
                     anchors.margins: Theme.spacingLarge
                     spacing: Theme.spacingMedium
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                        visible: root.notice !== ""
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingMedium
+                            spacing: Theme.spacingSmall
+
+                            Label {
+                                text: root.notice
+                                color: Theme.textSecondary
+                                font.pixelSize: 12
+                                font.family: Theme.fontBody
+                                wrapMode: Text.Wrap
+                            }
+                        }
+                    }
+
+                    Label {
+                        text: "Control plane"
+                        color: Theme.textPrimary
+                        font.pixelSize: 16
+                        font.family: Theme.fontDisplay
+                    }
+
+                    TextField {
+                        text: sessionManager.registryUrl
+                        placeholderText: "https://control.elixir.media"
+                        onTextChanged: sessionManager.registryUrl = text
+                    }
+
+                    TextField {
+                        text: sessionManager.controlPlaneEmail
+                        placeholderText: "control@example.com"
+                        inputMethodHints: Qt.ImhEmailCharactersOnly
+                        onTextChanged: sessionManager.controlPlaneEmail = text
+                    }
+
+                    TextField {
+                        id: controlPlanePasswordField
+                        placeholderText: "Control plane password"
+                        echoMode: TextInput.Password
+                    }
+
+                    RowLayout {
+                        spacing: Theme.spacingMedium
+
+                        Button {
+                            text: "Control plane sign in"
+                            onClicked: {
+                                controlPlaneStatusText = "Signing in to control plane..."
+                                controlPlaneClient.login(sessionManager.controlPlaneEmail, controlPlanePasswordField.text)
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 12
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        Button {
+                            text: "Create control plane account"
+                            onClicked: {
+                                controlPlaneStatusText = "Creating control plane account..."
+                                controlPlaneClient.signup(sessionManager.controlPlaneEmail, controlPlanePasswordField.text)
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCard
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textSecondary
+                                font.pixelSize: 12
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                    }
+
+                    Label {
+                        text: controlPlaneClient.authToken !== "" ? "Control plane authenticated" : "Control plane not signed in"
+                        color: controlPlaneClient.authToken !== "" ? Theme.accent : Theme.textMuted
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    Label {
+                        text: controlPlaneStatusText
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: controlPlaneStatusText !== ""
+                    }
+
+                    Rectangle {
+                        height: 1
+                        color: Theme.border
+                        Layout.fillWidth: true
+                    }
 
                     Label {
                         text: "Server"
@@ -159,6 +278,24 @@ Item {
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                             }
+                        }
+                    }
+
+                    Button {
+                        text: "Forgot password?"
+                        onClicked: resetDialog.open()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCard
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textSecondary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
                         }
                     }
 
@@ -270,6 +407,9 @@ Item {
                                 selectedReachable: model.selectedReachable
                                 onUseRequested: function(endpoint, network) {
                                     sessionManager.baseUrl = endpoint
+                                    if (network !== "") {
+                                        sessionManager.networkType = network
+                                    }
                                 }
                             }
                         }
@@ -302,7 +442,7 @@ Item {
 
                         Button {
                             text: "Refresh registry"
-                            enabled: apiClient.authToken !== ""
+                            enabled: controlPlaneClient.authToken !== ""
                             onClicked: serverDiscovery.refreshRegistry()
                             background: Rectangle {
                                 radius: Theme.radiusSmall
@@ -321,17 +461,17 @@ Item {
                     }
 
                     Label {
-                        text: apiClient.authToken === "" ? "Sign in to load registry servers." : ""
+                        text: controlPlaneClient.authToken === "" ? "Sign in to the control plane to load registry servers." : ""
                         color: Theme.textMuted
                         font.pixelSize: 11
                         font.family: Theme.fontBody
-                        visible: apiClient.authToken === ""
+                        visible: controlPlaneClient.authToken === ""
                     }
 
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: Theme.spacingSmall
-                        visible: apiClient.authToken !== ""
+                        visible: controlPlaneClient.authToken !== ""
 
                         Repeater {
                             model: serverDiscovery.registryModel
@@ -346,6 +486,10 @@ Item {
                                 selectedReachable: model.selectedReachable
                                 onUseRequested: function(endpoint, network) {
                                     sessionManager.baseUrl = endpoint
+                                    sessionManager.selectedServerId = model.serverId
+                                    if (network !== "") {
+                                        sessionManager.networkType = network
+                                    }
                                 }
                             }
                         }
@@ -376,7 +520,6 @@ Item {
         function onLoginSucceeded() {
             statusText = "Login successful. Loading library..."
             apiClient.fetchLibrary()
-            serverDiscovery.refreshRegistry()
             if (root.stackView) {
                 root.stackView.clear()
                 root.stackView.push(Qt.resolvedUrl("HomeView.qml"), { stackView: root.stackView })
@@ -388,12 +531,168 @@ Item {
         function onRequestFailed(endpoint, error) {
             statusText = "Request failed: " + error
         }
+        function onPasswordResetStarted(token, expiresAt) {
+            resetToken = token
+            resetStatusText = "Reset token generated. Expires at " + expiresAt
+        }
+        function onPasswordResetCompleted() {
+            resetStatusText = "Password reset complete. You can sign in now."
+        }
+        function onPasswordResetFailed(error) {
+            resetStatusText = "Reset failed: " + error
+        }
+    }
+
+    Connections {
+        target: controlPlaneClient
+        function onLoginSucceeded() {
+            controlPlaneStatusText = "Control plane authenticated."
+            serverDiscovery.refreshRegistry()
+        }
+        function onLoginFailed(error) {
+            controlPlaneStatusText = "Control plane login failed: " + error
+        }
+        function onRequestFailed(endpoint, error) {
+            controlPlaneStatusText = "Control plane error: " + error
+        }
+        function onAuthExpired(message) {
+            controlPlaneStatusText = message !== "" ? message : "Control plane session expired."
+            sessionManager.clearControlPlaneAuth()
+        }
     }
 
     Component.onCompleted: {
         serverDiscovery.refreshMdns()
-        if (apiClient.authToken !== "") {
+        if (controlPlaneClient.authToken !== "") {
             serverDiscovery.refreshRegistry()
+        }
+    }
+
+    Dialog {
+        id: resetDialog
+        modal: true
+        focus: true
+        x: (root.width - width) / 2
+        y: (root.height - height) / 2
+        width: Math.min(root.width * 0.6, 520)
+        contentItem: Rectangle {
+            color: Theme.backgroundCard
+            radius: Theme.radiusLarge
+            border.color: Theme.border
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Theme.spacingLarge
+                spacing: Theme.spacingSmall
+
+                Label {
+                    text: "Reset password"
+                    color: Theme.textPrimary
+                    font.pixelSize: 18
+                    font.family: Theme.fontDisplay
+                }
+
+                Label {
+                    text: "Generate a reset token, then set a new password."
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                    wrapMode: Text.Wrap
+                }
+
+                TextField {
+                    id: resetEmailField
+                    text: sessionManager.email
+                    placeholderText: "Email"
+                    onTextChanged: sessionManager.email = text
+                }
+
+                RowLayout {
+                    spacing: Theme.spacingSmall
+                    TextField {
+                        id: resetTokenField
+                        Layout.fillWidth: true
+                        text: resetToken
+                        placeholderText: "Reset token"
+                        onTextChanged: resetToken = text
+                    }
+                    Button {
+                        text: "Start reset"
+                        onClicked: {
+                            resetStatusText = "Requesting reset token..."
+                            apiClient.startPasswordReset(resetEmailField.text)
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                TextField {
+                    id: resetPasswordField
+                    placeholderText: "New password"
+                    echoMode: TextInput.Password
+                }
+
+                RowLayout {
+                    spacing: Theme.spacingMedium
+                    Button {
+                        text: "Complete reset"
+                        onClicked: {
+                            resetStatusText = "Completing reset..."
+                            apiClient.completePasswordReset(resetTokenField.text, resetPasswordField.text)
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.accent
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: "#111111"
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                    Button {
+                        text: "Close"
+                        onClicked: resetDialog.close()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Label {
+                    text: resetStatusText
+                    color: Theme.textSecondary
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.Wrap
+                    visible: resetStatusText !== ""
+                }
+            }
         }
     }
 }

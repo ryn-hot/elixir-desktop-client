@@ -60,7 +60,7 @@ Item {
                 }
 
                 Label {
-                    text: "Registry URL"
+                    text: "Control plane URL"
                     color: Theme.textSecondary
                     font.pixelSize: 12
                     font.family: Theme.fontBody
@@ -70,6 +70,13 @@ Item {
                     text: sessionManager.registryUrl
                     placeholderText: "https://control.elixir.media"
                     onTextChanged: sessionManager.registryUrl = text
+                }
+
+                Label {
+                    text: controlPlaneClient.authToken !== "" ? "Control plane authenticated" : "Control plane not signed in"
+                    color: controlPlaneClient.authToken !== "" ? Theme.accent : Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
                 }
 
                 Rectangle {
@@ -108,7 +115,7 @@ Item {
 
                     Button {
                         text: "Refresh registry"
-                        enabled: apiClient.authToken !== ""
+                        enabled: controlPlaneClient.authToken !== ""
                         onClicked: serverDiscovery.refreshRegistry()
                         background: Rectangle {
                             radius: Theme.radiusSmall
@@ -207,11 +214,11 @@ Item {
                         }
 
                         Label {
-                            text: apiClient.authToken === "" ? "Sign in to load registry servers." : ""
+                            text: controlPlaneClient.authToken === "" ? "Sign in to the control plane to load registry servers." : ""
                             color: Theme.textMuted
                             font.pixelSize: 11
                             font.family: Theme.fontBody
-                            visible: apiClient.authToken === ""
+                            visible: controlPlaneClient.authToken === ""
                         }
 
                         Repeater {
@@ -263,6 +270,24 @@ Item {
                     Button {
                         text: "Clear auth"
                         onClicked: sessionManager.clearAuth()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "Clear control plane auth"
+                        onClicked: sessionManager.clearControlPlaneAuth()
                         background: Rectangle {
                             radius: Theme.radiusSmall
                             color: Theme.backgroundCardRaised

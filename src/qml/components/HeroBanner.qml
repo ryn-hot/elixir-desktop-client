@@ -59,7 +59,7 @@ Item {
             }
 
             Label {
-                text: media ? (media.overview || "") : "Scan your library to populate the dashboard."
+                text: media ? (media.overview || "No synopsis available yet.") : "Scan your library to populate the dashboard."
                 color: Theme.textSecondary
                 font.pixelSize: 13
                 font.family: Theme.fontBody

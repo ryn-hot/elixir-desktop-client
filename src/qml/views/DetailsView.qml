@@ -72,7 +72,7 @@ Item {
                     spacing: Theme.spacingSmall
 
                     Label {
-                        text: details ? details.title : "Loading..."
+                        text: details ? details.title : (libraryItem ? libraryItem.title : "Loading...")
                         color: Theme.textPrimary
                         font.pixelSize: 24
                         font.family: Theme.fontDisplay
@@ -81,13 +81,15 @@ Item {
 
                     RowLayout {
                         spacing: Theme.spacingSmall
-                        PillTag { text: details ? details.type : "" }
-                        PillTag { text: details && details.year ? details.year : "" }
-                        PillTag { text: details && details.runtime_seconds ? details.runtime_seconds + "s" : "" }
+                        PillTag { text: details ? details.type : (libraryItem ? libraryItem.type : "") }
+                        PillTag { text: details && details.year ? details.year : (libraryItem && libraryItem.year ? libraryItem.year : "") }
+                        PillTag { text: details && details.runtime_seconds ? details.runtime_seconds + "s" : (libraryItem && libraryItem.runtime ? libraryItem.runtime + "s" : "") }
                     }
 
                     Label {
-                        text: details && details.description ? details.description : ""
+                        text: details && details.description
+                              ? details.description
+                              : (libraryItem && libraryItem.overview ? libraryItem.overview : "No description available yet.")
                         color: Theme.textSecondary
                         font.pixelSize: 13
                         font.family: Theme.fontBody
@@ -141,7 +143,55 @@ Item {
                         color: Theme.textSecondary
                         font.pixelSize: 12
                         font.family: Theme.fontBody
-                        visible: statusText !== ""
+                        visible: statusText !== "" && details !== null
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 120
+                radius: Theme.radiusLarge
+                color: Theme.backgroundCard
+                border.color: Theme.border
+                visible: statusText !== "" && details === null
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingLarge
+                    spacing: Theme.spacingSmall
+
+                    Label {
+                        text: "Unable to load details"
+                        color: Theme.textPrimary
+                        font.pixelSize: 16
+                        font.family: Theme.fontDisplay
+                    }
+
+                    Label {
+                        text: statusText
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        wrapMode: Text.Wrap
+                    }
+
+                    Button {
+                        text: "Retry"
+                        onClicked: apiClient.fetchMediaDetails(mediaId)
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
                     }
                 }
             }

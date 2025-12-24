@@ -16,6 +16,7 @@ qt_standard_project_setup()
 set(SOURCES
     src/main.cpp
     src/backend/ApiClient.cpp
+    src/backend/ControlPlaneClient.cpp
     src/backend/LibraryModel.cpp
     src/backend/MpvItem.cpp
     src/backend/PlayerController.cpp

@@ -13,13 +13,14 @@ ApplicationWindow {
     visible: true
     title: "Elixir"
     color: Theme.backgroundDark
+    property string authNotice: ""
 
     function goHome() {
         stackView.clear()
         if (apiClient.authToken !== "") {
             stackView.push(Qt.resolvedUrl("views/HomeView.qml"), { stackView: stackView })
         } else {
-            stackView.push(Qt.resolvedUrl("views/ConnectServerView.qml"), { stackView: stackView })
+            stackView.push(Qt.resolvedUrl("views/ConnectServerView.qml"), { stackView: stackView, notice: root.authNotice })
         }
     }
 
@@ -64,7 +65,7 @@ ApplicationWindow {
             id: stackView
             Layout.fillWidth: true
             Layout.fillHeight: true
-            initialItem: ConnectServerView { stackView: stackView }
+            initialItem: ConnectServerView { stackView: stackView; notice: root.authNotice }
         }
     }
 
@@ -75,6 +76,21 @@ ApplicationWindow {
             if (!stackView.currentItem || stackView.currentItem.objectName !== "playerView") {
                 stackView.push(Qt.resolvedUrl("views/PlayerView.qml"), { stackView: stackView })
             }
+        }
+        function onAuthExpired(message) {
+            root.authNotice = message !== "" ? message : "Session expired. Please sign in again."
+            playerController.endSession()
+            sessionManager.clearAuth()
+            root.goHome()
+        }
+    }
+
+    Connections {
+        target: controlPlaneClient
+        function onAuthExpired(message) {
+            root.authNotice = message !== "" ? message : "Control plane session expired."
+            sessionManager.clearControlPlaneAuth()
+            root.goHome()
         }
     }
 }

@@ -4,20 +4,18 @@
 #include <QNetworkAccessManager>
 #include <QJsonObject>
 #include <QUrl>
-#include <QVariant>
 #include <functional>
 
 class QJsonDocument;
 
-class ApiClient : public QObject {
+class ControlPlaneClient : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString baseUrl READ baseUrl WRITE setBaseUrl NOTIFY baseUrlChanged)
     Q_PROPERTY(QString authToken READ authToken WRITE setAuthToken NOTIFY authTokenChanged)
     Q_PROPERTY(QString accessTokenExpiresAt READ accessTokenExpiresAt WRITE setAccessTokenExpiresAt NOTIFY accessTokenExpiresAtChanged)
-    Q_PROPERTY(QString networkType READ networkType WRITE setNetworkType NOTIFY networkTypeChanged)
 
 public:
-    explicit ApiClient(QObject *parent = nullptr);
+    explicit ControlPlaneClient(QObject *parent = nullptr);
 
     QString baseUrl() const;
     void setBaseUrl(const QString &value);
@@ -28,38 +26,17 @@ public:
     QString accessTokenExpiresAt() const;
     void setAccessTokenExpiresAt(const QString &value);
 
-    QString networkType() const;
-    void setNetworkType(const QString &value);
-
     Q_INVOKABLE void login(const QString &email, const QString &password);
     Q_INVOKABLE void signup(const QString &email, const QString &password);
-    Q_INVOKABLE void startPasswordReset(const QString &email);
-    Q_INVOKABLE void completePasswordReset(const QString &token, const QString &newPassword);
-    Q_INVOKABLE void fetchLibrary();
-    Q_INVOKABLE void fetchMediaDetails(const QString &mediaItemId);
-    Q_INVOKABLE void startPlayback(const QString &mediaItemId, const QString &preferredFileId);
-    Q_INVOKABLE void seekPlayback(const QString &sessionId, double seconds);
-    Q_INVOKABLE void pollSession(const QString &sessionId);
-    Q_INVOKABLE void endSession(const QString &sessionId);
-    Q_INVOKABLE void runScan(bool forceMetadata);
 
 signals:
     void baseUrlChanged();
     void authTokenChanged();
     void accessTokenExpiresAtChanged();
-    void networkTypeChanged();
 
     void loginSucceeded();
     void loginFailed(const QString &error);
     void authExpired(const QString &message);
-    void passwordResetStarted(const QString &token, const QString &expiresAt);
-    void passwordResetCompleted();
-    void passwordResetFailed(const QString &error);
-    void libraryReceived(const QVariantList &items);
-    void mediaDetailsReceived(const QVariantMap &details);
-    void playbackStarted(const QVariantMap &info);
-    void sessionPolled(const QVariantMap &info);
-    void scanCompleted();
     void requestFailed(const QString &endpoint, const QString &error);
 
 private:
@@ -79,5 +56,4 @@ private:
     QString m_baseUrl;
     QString m_authToken;
     QString m_accessTokenExpiresAt;
-    QString m_networkType;
 };

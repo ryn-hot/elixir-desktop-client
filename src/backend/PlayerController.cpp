@@ -26,6 +26,14 @@ QString PlayerController::mode() const {
     return m_mode;
 }
 
+QString PlayerController::sessionState() const {
+    return m_sessionState;
+}
+
+QString PlayerController::sessionError() const {
+    return m_sessionError;
+}
+
 double PlayerController::duration() const {
     return m_duration;
 }
@@ -56,11 +64,45 @@ void PlayerController::beginPlayback(const QVariantMap &info) {
     setStreamUrl(buildStreamUrl(baseUrl, path));
     setSessionId(info.value("session_id").toString());
     setMode(info.value("mode").toString());
+    setSessionState("active");
+    setSessionError(QString());
     setDuration(info.value("duration_seconds").toDouble());
     setSeekOffsetInternal(info.value("logical_start_seconds").toDouble());
     setLocalPositionInternal(0.0);
     setPaused(false);
     setActive(true);
+}
+
+void PlayerController::applySessionPoll(const QVariantMap &info) {
+    if (m_sessionId.isEmpty()) {
+        return;
+    }
+    const QString id = info.value("id").toString();
+    if (!id.isEmpty() && id != m_sessionId) {
+        return;
+    }
+
+    const QString state = info.value("state").toString();
+    if (!state.isEmpty()) {
+        setSessionState(state);
+    }
+
+    const QString error = info.value("error").toString();
+    if (error != m_sessionError) {
+        setSessionError(error);
+    }
+
+    const QString mode = info.value("mode").toString();
+    if (!mode.isEmpty()) {
+        setMode(mode);
+    }
+
+    if (m_duration <= 0.0) {
+        const double polledDuration = info.value("duration_seconds").toDouble();
+        if (polledDuration > 0.0) {
+            setDuration(polledDuration);
+        }
+    }
 }
 
 void PlayerController::updateLocalPosition(double seconds) {
@@ -106,6 +148,8 @@ void PlayerController::reset() {
     setActive(false);
     setSessionId(QString());
     setMode(QString());
+    setSessionState(QString());
+    setSessionError(QString());
     setStreamUrl(QString());
     setDuration(0.0);
     setSeekOffsetInternal(0.0);
@@ -135,6 +179,22 @@ void PlayerController::setMode(const QString &value) {
     }
     m_mode = value;
     emit modeChanged();
+}
+
+void PlayerController::setSessionState(const QString &value) {
+    if (m_sessionState == value) {
+        return;
+    }
+    m_sessionState = value;
+    emit sessionStateChanged();
+}
+
+void PlayerController::setSessionError(const QString &value) {
+    if (m_sessionError == value) {
+        return;
+    }
+    m_sessionError = value;
+    emit sessionErrorChanged();
 }
 
 void PlayerController::setDuration(double value) {

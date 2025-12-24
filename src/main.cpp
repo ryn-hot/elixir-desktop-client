@@ -6,8 +6,10 @@
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QUrl>
+#include <QDateTime>
 
 #include "backend/ApiClient.h"
+#include "backend/ControlPlaneClient.h"
 #include "backend/LibraryModel.h"
 #include "backend/MpvItem.h"
 #include "backend/PlayerController.h"
@@ -26,18 +28,38 @@ int main(int argc, char *argv[]) {
 
     SessionManager sessionManager;
     ApiClient apiClient;
+    ControlPlaneClient controlPlaneClient;
     LibraryModel libraryModel;
     PlayerController playerController;
     ServerDiscovery serverDiscovery;
+
+    const QString expiry = sessionManager.accessTokenExpiresAt();
+    if (!sessionManager.authToken().isEmpty() && !expiry.isEmpty()) {
+        const QDateTime expiresAt = QDateTime::fromString(expiry, Qt::ISODate);
+        if (expiresAt.isValid() && expiresAt < QDateTime::currentDateTimeUtc()) {
+            sessionManager.clearAuth();
+        }
+    }
+    const QString controlExpiry = sessionManager.controlPlaneExpiresAt();
+    if (!sessionManager.controlPlaneToken().isEmpty() && !controlExpiry.isEmpty()) {
+        const QDateTime expiresAt = QDateTime::fromString(controlExpiry, Qt::ISODate);
+        if (expiresAt.isValid() && expiresAt < QDateTime::currentDateTimeUtc()) {
+            sessionManager.clearControlPlaneAuth();
+        }
+    }
 
     qmlRegisterType<MpvItem>("Elixir.Mpv", 1, 0, "MpvItem");
     qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/Theme.qml")), "Elixir", 1, 0, "Theme");
 
     apiClient.setBaseUrl(sessionManager.baseUrl());
     apiClient.setAuthToken(sessionManager.authToken());
+    apiClient.setAccessTokenExpiresAt(sessionManager.accessTokenExpiresAt());
     apiClient.setNetworkType(sessionManager.networkType());
+    controlPlaneClient.setBaseUrl(sessionManager.registryUrl());
+    controlPlaneClient.setAuthToken(sessionManager.controlPlaneToken());
+    controlPlaneClient.setAccessTokenExpiresAt(sessionManager.controlPlaneExpiresAt());
     serverDiscovery.setRegistryBaseUrl(sessionManager.registryUrl());
-    serverDiscovery.setAuthToken(sessionManager.authToken());
+    serverDiscovery.setAuthToken(sessionManager.controlPlaneToken());
     serverDiscovery.setPreferredNetworkType(sessionManager.networkType());
 
     QObject::connect(&sessionManager, &SessionManager::baseUrlChanged, &apiClient, [&]() {
@@ -46,11 +68,26 @@ int main(int argc, char *argv[]) {
     QObject::connect(&sessionManager, &SessionManager::authTokenChanged, &apiClient, [&]() {
         apiClient.setAuthToken(sessionManager.authToken());
     });
+    QObject::connect(&sessionManager, &SessionManager::accessTokenExpiresAtChanged, &apiClient, [&]() {
+        apiClient.setAccessTokenExpiresAt(sessionManager.accessTokenExpiresAt());
+    });
     QObject::connect(&sessionManager, &SessionManager::networkTypeChanged, &apiClient, [&]() {
         apiClient.setNetworkType(sessionManager.networkType());
     });
     QObject::connect(&sessionManager, &SessionManager::registryUrlChanged, &serverDiscovery, [&]() {
         serverDiscovery.setRegistryBaseUrl(sessionManager.registryUrl());
+    });
+    QObject::connect(&sessionManager, &SessionManager::registryUrlChanged, &controlPlaneClient, [&]() {
+        controlPlaneClient.setBaseUrl(sessionManager.registryUrl());
+    });
+    QObject::connect(&sessionManager, &SessionManager::controlPlaneTokenChanged, &controlPlaneClient, [&]() {
+        controlPlaneClient.setAuthToken(sessionManager.controlPlaneToken());
+    });
+    QObject::connect(&sessionManager, &SessionManager::controlPlaneExpiresAtChanged, &controlPlaneClient, [&]() {
+        controlPlaneClient.setAccessTokenExpiresAt(sessionManager.controlPlaneExpiresAt());
+    });
+    QObject::connect(&sessionManager, &SessionManager::controlPlaneTokenChanged, &serverDiscovery, [&]() {
+        serverDiscovery.setAuthToken(sessionManager.controlPlaneToken());
     });
     QObject::connect(&sessionManager, &SessionManager::networkTypeChanged, &serverDiscovery, [&]() {
         serverDiscovery.setPreferredNetworkType(sessionManager.networkType());
@@ -59,8 +96,14 @@ int main(int argc, char *argv[]) {
     QObject::connect(&apiClient, &ApiClient::authTokenChanged, &sessionManager, [&]() {
         sessionManager.setAuthToken(apiClient.authToken());
     });
-    QObject::connect(&apiClient, &ApiClient::authTokenChanged, &serverDiscovery, [&]() {
-        serverDiscovery.setAuthToken(apiClient.authToken());
+    QObject::connect(&apiClient, &ApiClient::accessTokenExpiresAtChanged, &sessionManager, [&]() {
+        sessionManager.setAccessTokenExpiresAt(apiClient.accessTokenExpiresAt());
+    });
+    QObject::connect(&controlPlaneClient, &ControlPlaneClient::authTokenChanged, &sessionManager, [&]() {
+        sessionManager.setControlPlaneToken(controlPlaneClient.authToken());
+    });
+    QObject::connect(&controlPlaneClient, &ControlPlaneClient::accessTokenExpiresAtChanged, &sessionManager, [&]() {
+        sessionManager.setControlPlaneExpiresAt(controlPlaneClient.accessTokenExpiresAt());
     });
 
     QObject::connect(&apiClient, &ApiClient::libraryReceived, &libraryModel, &LibraryModel::setItems);
@@ -69,6 +112,7 @@ int main(int argc, char *argv[]) {
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("apiClient", &apiClient);
+    engine.rootContext()->setContextProperty("controlPlaneClient", &controlPlaneClient);
     engine.rootContext()->setContextProperty("libraryModel", &libraryModel);
     engine.rootContext()->setContextProperty("playerController", &playerController);
     engine.rootContext()->setContextProperty("serverDiscovery", &serverDiscovery);

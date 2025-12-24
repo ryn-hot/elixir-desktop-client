@@ -8,6 +8,11 @@ class SessionManager : public QObject {
     Q_PROPERTY(QString baseUrl READ baseUrl WRITE setBaseUrl NOTIFY baseUrlChanged)
     Q_PROPERTY(QString registryUrl READ registryUrl WRITE setRegistryUrl NOTIFY registryUrlChanged)
     Q_PROPERTY(QString authToken READ authToken WRITE setAuthToken NOTIFY authTokenChanged)
+    Q_PROPERTY(QString accessTokenExpiresAt READ accessTokenExpiresAt WRITE setAccessTokenExpiresAt NOTIFY accessTokenExpiresAtChanged)
+    Q_PROPERTY(QString controlPlaneEmail READ controlPlaneEmail WRITE setControlPlaneEmail NOTIFY controlPlaneEmailChanged)
+    Q_PROPERTY(QString controlPlaneToken READ controlPlaneToken WRITE setControlPlaneToken NOTIFY controlPlaneTokenChanged)
+    Q_PROPERTY(QString controlPlaneExpiresAt READ controlPlaneExpiresAt WRITE setControlPlaneExpiresAt NOTIFY controlPlaneExpiresAtChanged)
+    Q_PROPERTY(QString selectedServerId READ selectedServerId WRITE setSelectedServerId NOTIFY selectedServerIdChanged)
     Q_PROPERTY(QString email READ email WRITE setEmail NOTIFY emailChanged)
     Q_PROPERTY(QString networkType READ networkType WRITE setNetworkType NOTIFY networkTypeChanged)
 
@@ -23,6 +28,21 @@ public:
     QString authToken() const;
     void setAuthToken(const QString &value);
 
+    QString accessTokenExpiresAt() const;
+    void setAccessTokenExpiresAt(const QString &value);
+
+    QString controlPlaneEmail() const;
+    void setControlPlaneEmail(const QString &value);
+
+    QString controlPlaneToken() const;
+    void setControlPlaneToken(const QString &value);
+
+    QString controlPlaneExpiresAt() const;
+    void setControlPlaneExpiresAt(const QString &value);
+
+    QString selectedServerId() const;
+    void setSelectedServerId(const QString &value);
+
     QString email() const;
     void setEmail(const QString &value);
 
@@ -30,11 +50,17 @@ public:
     void setNetworkType(const QString &value);
 
     Q_INVOKABLE void clearAuth();
+    Q_INVOKABLE void clearControlPlaneAuth();
 
 signals:
     void baseUrlChanged();
     void registryUrlChanged();
     void authTokenChanged();
+    void accessTokenExpiresAtChanged();
+    void controlPlaneEmailChanged();
+    void controlPlaneTokenChanged();
+    void controlPlaneExpiresAtChanged();
+    void selectedServerIdChanged();
     void emailChanged();
     void networkTypeChanged();
 
@@ -45,6 +71,11 @@ private:
     QString m_baseUrl;
     QString m_registryUrl;
     QString m_authToken;
+    QString m_accessTokenExpiresAt;
+    QString m_controlPlaneEmail;
+    QString m_controlPlaneToken;
+    QString m_controlPlaneExpiresAt;
+    QString m_selectedServerId;
     QString m_email;
     QString m_networkType;
 };
