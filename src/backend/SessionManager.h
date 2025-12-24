@@ -13,6 +13,11 @@ class SessionManager : public QObject {
     Q_PROPERTY(QString controlPlaneToken READ controlPlaneToken WRITE setControlPlaneToken NOTIFY controlPlaneTokenChanged)
     Q_PROPERTY(QString controlPlaneExpiresAt READ controlPlaneExpiresAt WRITE setControlPlaneExpiresAt NOTIFY controlPlaneExpiresAtChanged)
     Q_PROPERTY(QString selectedServerId READ selectedServerId WRITE setSelectedServerId NOTIFY selectedServerIdChanged)
+    Q_PROPERTY(QString playbackMaxResolution READ playbackMaxResolution WRITE setPlaybackMaxResolution NOTIFY playbackMaxResolutionChanged)
+    Q_PROPERTY(int playbackMaxBitrateBps READ playbackMaxBitrateBps WRITE setPlaybackMaxBitrateBps NOTIFY playbackMaxBitrateBpsChanged)
+    Q_PROPERTY(QStringList playbackSupportedContainers READ playbackSupportedContainers WRITE setPlaybackSupportedContainers NOTIFY playbackSupportedContainersChanged)
+    Q_PROPERTY(QStringList playbackSupportedVideoCodecs READ playbackSupportedVideoCodecs WRITE setPlaybackSupportedVideoCodecs NOTIFY playbackSupportedVideoCodecsChanged)
+    Q_PROPERTY(QStringList playbackSupportedAudioCodecs READ playbackSupportedAudioCodecs WRITE setPlaybackSupportedAudioCodecs NOTIFY playbackSupportedAudioCodecsChanged)
     Q_PROPERTY(QString email READ email WRITE setEmail NOTIFY emailChanged)
     Q_PROPERTY(QString networkType READ networkType WRITE setNetworkType NOTIFY networkTypeChanged)
 
@@ -43,6 +48,21 @@ public:
     QString selectedServerId() const;
     void setSelectedServerId(const QString &value);
 
+    QString playbackMaxResolution() const;
+    void setPlaybackMaxResolution(const QString &value);
+
+    int playbackMaxBitrateBps() const;
+    void setPlaybackMaxBitrateBps(int value);
+
+    QStringList playbackSupportedContainers() const;
+    void setPlaybackSupportedContainers(const QStringList &value);
+
+    QStringList playbackSupportedVideoCodecs() const;
+    void setPlaybackSupportedVideoCodecs(const QStringList &value);
+
+    QStringList playbackSupportedAudioCodecs() const;
+    void setPlaybackSupportedAudioCodecs(const QStringList &value);
+
     QString email() const;
     void setEmail(const QString &value);
 
@@ -61,6 +81,11 @@ signals:
     void controlPlaneTokenChanged();
     void controlPlaneExpiresAtChanged();
     void selectedServerIdChanged();
+    void playbackMaxResolutionChanged();
+    void playbackMaxBitrateBpsChanged();
+    void playbackSupportedContainersChanged();
+    void playbackSupportedVideoCodecsChanged();
+    void playbackSupportedAudioCodecsChanged();
     void emailChanged();
     void networkTypeChanged();
 
@@ -76,6 +101,11 @@ private:
     QString m_controlPlaneToken;
     QString m_controlPlaneExpiresAt;
     QString m_selectedServerId;
+    QString m_playbackMaxResolution;
+    int m_playbackMaxBitrateBps = 0;
+    QStringList m_playbackSupportedContainers;
+    QStringList m_playbackSupportedVideoCodecs;
+    QStringList m_playbackSupportedAudioCodecs;
     QString m_email;
     QString m_networkType;
 };

@@ -10,6 +10,7 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network)
 find_package(MpvQt REQUIRED)
+include(CheckIncludeFileCXX)
 
 qt_standard_project_setup()
 
@@ -40,6 +41,22 @@ target_link_libraries(elixir-client
     Qt6::Network
     MpvQt::MpvQt
 )
+
+if(APPLE)
+    target_compile_definitions(elixir-client PRIVATE ELIXIR_HAS_DNSSD=1)
+else()
+    check_include_file_cxx(dns_sd.h ELIXIR_HAS_DNSSD_HEADER)
+    if(ELIXIR_HAS_DNSSD_HEADER)
+        find_library(DNSSD_LIBRARY dns_sd)
+        if(DNSSD_LIBRARY)
+            target_compile_definitions(elixir-client PRIVATE ELIXIR_HAS_DNSSD=1)
+            target_link_libraries(elixir-client PRIVATE ${DNSSD_LIBRARY})
+            if(WIN32)
+                target_link_libraries(elixir-client PRIVATE ws2_32)
+            endif()
+        endif()
+    endif()
+endif()
 
 set_target_properties(elixir-client PROPERTIES
     MACOSX_BUNDLE TRUE

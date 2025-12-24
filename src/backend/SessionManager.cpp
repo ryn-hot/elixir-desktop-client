@@ -9,6 +9,11 @@ constexpr const char *kControlPlaneEmailKey = "session/controlPlaneEmail";
 constexpr const char *kControlPlaneTokenKey = "session/controlPlaneToken";
 constexpr const char *kControlPlaneExpiresAtKey = "session/controlPlaneExpiresAt";
 constexpr const char *kSelectedServerIdKey = "session/selectedServerId";
+constexpr const char *kPlaybackMaxResolutionKey = "playback/maxResolution";
+constexpr const char *kPlaybackMaxBitrateKey = "playback/maxBitrateBps";
+constexpr const char *kPlaybackSupportedContainersKey = "playback/supportedContainers";
+constexpr const char *kPlaybackSupportedVideoCodecsKey = "playback/supportedVideoCodecs";
+constexpr const char *kPlaybackSupportedAudioCodecsKey = "playback/supportedAudioCodecs";
 constexpr const char *kEmailKey = "session/email";
 constexpr const char *kNetworkTypeKey = "session/networkType";
 }
@@ -23,6 +28,11 @@ SessionManager::SessionManager(QObject *parent)
       m_controlPlaneToken(m_settings.value(kControlPlaneTokenKey, "").toString()),
       m_controlPlaneExpiresAt(m_settings.value(kControlPlaneExpiresAtKey, "").toString()),
       m_selectedServerId(m_settings.value(kSelectedServerIdKey, "").toString()),
+      m_playbackMaxResolution(m_settings.value(kPlaybackMaxResolutionKey, "1080p").toString()),
+      m_playbackMaxBitrateBps(m_settings.value(kPlaybackMaxBitrateKey, 8000000).toInt()),
+      m_playbackSupportedContainers(m_settings.value(kPlaybackSupportedContainersKey, QStringList{"mkv", "mp4"}).toStringList()),
+      m_playbackSupportedVideoCodecs(m_settings.value(kPlaybackSupportedVideoCodecsKey, QStringList{"h264"}).toStringList()),
+      m_playbackSupportedAudioCodecs(m_settings.value(kPlaybackSupportedAudioCodecsKey, QStringList{"aac", "ac3"}).toStringList()),
       m_email(m_settings.value(kEmailKey, "").toString()),
       m_networkType(m_settings.value(kNetworkTypeKey, "auto").toString()) {}
 
@@ -128,6 +138,71 @@ void SessionManager::setSelectedServerId(const QString &value) {
     m_selectedServerId = value;
     storeValue(kSelectedServerIdKey, m_selectedServerId);
     emit selectedServerIdChanged();
+}
+
+QString SessionManager::playbackMaxResolution() const {
+    return m_playbackMaxResolution;
+}
+
+void SessionManager::setPlaybackMaxResolution(const QString &value) {
+    if (m_playbackMaxResolution == value) {
+        return;
+    }
+    m_playbackMaxResolution = value;
+    storeValue(kPlaybackMaxResolutionKey, m_playbackMaxResolution);
+    emit playbackMaxResolutionChanged();
+}
+
+int SessionManager::playbackMaxBitrateBps() const {
+    return m_playbackMaxBitrateBps;
+}
+
+void SessionManager::setPlaybackMaxBitrateBps(int value) {
+    if (m_playbackMaxBitrateBps == value) {
+        return;
+    }
+    m_playbackMaxBitrateBps = value;
+    storeValue(kPlaybackMaxBitrateKey, m_playbackMaxBitrateBps);
+    emit playbackMaxBitrateBpsChanged();
+}
+
+QStringList SessionManager::playbackSupportedContainers() const {
+    return m_playbackSupportedContainers;
+}
+
+void SessionManager::setPlaybackSupportedContainers(const QStringList &value) {
+    if (m_playbackSupportedContainers == value) {
+        return;
+    }
+    m_playbackSupportedContainers = value;
+    storeValue(kPlaybackSupportedContainersKey, m_playbackSupportedContainers);
+    emit playbackSupportedContainersChanged();
+}
+
+QStringList SessionManager::playbackSupportedVideoCodecs() const {
+    return m_playbackSupportedVideoCodecs;
+}
+
+void SessionManager::setPlaybackSupportedVideoCodecs(const QStringList &value) {
+    if (m_playbackSupportedVideoCodecs == value) {
+        return;
+    }
+    m_playbackSupportedVideoCodecs = value;
+    storeValue(kPlaybackSupportedVideoCodecsKey, m_playbackSupportedVideoCodecs);
+    emit playbackSupportedVideoCodecsChanged();
+}
+
+QStringList SessionManager::playbackSupportedAudioCodecs() const {
+    return m_playbackSupportedAudioCodecs;
+}
+
+void SessionManager::setPlaybackSupportedAudioCodecs(const QStringList &value) {
+    if (m_playbackSupportedAudioCodecs == value) {
+        return;
+    }
+    m_playbackSupportedAudioCodecs = value;
+    storeValue(kPlaybackSupportedAudioCodecsKey, m_playbackSupportedAudioCodecs);
+    emit playbackSupportedAudioCodecsChanged();
 }
 
 QString SessionManager::email() const {

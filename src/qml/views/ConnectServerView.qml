@@ -15,6 +15,100 @@ Item {
     property string controlPlaneStatusText: ""
     property string resetStatusText: ""
     property string resetToken: ""
+    property bool autoSelectEnabled: true
+
+    function normalizeEndpoint(endpoint) {
+        var trimmed = (endpoint || "").trim()
+        if (trimmed === "") {
+            return ""
+        }
+        if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            trimmed = "http://" + trimmed
+        }
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.slice(0, -1)
+        }
+        return trimmed
+    }
+
+    function pickBestCandidate(model, desiredServerId) {
+        if (!model || model.count === 0) {
+            return null
+        }
+        var best = null
+        for (var i = 0; i < model.count; i++) {
+            var entry = model.get(i)
+            if (!entry) {
+                continue
+            }
+            if (desiredServerId && entry.serverId !== desiredServerId) {
+                continue
+            }
+            var endpoint = entry.selectedEndpoint || ""
+            if (endpoint === "") {
+                continue
+            }
+            var score = 0
+            if (entry.selectedReachable) {
+                score += 2
+            }
+            var preferred = sessionManager.networkType || "auto"
+            if (preferred === "wan") {
+                if (entry.selectedNetwork === "wan") {
+                    score += 1
+                }
+            } else {
+                if (entry.selectedNetwork === "lan") {
+                    score += 1
+                }
+            }
+            if (!best || score > best.score) {
+                best = {
+                    endpoint: endpoint,
+                    network: entry.selectedNetwork || "",
+                    serverId: entry.serverId || "",
+                    score: score
+                }
+            }
+        }
+        return best
+    }
+
+    function requestAutoSelect() {
+        if (!autoSelectEnabled) {
+            return
+        }
+        autoSelectTimer.restart()
+    }
+
+    function applyAutoSelection() {
+        if (!autoSelectEnabled) {
+            return
+        }
+        var candidate = null
+        if (sessionManager.selectedServerId !== "") {
+            candidate = pickBestCandidate(serverDiscovery.registryModel, sessionManager.selectedServerId)
+        }
+        if (!candidate) {
+            candidate = pickBestCandidate(serverDiscovery.mdnsModel, "")
+        }
+        if (!candidate) {
+            candidate = pickBestCandidate(serverDiscovery.registryModel, "")
+        }
+        if (!candidate || !candidate.endpoint) {
+            return
+        }
+        var normalized = normalizeEndpoint(candidate.endpoint)
+        if (normalized === "") {
+            return
+        }
+        if (sessionManager.baseUrl !== normalized) {
+            sessionManager.baseUrl = normalized
+        }
+        if (candidate.serverId !== "" && sessionManager.selectedServerId !== candidate.serverId) {
+            sessionManager.selectedServerId = candidate.serverId
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -201,6 +295,10 @@ Item {
                         text: sessionManager.baseUrl
                         placeholderText: "http://192.168.1.10:44301"
                         onTextChanged: sessionManager.baseUrl = text
+                        onTextEdited: {
+                            autoSelectEnabled = false
+                            sessionManager.selectedServerId = ""
+                        }
                     }
 
                     Label {
@@ -213,7 +311,10 @@ Item {
                     ComboBox {
                         model: ["auto", "lan", "wan"]
                         currentIndex: model.indexOf(sessionManager.networkType)
-                        onActivated: sessionManager.networkType = model[index]
+                        onActivated: {
+                            sessionManager.networkType = model[index]
+                            requestAutoSelect()
+                        }
                     }
 
                     Label {
@@ -406,7 +507,9 @@ Item {
                                 selectedNetwork: model.selectedNetwork
                                 selectedReachable: model.selectedReachable
                                 onUseRequested: function(endpoint, network) {
-                                    sessionManager.baseUrl = endpoint
+                                    autoSelectEnabled = false
+                                    sessionManager.baseUrl = normalizeEndpoint(endpoint)
+                                    sessionManager.selectedServerId = ""
                                     if (network !== "") {
                                         sessionManager.networkType = network
                                     }
@@ -485,11 +588,13 @@ Item {
                                 selectedNetwork: model.selectedNetwork
                                 selectedReachable: model.selectedReachable
                                 onUseRequested: function(endpoint, network) {
-                                    sessionManager.baseUrl = endpoint
+                                    autoSelectEnabled = true
+                                    sessionManager.baseUrl = normalizeEndpoint(endpoint)
                                     sessionManager.selectedServerId = model.serverId
                                     if (network !== "") {
                                         sessionManager.networkType = network
                                     }
+                                    requestAutoSelect()
                                 }
                             }
                         }
@@ -566,6 +671,44 @@ Item {
         if (controlPlaneClient.authToken !== "") {
             serverDiscovery.refreshRegistry()
         }
+        requestAutoSelect()
+    }
+
+    Connections {
+        target: serverDiscovery.mdnsModel
+        function onCountChanged() {
+            requestAutoSelect()
+        }
+        function onDataChanged(topLeft, bottomRight, roles) {
+            requestAutoSelect()
+        }
+    }
+
+    Connections {
+        target: serverDiscovery.registryModel
+        function onCountChanged() {
+            requestAutoSelect()
+        }
+        function onDataChanged(topLeft, bottomRight, roles) {
+            requestAutoSelect()
+        }
+    }
+
+    Connections {
+        target: sessionManager
+        function onSelectedServerIdChanged() {
+            requestAutoSelect()
+        }
+        function onNetworkTypeChanged() {
+            requestAutoSelect()
+        }
+    }
+
+    Timer {
+        id: autoSelectTimer
+        interval: 200
+        repeat: false
+        onTriggered: applyAutoSelection()
     }
 
     Dialog {

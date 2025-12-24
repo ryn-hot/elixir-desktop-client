@@ -14,6 +14,7 @@ class ApiClient : public QObject {
     Q_PROPERTY(QString baseUrl READ baseUrl WRITE setBaseUrl NOTIFY baseUrlChanged)
     Q_PROPERTY(QString authToken READ authToken WRITE setAuthToken NOTIFY authTokenChanged)
     Q_PROPERTY(QString accessTokenExpiresAt READ accessTokenExpiresAt WRITE setAccessTokenExpiresAt NOTIFY accessTokenExpiresAtChanged)
+    Q_PROPERTY(QVariantMap clientCapabilities READ clientCapabilities WRITE setClientCapabilities NOTIFY clientCapabilitiesChanged)
     Q_PROPERTY(QString networkType READ networkType WRITE setNetworkType NOTIFY networkTypeChanged)
 
 public:
@@ -27,6 +28,9 @@ public:
 
     QString accessTokenExpiresAt() const;
     void setAccessTokenExpiresAt(const QString &value);
+
+    QVariantMap clientCapabilities() const;
+    void setClientCapabilities(const QVariantMap &value);
 
     QString networkType() const;
     void setNetworkType(const QString &value);
@@ -47,6 +51,7 @@ signals:
     void baseUrlChanged();
     void authTokenChanged();
     void accessTokenExpiresAtChanged();
+    void clientCapabilitiesChanged();
     void networkTypeChanged();
 
     void loginSucceeded();
@@ -79,5 +84,6 @@ private:
     QString m_baseUrl;
     QString m_authToken;
     QString m_accessTokenExpiresAt;
+    QVariantMap m_clientCapabilities;
     QString m_networkType;
 };

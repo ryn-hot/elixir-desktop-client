@@ -15,6 +15,10 @@ Item {
         anchors.margins: Theme.spacingXLarge
         spacing: Theme.spacingLarge
 
+        function parseList(text) {
+            return text.split(/\\s*,\\s*/).filter(function(item) { return item.length > 0 })
+        }
+
         Label {
             text: "Settings"
             color: Theme.textPrimary
@@ -262,6 +266,109 @@ Item {
                     font.pixelSize: 10
                     font.family: Theme.fontBody
                     visible: serverDiscovery.statusMessage !== ""
+                }
+
+                Rectangle {
+                    height: 1
+                    color: Theme.border
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: "Playback profile"
+                    color: Theme.textPrimary
+                    font.pixelSize: 16
+                    font.family: Theme.fontDisplay
+                }
+
+                Label {
+                    text: "Max resolution"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                ComboBox {
+                    id: resolutionCombo
+                    model: ["480p", "720p", "1080p", "4k"]
+                    currentIndex: model.indexOf(sessionManager.playbackMaxResolution)
+                    onActivated: sessionManager.playbackMaxResolution = model[index]
+                }
+
+                Label {
+                    text: "Max bitrate (bps)"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                TextField {
+                    id: bitrateField
+                    inputMethodHints: Qt.ImhDigitsOnly
+                    text: sessionManager.playbackMaxBitrateBps.toString()
+                    onEditingFinished: {
+                        var value = parseInt(text)
+                        if (!isNaN(value)) {
+                            sessionManager.playbackMaxBitrateBps = value
+                        }
+                    }
+                }
+
+                Label {
+                    text: "Supported containers"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                TextField {
+                    id: containersField
+                    placeholderText: "mkv, mp4"
+                    Binding {
+                        target: containersField
+                        property: "text"
+                        value: sessionManager.playbackSupportedContainers.join(", ")
+                        when: !containersField.activeFocus
+                    }
+                    onEditingFinished: sessionManager.playbackSupportedContainers = parseList(text)
+                }
+
+                Label {
+                    text: "Supported video codecs"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                TextField {
+                    id: videoCodecsField
+                    placeholderText: "h264, hevc"
+                    Binding {
+                        target: videoCodecsField
+                        property: "text"
+                        value: sessionManager.playbackSupportedVideoCodecs.join(", ")
+                        when: !videoCodecsField.activeFocus
+                    }
+                    onEditingFinished: sessionManager.playbackSupportedVideoCodecs = parseList(text)
+                }
+
+                Label {
+                    text: "Supported audio codecs"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                TextField {
+                    id: audioCodecsField
+                    placeholderText: "aac, ac3"
+                    Binding {
+                        target: audioCodecsField
+                        property: "text"
+                        value: sessionManager.playbackSupportedAudioCodecs.join(", ")
+                        when: !audioCodecsField.activeFocus
+                    }
+                    onEditingFinished: sessionManager.playbackSupportedAudioCodecs = parseList(text)
                 }
 
                 RowLayout {

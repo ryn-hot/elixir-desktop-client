@@ -6,7 +6,7 @@
 
 #include "backend/ServerListModel.h"
 
-#ifdef Q_OS_MAC
+#ifdef ELIXIR_HAS_DNSSD
 #include <dns_sd.h>
 #endif
 
@@ -79,7 +79,7 @@ private:
     bool m_browsing = false;
     QHash<QNetworkReply*, PendingProbe> m_probes;
 
-#ifdef Q_OS_MAC
+#ifdef ELIXIR_HAS_DNSSD
     struct ResolveContext {
         QString key;
         QString serviceName;

@@ -8,9 +8,13 @@
 #include <QTimer>
 #include <QUrl>
 
-#ifdef Q_OS_MAC
+#ifdef ELIXIR_HAS_DNSSD
 #include <QSocketNotifier>
+#if defined(Q_OS_WIN)
+#include <winsock2.h>
+#else
 #include <arpa/inet.h>
+#endif
 #endif
 
 namespace {
@@ -25,7 +29,7 @@ ServerDiscovery::ServerDiscovery(QObject *parent)
 }
 
 ServerDiscovery::~ServerDiscovery() {
-#ifdef Q_OS_MAC
+#ifdef ELIXIR_HAS_DNSSD
     stopMdnsBrowse();
 #endif
 }
@@ -87,12 +91,12 @@ bool ServerDiscovery::browsing() const {
 }
 
 void ServerDiscovery::refreshMdns() {
-#ifdef Q_OS_MAC
+#ifdef ELIXIR_HAS_DNSSD
     m_mdnsModel.clear();
     stopMdnsBrowse();
     startMdnsBrowse();
 #else
-    setStatusMessage("mDNS discovery is not available on this platform.");
+    setStatusMessage("mDNS discovery requires a Bonjour/Avahi DNS-SD runtime.");
 #endif
 }
 
@@ -288,7 +292,7 @@ void ServerDiscovery::handleProbeFinished(QNetworkReply *reply, bool forcedFailu
     reply->deleteLater();
 }
 
-#ifdef Q_OS_MAC
+#ifdef ELIXIR_HAS_DNSSD
 void ServerDiscovery::startMdnsBrowse() {
     DNSServiceRef browseRef = nullptr;
     const DNSServiceErrorType err = DNSServiceBrowse(

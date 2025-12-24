@@ -62,6 +62,17 @@ int main(int argc, char *argv[]) {
     serverDiscovery.setAuthToken(sessionManager.controlPlaneToken());
     serverDiscovery.setPreferredNetworkType(sessionManager.networkType());
 
+    auto syncClientCapabilities = [&]() {
+        QVariantMap caps;
+        caps.insert("max_resolution", sessionManager.playbackMaxResolution());
+        caps.insert("max_bitrate_bps", sessionManager.playbackMaxBitrateBps());
+        caps.insert("supported_containers", sessionManager.playbackSupportedContainers());
+        caps.insert("supported_video_codecs", sessionManager.playbackSupportedVideoCodecs());
+        caps.insert("supported_audio_codecs", sessionManager.playbackSupportedAudioCodecs());
+        apiClient.setClientCapabilities(caps);
+    };
+    syncClientCapabilities();
+
     QObject::connect(&sessionManager, &SessionManager::baseUrlChanged, &apiClient, [&]() {
         apiClient.setBaseUrl(sessionManager.baseUrl());
     });
@@ -92,6 +103,11 @@ int main(int argc, char *argv[]) {
     QObject::connect(&sessionManager, &SessionManager::networkTypeChanged, &serverDiscovery, [&]() {
         serverDiscovery.setPreferredNetworkType(sessionManager.networkType());
     });
+    QObject::connect(&sessionManager, &SessionManager::playbackMaxResolutionChanged, &apiClient, syncClientCapabilities);
+    QObject::connect(&sessionManager, &SessionManager::playbackMaxBitrateBpsChanged, &apiClient, syncClientCapabilities);
+    QObject::connect(&sessionManager, &SessionManager::playbackSupportedContainersChanged, &apiClient, syncClientCapabilities);
+    QObject::connect(&sessionManager, &SessionManager::playbackSupportedVideoCodecsChanged, &apiClient, syncClientCapabilities);
+    QObject::connect(&sessionManager, &SessionManager::playbackSupportedAudioCodecsChanged, &apiClient, syncClientCapabilities);
 
     QObject::connect(&apiClient, &ApiClient::authTokenChanged, &sessionManager, [&]() {
         sessionManager.setAuthToken(apiClient.authToken());

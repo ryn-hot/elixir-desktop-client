@@ -46,6 +46,18 @@ void ApiClient::setAccessTokenExpiresAt(const QString &value) {
     emit accessTokenExpiresAtChanged();
 }
 
+QVariantMap ApiClient::clientCapabilities() const {
+    return m_clientCapabilities;
+}
+
+void ApiClient::setClientCapabilities(const QVariantMap &value) {
+    if (m_clientCapabilities == value) {
+        return;
+    }
+    m_clientCapabilities = value;
+    emit clientCapabilitiesChanged();
+}
+
 QString ApiClient::networkType() const {
     return m_networkType;
 }
@@ -166,6 +178,9 @@ void ApiClient::startPlayback(const QString &mediaItemId, const QString &preferr
     }
     if (!m_networkType.isEmpty() && m_networkType != "auto") {
         body.insert("network_type", m_networkType);
+    }
+    if (!m_clientCapabilities.isEmpty()) {
+        body.insert("client_capabilities", QJsonObject::fromVariantMap(m_clientCapabilities));
     }
     sendRequest("POST", "/api/v1/play", body,
                 [this](const QJsonDocument &doc) {
