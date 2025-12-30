@@ -7,6 +7,12 @@
 #include <QSGRendererInterface>
 #include <QUrl>
 #include <QDateTime>
+#include <QFile>
+#include <QDir>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QStandardPaths>
+#include <QTextStream>
 
 #include "backend/ApiClient.h"
 #include "backend/ControlPlaneClient.h"
@@ -15,6 +21,62 @@
 #include "backend/PlayerController.h"
 #include "backend/ServerDiscovery.h"
 #include "backend/SessionManager.h"
+
+namespace {
+QFile *g_logFile = nullptr;
+QMutex g_logMutex;
+
+QString logLevelName(QtMsgType type) {
+    switch (type) {
+        case QtDebugMsg:
+            return "DEBUG";
+        case QtInfoMsg:
+            return "INFO";
+        case QtWarningMsg:
+            return "WARN";
+        case QtCriticalMsg:
+            return "CRITICAL";
+        case QtFatalMsg:
+            return "FATAL";
+    }
+    return "LOG";
+}
+
+void logMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
+    const QString timestamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    const QString level = logLevelName(type);
+    const QString category = QString::fromUtf8(context.category ? context.category : "");
+    QString line = QString("%1 [%2] %3: %4").arg(timestamp, level, category, msg);
+    if (context.file && context.line > 0) {
+        line.append(QString(" (%1:%2)").arg(context.file).arg(context.line));
+    }
+
+    {
+        QMutexLocker locker(&g_logMutex);
+        if (g_logFile && g_logFile->isOpen()) {
+            QTextStream out(g_logFile);
+            out << line << '\n';
+            out.flush();
+        }
+    }
+    fprintf(stderr, "%s\n", line.toUtf8().constData());
+    if (type == QtFatalMsg) {
+        abort();
+    }
+}
+
+void initLogging() {
+    const QString logDir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (!logDir.isEmpty()) {
+        QDir().mkpath(logDir);
+        const QString logPath = logDir + "/client.log";
+        g_logFile = new QFile(logPath);
+        g_logFile->open(QIODevice::Append | QIODevice::Text);
+    }
+    qInstallMessageHandler(logMessageHandler);
+    qInfo() << "Elixir client logging to" << (g_logFile ? g_logFile->fileName() : "stderr");
+}
+} // namespace
 
 int main(int argc, char *argv[]) {
     qputenv("QSG_RHI_BACKEND", "opengl");
@@ -25,6 +87,8 @@ int main(int argc, char *argv[]) {
     QCoreApplication::setApplicationName("Elixir");
 
     QQuickStyle::setStyle("Fusion");
+    initLogging();
+    qInfo() << "Elixir client starting" << QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
 
     SessionManager sessionManager;
     ApiClient apiClient;
@@ -127,6 +191,12 @@ int main(int argc, char *argv[]) {
     playerController.setApiClient(&apiClient);
 
     QQmlApplicationEngine engine;
+    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app,
+                     [](const QList<QQmlError> &warnings) {
+                         for (const auto &warning : warnings) {
+                             qWarning().noquote() << "QML warning:" << warning.toString();
+                         }
+                     });
     engine.rootContext()->setContextProperty("apiClient", &apiClient);
     engine.rootContext()->setContextProperty("controlPlaneClient", &controlPlaneClient);
     engine.rootContext()->setContextProperty("libraryModel", &libraryModel);

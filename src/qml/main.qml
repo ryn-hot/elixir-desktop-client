@@ -72,10 +72,13 @@ ApplicationWindow {
     Connections {
         target: apiClient
         function onPlaybackStarted(info) {
-            playerController.beginPlayback(info)
-            if (!stackView.currentItem || stackView.currentItem.objectName !== "playerView") {
-                stackView.push(Qt.resolvedUrl("views/PlayerView.qml"), { stackView: stackView })
-            }
+            Qt.callLater(function() {
+                console.log("playbackStarted", JSON.stringify(info))
+                playerController.beginPlayback(info)
+                if (!stackView.currentItem || stackView.currentItem.objectName !== "playerView") {
+                    stackView.push(Qt.resolvedUrl("views/PlayerView.qml"), { stackView: stackView })
+                }
+            })
         }
         function onAuthExpired(message) {
             root.authNotice = message !== "" ? message : "Session expired. Please sign in again."

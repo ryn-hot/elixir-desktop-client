@@ -57,6 +57,10 @@ signals:
     void pausedChanged();
     void activeChanged();
 
+private slots:
+    void handleSeekCompleted(const QString &sessionId, double seconds);
+    void handleSeekFailed(const QString &sessionId, const QString &error);
+
 private:
     void setStreamUrl(const QString &value);
     void setSessionId(const QString &value);
@@ -82,4 +86,7 @@ private:
     double m_seekOffset = 0.0;
     bool m_paused = false;
     bool m_active = false;
+    bool m_seekInFlight = false;
+    double m_pendingSeekSeconds = 0.0;
+    QString m_pendingStreamUrl;
 };

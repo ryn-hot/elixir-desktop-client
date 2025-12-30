@@ -18,6 +18,9 @@ class SessionManager : public QObject {
     Q_PROPERTY(QStringList playbackSupportedContainers READ playbackSupportedContainers WRITE setPlaybackSupportedContainers NOTIFY playbackSupportedContainersChanged)
     Q_PROPERTY(QStringList playbackSupportedVideoCodecs READ playbackSupportedVideoCodecs WRITE setPlaybackSupportedVideoCodecs NOTIFY playbackSupportedVideoCodecsChanged)
     Q_PROPERTY(QStringList playbackSupportedAudioCodecs READ playbackSupportedAudioCodecs WRITE setPlaybackSupportedAudioCodecs NOTIFY playbackSupportedAudioCodecsChanged)
+    Q_PROPERTY(QString subtitleMode READ subtitleMode WRITE setSubtitleMode NOTIFY subtitleModeChanged)
+    Q_PROPERTY(QString subtitleLang READ subtitleLang WRITE setSubtitleLang NOTIFY subtitleLangChanged)
+    Q_PROPERTY(QString subtitleTitle READ subtitleTitle WRITE setSubtitleTitle NOTIFY subtitleTitleChanged)
     Q_PROPERTY(QString email READ email WRITE setEmail NOTIFY emailChanged)
     Q_PROPERTY(QString networkType READ networkType WRITE setNetworkType NOTIFY networkTypeChanged)
 
@@ -63,6 +66,15 @@ public:
     QStringList playbackSupportedAudioCodecs() const;
     void setPlaybackSupportedAudioCodecs(const QStringList &value);
 
+    QString subtitleMode() const;
+    void setSubtitleMode(const QString &value);
+
+    QString subtitleLang() const;
+    void setSubtitleLang(const QString &value);
+
+    QString subtitleTitle() const;
+    void setSubtitleTitle(const QString &value);
+
     QString email() const;
     void setEmail(const QString &value);
 
@@ -86,6 +98,9 @@ signals:
     void playbackSupportedContainersChanged();
     void playbackSupportedVideoCodecsChanged();
     void playbackSupportedAudioCodecsChanged();
+    void subtitleModeChanged();
+    void subtitleLangChanged();
+    void subtitleTitleChanged();
     void emailChanged();
     void networkTypeChanged();
 
@@ -106,6 +121,9 @@ private:
     QStringList m_playbackSupportedContainers;
     QStringList m_playbackSupportedVideoCodecs;
     QStringList m_playbackSupportedAudioCodecs;
+    QString m_subtitleMode;
+    QString m_subtitleLang;
+    QString m_subtitleTitle;
     QString m_email;
     QString m_networkType;
 };

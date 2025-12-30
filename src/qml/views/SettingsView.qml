@@ -10,32 +10,46 @@ Item {
     objectName: "settingsView"
     property StackView stackView: null
 
-    ColumnLayout {
+    function parseList(text) {
+        return text.split(/\\s*,\\s*/).filter(function(item) { return item.length > 0 })
+    }
+
+    Flickable {
         anchors.fill: parent
-        anchors.margins: Theme.spacingXLarge
-        spacing: Theme.spacingLarge
+        contentWidth: width
+        contentHeight: contentColumn.implicitHeight + Theme.spacingXLarge * 2
+        clip: true
 
-        function parseList(text) {
-            return text.split(/\\s*,\\s*/).filter(function(item) { return item.length > 0 })
-        }
+        ColumnLayout {
+            id: contentColumn
+            x: Theme.spacingXLarge
+            y: Theme.spacingXLarge
+            width: Math.max(0, parent.width - Theme.spacingXLarge * 2)
+            spacing: Theme.spacingLarge
 
-        Label {
-            text: "Settings"
-            color: Theme.textPrimary
-            font.pixelSize: 24
-            font.family: Theme.fontDisplay
-        }
+            Label {
+                text: "Settings"
+                color: Theme.textPrimary
+                font.pixelSize: 24
+                font.family: Theme.fontDisplay
+            }
 
-        Rectangle {
-            Layout.fillWidth: true
-            radius: Theme.radiusLarge
-            color: Theme.backgroundCard
-            border.color: Theme.border
+            Rectangle {
+                id: card
+                Layout.fillWidth: true
+                radius: Theme.radiusLarge
+                color: Theme.backgroundCard
+                border.color: Theme.border
+                implicitHeight: cardContent.implicitHeight + Theme.spacingLarge * 2
+                height: implicitHeight
 
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: Theme.spacingLarge
-                spacing: Theme.spacingMedium
+                ColumnLayout {
+                    id: cardContent
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingLarge
+                    spacing: Theme.spacingMedium
 
                 Label {
                     text: "Server"
@@ -435,4 +449,5 @@ Item {
             }
         }
     }
+}
 }

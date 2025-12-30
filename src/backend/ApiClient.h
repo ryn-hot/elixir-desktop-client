@@ -64,6 +64,8 @@ signals:
     void mediaDetailsReceived(const QVariantMap &details);
     void playbackStarted(const QVariantMap &info);
     void sessionPolled(const QVariantMap &info);
+    void seekCompleted(const QString &sessionId, double positionSeconds);
+    void seekFailed(const QString &sessionId, const QString &error);
     void scanCompleted();
     void requestFailed(const QString &endpoint, const QString &error);
 
@@ -78,7 +80,8 @@ private:
         const QString &path,
         const QJsonObject &body,
         const SuccessHandler &onSuccess,
-        const ErrorHandler &onError = ErrorHandler());
+        const ErrorHandler &onError = ErrorHandler(),
+        bool allowNonJson = false);
 
     QNetworkAccessManager m_manager;
     QString m_baseUrl;

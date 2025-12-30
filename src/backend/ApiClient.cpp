@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QNetworkReply>
 #include <QUrlQuery>
+#include <QDebug>
 
 ApiClient::ApiClient(QObject *parent)
     : QObject(parent) {}
@@ -195,7 +196,13 @@ void ApiClient::startPlayback(const QString &mediaItemId, const QString &preferr
 void ApiClient::seekPlayback(const QString &sessionId, double seconds) {
     QJsonObject body{{"position_seconds", seconds}};
     sendRequest("POST", QString("/api/v1/sessions/%1/seek").arg(sessionId), body,
-                [](const QJsonDocument &) {});
+                [this, sessionId, seconds](const QJsonDocument &) {
+                    emit seekCompleted(sessionId, seconds);
+                },
+                [this, sessionId](const QString &error) {
+                    emit seekFailed(sessionId, error);
+                },
+                true);
 }
 
 void ApiClient::pollSession(const QString &sessionId) {
@@ -214,7 +221,9 @@ void ApiClient::pollSession(const QString &sessionId) {
 
 void ApiClient::endSession(const QString &sessionId) {
     sendRequest("POST", QString("/api/v1/sessions/%1/end").arg(sessionId), QJsonObject(),
-                [](const QJsonDocument &) {});
+                [](const QJsonDocument &) {},
+                ErrorHandler(),
+                true);
 }
 
 void ApiClient::runScan(bool forceMetadata) {
@@ -249,7 +258,8 @@ void ApiClient::sendRequest(
     const QString &path,
     const QJsonObject &body,
     const SuccessHandler &onSuccess,
-    const ErrorHandler &onError) {
+    const ErrorHandler &onError,
+    bool allowNonJson) {
     if (m_baseUrl.trimmed().isEmpty()) {
         const QString msg = "Base URL is not set.";
         if (onError) {
@@ -258,6 +268,10 @@ void ApiClient::sendRequest(
         emit requestFailed(path, msg);
         return;
     }
+
+    const QStringList bodyKeys = body.keys();
+    qInfo() << "API request" << method << path << "base" << m_baseUrl
+            << "keys" << bodyKeys;
 
     QNetworkRequest request(makeUrl(path));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
@@ -274,10 +288,12 @@ void ApiClient::sendRequest(
         reply = m_manager.sendCustomRequest(request, method.toUtf8(), QJsonDocument(body).toJson());
     }
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, path, onSuccess, onError]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, path, onSuccess, onError, allowNonJson]() {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray payload = reply->readAll();
         const bool okStatus = status >= 200 && status < 300;
+        qInfo() << "API response" << path << "status" << status
+                << "bytes" << payload.size() << "error" << reply->error();
 
         if (reply->error() != QNetworkReply::NoError || !okStatus) {
             const QString detail = payload.isEmpty()
@@ -304,6 +320,12 @@ void ApiClient::sendRequest(
         QJsonParseError parseError;
         const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
         if (parseError.error != QJsonParseError::NoError) {
+            if (allowNonJson) {
+                qInfo() << "API response (non-JSON)" << path << "bytes" << payload.size();
+                onSuccess(QJsonDocument());
+                reply->deleteLater();
+                return;
+            }
             const QString detail = QString("Invalid JSON: %1").arg(parseError.errorString());
             if (onError) {
                 onError(detail);

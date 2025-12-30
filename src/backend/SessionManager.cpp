@@ -14,6 +14,9 @@ constexpr const char *kPlaybackMaxBitrateKey = "playback/maxBitrateBps";
 constexpr const char *kPlaybackSupportedContainersKey = "playback/supportedContainers";
 constexpr const char *kPlaybackSupportedVideoCodecsKey = "playback/supportedVideoCodecs";
 constexpr const char *kPlaybackSupportedAudioCodecsKey = "playback/supportedAudioCodecs";
+constexpr const char *kSubtitleModeKey = "playback/subtitleMode";
+constexpr const char *kSubtitleLangKey = "playback/subtitleLang";
+constexpr const char *kSubtitleTitleKey = "playback/subtitleTitle";
 constexpr const char *kEmailKey = "session/email";
 constexpr const char *kNetworkTypeKey = "session/networkType";
 }
@@ -33,6 +36,9 @@ SessionManager::SessionManager(QObject *parent)
       m_playbackSupportedContainers(m_settings.value(kPlaybackSupportedContainersKey, QStringList{"mkv", "mp4"}).toStringList()),
       m_playbackSupportedVideoCodecs(m_settings.value(kPlaybackSupportedVideoCodecsKey, QStringList{"h264"}).toStringList()),
       m_playbackSupportedAudioCodecs(m_settings.value(kPlaybackSupportedAudioCodecsKey, QStringList{"aac", "ac3"}).toStringList()),
+      m_subtitleMode(m_settings.value(kSubtitleModeKey, "default").toString()),
+      m_subtitleLang(m_settings.value(kSubtitleLangKey, "").toString()),
+      m_subtitleTitle(m_settings.value(kSubtitleTitleKey, "").toString()),
       m_email(m_settings.value(kEmailKey, "").toString()),
       m_networkType(m_settings.value(kNetworkTypeKey, "auto").toString()) {}
 
@@ -203,6 +209,45 @@ void SessionManager::setPlaybackSupportedAudioCodecs(const QStringList &value) {
     m_playbackSupportedAudioCodecs = value;
     storeValue(kPlaybackSupportedAudioCodecsKey, m_playbackSupportedAudioCodecs);
     emit playbackSupportedAudioCodecsChanged();
+}
+
+QString SessionManager::subtitleMode() const {
+    return m_subtitleMode;
+}
+
+void SessionManager::setSubtitleMode(const QString &value) {
+    if (m_subtitleMode == value) {
+        return;
+    }
+    m_subtitleMode = value;
+    storeValue(kSubtitleModeKey, m_subtitleMode);
+    emit subtitleModeChanged();
+}
+
+QString SessionManager::subtitleLang() const {
+    return m_subtitleLang;
+}
+
+void SessionManager::setSubtitleLang(const QString &value) {
+    if (m_subtitleLang == value) {
+        return;
+    }
+    m_subtitleLang = value;
+    storeValue(kSubtitleLangKey, m_subtitleLang);
+    emit subtitleLangChanged();
+}
+
+QString SessionManager::subtitleTitle() const {
+    return m_subtitleTitle;
+}
+
+void SessionManager::setSubtitleTitle(const QString &value) {
+    if (m_subtitleTitle == value) {
+        return;
+    }
+    m_subtitleTitle = value;
+    storeValue(kSubtitleTitleKey, m_subtitleTitle);
+    emit subtitleTitleChanged();
 }
 
 QString SessionManager::email() const {

@@ -5,13 +5,45 @@
 #include <QDateTime>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QDebug>
+#include <cmath>
 #include <QtGlobal>
+
+namespace {
+QString sanitizeUrlForLog(const QString &url) {
+    if (url.isEmpty()) {
+        return url;
+    }
+    QUrl parsed(url);
+    parsed.setQuery(QString());
+    parsed.setFragment(QString());
+    return parsed.toString();
+}
+} // namespace
 
 PlayerController::PlayerController(QObject *parent)
     : QObject(parent) {}
 
 void PlayerController::setApiClient(ApiClient *client) {
+    if (m_apiClient == client) {
+        return;
+    }
+    if (m_apiClient) {
+        disconnect(m_apiClient, nullptr, this, nullptr);
+    }
     m_apiClient = client;
+    if (m_apiClient) {
+        connect(
+            m_apiClient,
+            &ApiClient::seekCompleted,
+            this,
+            &PlayerController::handleSeekCompleted);
+        connect(
+            m_apiClient,
+            &ApiClient::seekFailed,
+            this,
+            &PlayerController::handleSeekFailed);
+    }
 }
 
 QString PlayerController::streamUrl() const {
@@ -61,6 +93,11 @@ bool PlayerController::active() const {
 void PlayerController::beginPlayback(const QVariantMap &info) {
     const QString baseUrl = m_apiClient ? m_apiClient->baseUrl() : QString();
     const QString path = info.value("stream_url").toString();
+    qInfo() << "Playback start"
+            << "session" << info.value("session_id").toString()
+            << "mode" << info.value("mode").toString()
+            << "stream" << sanitizeUrlForLog(path)
+            << "base" << baseUrl;
     setStreamUrl(buildStreamUrl(baseUrl, path));
     setSessionId(info.value("session_id").toString());
     setMode(info.value("mode").toString());
@@ -71,6 +108,9 @@ void PlayerController::beginPlayback(const QVariantMap &info) {
     setLocalPositionInternal(0.0);
     setPaused(false);
     setActive(true);
+    m_seekInFlight = false;
+    m_pendingSeekSeconds = 0.0;
+    m_pendingStreamUrl.clear();
 }
 
 void PlayerController::applySessionPoll(const QVariantMap &info) {
@@ -84,11 +124,17 @@ void PlayerController::applySessionPoll(const QVariantMap &info) {
 
     const QString state = info.value("state").toString();
     if (!state.isEmpty()) {
+        if (state != m_sessionState) {
+            qInfo() << "Session state update" << state;
+        }
         setSessionState(state);
     }
 
     const QString error = info.value("error").toString();
     if (error != m_sessionError) {
+        if (!error.isEmpty()) {
+            qWarning() << "Session error" << error;
+        }
         setSessionError(error);
     }
 
@@ -109,6 +155,12 @@ void PlayerController::updateLocalPosition(double seconds) {
     if (!m_active) {
         return;
     }
+    if (m_seekInFlight) {
+        return;
+    }
+    if (!std::isfinite(seconds)) {
+        return;
+    }
     setLocalPositionInternal(seconds);
 }
 
@@ -126,11 +178,14 @@ void PlayerController::seek(double seconds) {
     }
     if (m_mode == "transcode") {
         if (m_apiClient) {
+            m_pendingSeekSeconds = seconds;
+            m_pendingStreamUrl = cacheBustUrl(m_streamUrl);
+            m_seekInFlight = true;
+            qInfo() << "Seek request" << m_sessionId << seconds;
             m_apiClient->seekPlayback(m_sessionId, seconds);
         }
         setSeekOffsetInternal(seconds);
         setLocalPositionInternal(0.0);
-        setStreamUrl(cacheBustUrl(m_streamUrl));
         return;
     }
     setSeekOffsetInternal(0.0);
@@ -139,6 +194,7 @@ void PlayerController::seek(double seconds) {
 
 void PlayerController::endSession() {
     if (m_apiClient && !m_sessionId.isEmpty()) {
+        qInfo() << "Ending session" << m_sessionId;
         m_apiClient->endSession(m_sessionId);
     }
     reset();
@@ -155,6 +211,9 @@ void PlayerController::reset() {
     setSeekOffsetInternal(0.0);
     setLocalPositionInternal(0.0);
     setPaused(false);
+    m_seekInFlight = false;
+    m_pendingSeekSeconds = 0.0;
+    m_pendingStreamUrl.clear();
 }
 
 void PlayerController::setStreamUrl(const QString &value) {
@@ -162,6 +221,7 @@ void PlayerController::setStreamUrl(const QString &value) {
         return;
     }
     m_streamUrl = value;
+    qInfo() << "Stream URL updated" << sanitizeUrlForLog(value);
     emit streamUrlChanged();
 }
 
@@ -229,6 +289,29 @@ void PlayerController::setActive(bool value) {
     }
     m_active = value;
     emit activeChanged();
+}
+
+void PlayerController::handleSeekCompleted(const QString &sessionId, double seconds) {
+    if (!m_seekInFlight || sessionId != m_sessionId) {
+        return;
+    }
+    if (!qFuzzyCompare(seconds + 1.0, m_pendingSeekSeconds + 1.0)) {
+        return;
+    }
+    m_seekInFlight = false;
+    qInfo() << "Seek completed" << sessionId << seconds;
+    setStreamUrl(m_pendingStreamUrl);
+}
+
+void PlayerController::handleSeekFailed(const QString &sessionId, const QString &error) {
+    if (!m_seekInFlight || sessionId != m_sessionId) {
+        return;
+    }
+    m_seekInFlight = false;
+    qWarning() << "Seek failed" << sessionId << error;
+    if (!error.isEmpty()) {
+        setSessionError(error);
+    }
 }
 
 QString PlayerController::buildStreamUrl(const QString &baseUrl, const QString &path) const {
