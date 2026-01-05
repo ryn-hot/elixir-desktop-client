@@ -46,6 +46,9 @@ public:
     Q_INVOKABLE void pollSession(const QString &sessionId);
     Q_INVOKABLE void endSession(const QString &sessionId);
     Q_INVOKABLE void runScan(bool forceMetadata);
+    Q_INVOKABLE void fetchReviewQueue(const QString &status, int limit, int offset);
+    Q_INVOKABLE void fetchReviewQueueDetail(const QString &reviewId);
+    Q_INVOKABLE void applyReviewMatch(const QString &reviewId, const QString &libraryType, const QVariantMap &externalIds, const QString &normalizedKey = QString());
 
 signals:
     void baseUrlChanged();
@@ -67,6 +70,9 @@ signals:
     void seekCompleted(const QString &sessionId, double positionSeconds);
     void seekFailed(const QString &sessionId, const QString &error);
     void scanCompleted();
+    void reviewQueueReceived(const QVariantList &items);
+    void reviewDetailReceived(const QVariantMap &detail);
+    void reviewApplied(const QString &reviewId);
     void requestFailed(const QString &endpoint, const QString &error);
 
 private:

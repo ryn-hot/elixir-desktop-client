@@ -233,6 +233,75 @@ void ApiClient::runScan(bool forceMetadata) {
                 [this](const QJsonDocument &) { emit scanCompleted(); });
 }
 
+void ApiClient::fetchReviewQueue(const QString &status, int limit, int offset) {
+    QString path = "/api/v1/library/review/queue";
+    QUrlQuery query;
+    if (!status.trimmed().isEmpty()) {
+        query.addQueryItem("status", status.trimmed());
+    }
+    if (limit > 0) {
+        query.addQueryItem("limit", QString::number(limit));
+    }
+    if (offset > 0) {
+        query.addQueryItem("offset", QString::number(offset));
+    }
+    if (!query.isEmpty()) {
+        path.append('?');
+        path.append(query.toString(QUrl::FullyEncoded));
+    }
+
+    sendRequest("GET", path, QJsonObject(),
+                [this](const QJsonDocument &doc) {
+                    if (!doc.isArray()) {
+                        emit requestFailed("/api/v1/library/review/queue", "Review queue response was not a list.");
+                        return;
+                    }
+                    emit reviewQueueReceived(doc.array().toVariantList());
+                });
+}
+
+void ApiClient::fetchReviewQueueDetail(const QString &reviewId) {
+    if (reviewId.trimmed().isEmpty()) {
+        return;
+    }
+    sendRequest("GET", QString("/api/v1/library/review/queue/%1").arg(reviewId), QJsonObject(),
+                [this](const QJsonDocument &doc) {
+                    if (!doc.isObject()) {
+                        emit requestFailed("/api/v1/library/review/queue/:id", "Review detail response was not an object.");
+                        return;
+                    }
+                    emit reviewDetailReceived(doc.object().toVariantMap());
+                });
+}
+
+void ApiClient::applyReviewMatch(
+    const QString &reviewId,
+    const QString &libraryType,
+    const QVariantMap &externalIds,
+    const QString &normalizedKey) {
+    if (reviewId.trimmed().isEmpty()) {
+        emit requestFailed("/api/v1/library/review/queue/:id/apply", "Review id is required.");
+        return;
+    }
+    QJsonObject body{{"library_type", libraryType.trimmed()}};
+    if (!normalizedKey.trimmed().isEmpty()) {
+        body.insert("normalized_key", normalizedKey.trimmed());
+    }
+    QJsonObject externalIdsObj;
+    for (auto it = externalIds.constBegin(); it != externalIds.constEnd(); ++it) {
+        if (it.value().isValid() && !it.value().toString().trimmed().isEmpty()) {
+            externalIdsObj.insert(it.key(), QJsonValue::fromVariant(it.value()));
+        }
+    }
+    body.insert("external_ids", externalIdsObj);
+
+    sendRequest(
+        "POST",
+        QString("/api/v1/library/review/queue/%1/apply").arg(reviewId),
+        body,
+        [this, reviewId](const QJsonDocument &) { emit reviewApplied(reviewId); });
+}
+
 QString ApiClient::normalizeBaseUrl(const QString &value) const {
     QString trimmed = value.trimmed();
     if (trimmed.isEmpty()) {
