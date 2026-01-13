@@ -61,6 +61,7 @@ private:
 class LibraryModel : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(int count READ count NOTIFY countChanged)
+    Q_PROPERTY(QString baseUrl READ baseUrl WRITE setBaseUrl NOTIFY baseUrlChanged)
     Q_PROPERTY(QString searchQuery READ searchQuery WRITE setSearchQuery NOTIFY searchQueryChanged)
     Q_PROPERTY(QString sortMode READ sortMode WRITE setSortMode NOTIFY sortModeChanged)
     Q_PROPERTY(QString filterMode READ filterMode WRITE setFilterMode NOTIFY filterModeChanged)
@@ -87,6 +88,9 @@ public:
     QString searchQuery() const;
     void setSearchQuery(const QString &value);
 
+    QString baseUrl() const;
+    void setBaseUrl(const QString &value);
+
     QString sortMode() const;
     void setSortMode(const QString &value);
 
@@ -98,6 +102,7 @@ public slots:
 
 signals:
     void countChanged();
+    void baseUrlChanged();
     void searchQueryChanged();
     void sortModeChanged();
     void filterModeChanged();
@@ -108,6 +113,7 @@ private:
     QString extractDescription(const QVariantMap &metadata) const;
     QString extractTitle(const QVariantMap &metadata) const;
     int extractYear(const QVariantMap &metadata) const;
+    QString resolveUrl(const QString &value) const;
     void applySearchQuery();
     void applySortMode();
     void applyFilterMode();
@@ -119,6 +125,7 @@ private:
     MediaFilterModel m_animeModel;
     MediaFilterModel m_continueModel;
     MediaFilterModel m_searchModel;
+    QString m_baseUrl;
     QString m_searchQuery;
     QString m_sortMode = "recent";
     QString m_filterMode = "all";

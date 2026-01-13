@@ -2,6 +2,7 @@
 
 #include <QJsonValue>
 #include <QMetaType>
+#include <QUrl>
 
 MediaFilterModel::MediaFilterModel(QObject *parent)
     : QSortFilterProxyModel(parent) {
@@ -228,6 +229,19 @@ void LibraryModel::setSearchQuery(const QString &value) {
     emit searchQueryChanged();
 }
 
+QString LibraryModel::baseUrl() const {
+    return m_baseUrl;
+}
+
+void LibraryModel::setBaseUrl(const QString &value) {
+    const QString trimmed = value.trimmed();
+    if (m_baseUrl == trimmed) {
+        return;
+    }
+    m_baseUrl = trimmed;
+    emit baseUrlChanged();
+}
+
 QString LibraryModel::sortMode() const {
     return m_sortMode;
 }
@@ -281,14 +295,24 @@ MediaItem LibraryModel::itemFromVariant(const QVariantMap &map) const {
     item.progress = map.value("progress").toDouble();
 
     const QVariantMap metadata = map.value("metadata").toMap();
+    item.posterUrl = resolveUrl(map.value("poster_url").toString());
+    item.backdropUrl = resolveUrl(map.value("backdrop_url").toString());
+    const QString bannerUrl = resolveUrl(map.value("banner_url").toString());
     if (item.title.trimmed().isEmpty()) {
         item.title = extractTitle(metadata);
     }
     if (item.year <= 0) {
         item.year = extractYear(metadata);
     }
-    item.posterUrl = extractImage(metadata, {"poster", "posterUrl", "poster_url", "poster_path", "cover", "image"});
-    item.backdropUrl = extractImage(metadata, {"background", "backdrop", "fanart", "backdropUrl", "backdrop_path"});
+    if (item.posterUrl.isEmpty()) {
+        item.posterUrl = resolveUrl(extractImage(metadata, {"poster", "posterUrl", "poster_url", "poster_path", "cover", "image"}));
+    }
+    if (item.backdropUrl.isEmpty()) {
+        item.backdropUrl = resolveUrl(extractImage(metadata, {"background", "backdrop", "fanart", "backdropUrl", "backdrop_path"}));
+    }
+    if (item.backdropUrl.isEmpty() && !bannerUrl.isEmpty()) {
+        item.backdropUrl = bannerUrl;
+    }
     if (item.backdropUrl.isEmpty()) {
         item.backdropUrl = item.posterUrl;
     }
@@ -301,6 +325,22 @@ MediaItem LibraryModel::itemFromVariant(const QVariantMap &map) const {
     }
 
     return item;
+}
+
+QString LibraryModel::resolveUrl(const QString &value) const {
+    const QString trimmed = value.trimmed();
+    if (trimmed.isEmpty()) {
+        return QString();
+    }
+    const QUrl url(trimmed);
+    if (!url.isRelative() || m_baseUrl.trimmed().isEmpty()) {
+        return trimmed;
+    }
+    const QUrl base(m_baseUrl);
+    if (!base.isValid()) {
+        return trimmed;
+    }
+    return base.resolved(QUrl(trimmed)).toString();
 }
 
 QString LibraryModel::extractImage(const QVariantMap &metadata, const QStringList &keys) const {

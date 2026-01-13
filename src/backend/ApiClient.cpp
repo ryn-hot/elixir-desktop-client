@@ -6,6 +6,7 @@
 #include <QNetworkReply>
 #include <QUrlQuery>
 #include <QDebug>
+#include <QLocale>
 
 ApiClient::ApiClient(QObject *parent)
     : QObject(parent) {}
@@ -167,6 +168,48 @@ void ApiClient::fetchMediaDetails(const QString &mediaItemId) {
                         return;
                     }
                     emit mediaDetailsReceived(doc.object().toVariantMap());
+                });
+}
+
+void ApiClient::fetchSeasons(const QString &seriesId) {
+    if (seriesId.trimmed().isEmpty()) {
+        return;
+    }
+    sendRequest("GET", QString("/api/v1/library/series/%1/seasons").arg(seriesId), QJsonObject(),
+                [this, seriesId](const QJsonDocument &doc) {
+                    if (!doc.isArray()) {
+                        emit requestFailed("/api/v1/library/series/:id/seasons", "Seasons response was not a list.");
+                        return;
+                    }
+                    emit seasonsReceived(seriesId, doc.array().toVariantList());
+                });
+}
+
+void ApiClient::fetchSeasonDetail(const QString &seasonId) {
+    if (seasonId.trimmed().isEmpty()) {
+        return;
+    }
+    sendRequest("GET", QString("/api/v1/library/seasons/%1").arg(seasonId), QJsonObject(),
+                [this, seasonId](const QJsonDocument &doc) {
+                    if (!doc.isObject()) {
+                        emit requestFailed("/api/v1/library/seasons/:id", "Season detail response was not an object.");
+                        return;
+                    }
+                    emit seasonDetailReceived(seasonId, doc.object().toVariantMap());
+                });
+}
+
+void ApiClient::fetchEpisodes(const QString &seasonId) {
+    if (seasonId.trimmed().isEmpty()) {
+        return;
+    }
+    sendRequest("GET", QString("/api/v1/library/seasons/%1/episodes").arg(seasonId), QJsonObject(),
+                [this, seasonId](const QJsonDocument &doc) {
+                    if (!doc.isArray()) {
+                        emit requestFailed("/api/v1/library/seasons/:id/episodes", "Episodes response was not a list.");
+                        return;
+                    }
+                    emit episodesReceived(seasonId, doc.array().toVariantList());
                 });
 }
 
@@ -344,6 +387,10 @@ void ApiClient::sendRequest(
 
     QNetworkRequest request(makeUrl(path));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    const QString locale = QLocale::system().name().replace('_', '-');
+    if (!locale.trimmed().isEmpty()) {
+        request.setRawHeader("Accept-Language", locale.toUtf8());
+    }
     if (!m_authToken.isEmpty()) {
         request.setRawHeader("Authorization", QByteArray("Bearer ") + m_authToken.toUtf8());
     }

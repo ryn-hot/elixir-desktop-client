@@ -1,79 +1,147 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
-
 import Elixir 1.0
 
 Item {
     id: root
-    signal homeRequested()
-    signal settingsRequested()
+    property string searchQuery: ""
+    signal searchChanged(string text)
 
-    height: 72
+    height: Theme.topBarHeight
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.backgroundMid
-        border.color: Theme.border
+        color: "transparent" // Main background handles this, or use Theme.bgMain if needed
     }
 
     RowLayout {
         anchors.fill: parent
-        anchors.margins: Theme.spacingLarge
-        spacing: Theme.spacingLarge
+        anchors.leftMargin: 15
+        anchors.rightMargin: 15
+        spacing: 15
 
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 2
-
-            Label {
-                text: "Elixir"
-                color: Theme.textPrimary
-                font.pixelSize: 20
-                font.family: Theme.fontDisplay
-                font.weight: Font.DemiBold
-            }
-            Label {
-                text: "Home media, cinematic control"
-                color: Theme.textMuted
-                font.pixelSize: 11
-                font.family: Theme.fontBody
+        // Search Bar (Left-Aligned)
+        Rectangle {
+            Layout.preferredWidth: 250
+            Layout.preferredHeight: 36
+            radius: 4
+            color: Theme.bgSidebar // Slightly lighter than main bg
+            border.color: searchField.activeFocus ? Theme.accent : "transparent"
+            border.width: 1
+            
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                spacing: 8
+                
+                // Search Icon
+                Image {
+                    source: "qrc:/icons/search.svg" // Placeholder
+                    sourceSize.width: 16
+                    sourceSize.height: 16
+                    Layout.preferredWidth: 16
+                    Layout.preferredHeight: 16
+                    opacity: 0.5
+                }
+                
+                TextField {
+                    id: searchField
+                    Layout.fillWidth: true
+                    placeholderText: "Search"
+                    color: Theme.textPrimary
+                    placeholderTextColor: Theme.textSecondary
+                    font.family: Theme.bodyFont.family
+                    font.pixelSize: 14
+                    background: null
+                    selectByMouse: true
+                    verticalAlignment: Text.AlignVCenter
+                    onTextChanged: root.searchChanged(text)
+                }
+                
+                // Clear Button
+                Image {
+                    source: "qrc:/icons/close.svg" // Placeholder
+                    sourceSize.width: 12
+                    sourceSize.height: 12
+                    Layout.preferredWidth: 12
+                    Layout.preferredHeight: 12
+                    visible: searchField.text !== ""
+                    opacity: 0.5
+                    
+                    TapHandler {
+                        onTapped: searchField.text = ""
+                    }
+                }
             }
         }
 
-        Button {
-            text: "Home"
-            onClicked: root.homeRequested()
-            background: Rectangle {
-                radius: Theme.radiusSmall
-                color: Theme.backgroundCard
-                border.color: Theme.border
-            }
-            contentItem: Label {
-                text: parent.text
-                color: Theme.textPrimary
-                font.family: Theme.fontBody
-                font.pixelSize: 13
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-            }
-        }
+        Item { Layout.fillWidth: true } // Spacer
 
-        Button {
-            text: "Settings"
-            onClicked: root.settingsRequested()
-            background: Rectangle {
-                radius: Theme.radiusSmall
-                color: Theme.backgroundCard
-                border.color: Theme.border
+        // Action Icons (Right-Aligned)
+        RowLayout {
+            spacing: 20
+            
+            // Activity
+            Image {
+                source: "qrc:/icons/activity.svg" // Placeholder
+                sourceSize.width: 20
+                sourceSize.height: 20
+                Layout.preferredWidth: 20
+                Layout.preferredHeight: 20
+                opacity: 0.7
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
             }
-            contentItem: Label {
-                text: parent.text
-                color: Theme.textPrimary
-                font.family: Theme.fontBody
-                font.pixelSize: 13
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
+            
+            // Cast
+            Image {
+                source: "qrc:/icons/cast.svg" // Placeholder
+                sourceSize.width: 20
+                sourceSize.height: 20
+                Layout.preferredWidth: 20
+                Layout.preferredHeight: 20
+                opacity: 0.7
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
+            }
+            
+            // Settings
+            Image {
+                source: "qrc:/icons/settings.svg" // Placeholder
+                sourceSize.width: 20
+                sourceSize.height: 20
+                Layout.preferredWidth: 20
+                Layout.preferredHeight: 20
+                opacity: 0.7
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
+            }
+            
+            // User Avatar
+            Rectangle {
+                width: 32
+                height: 32
+                radius: 16
+                color: Theme.accent
+                
+                Label {
+                    anchors.centerIn: parent
+                    text: "U"
+                    color: "#111"
+                    font.bold: true
+                    font.pixelSize: 14
+                }
+                
+                // Status Badge
+                Rectangle {
+                    width: 10
+                    height: 10
+                    radius: 5
+                    color: "#4CAF50" // Online green
+                    border.color: Theme.bgMain
+                    border.width: 2
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                }
             }
         }
     }

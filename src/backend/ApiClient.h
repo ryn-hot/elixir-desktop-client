@@ -41,6 +41,9 @@ public:
     Q_INVOKABLE void completePasswordReset(const QString &token, const QString &newPassword);
     Q_INVOKABLE void fetchLibrary();
     Q_INVOKABLE void fetchMediaDetails(const QString &mediaItemId);
+    Q_INVOKABLE void fetchSeasons(const QString &seriesId);
+    Q_INVOKABLE void fetchSeasonDetail(const QString &seasonId);
+    Q_INVOKABLE void fetchEpisodes(const QString &seasonId);
     Q_INVOKABLE void startPlayback(const QString &mediaItemId, const QString &preferredFileId);
     Q_INVOKABLE void seekPlayback(const QString &sessionId, double seconds);
     Q_INVOKABLE void pollSession(const QString &sessionId);
@@ -65,6 +68,9 @@ signals:
     void passwordResetFailed(const QString &error);
     void libraryReceived(const QVariantList &items);
     void mediaDetailsReceived(const QVariantMap &details);
+    void seasonsReceived(const QString &seriesId, const QVariantList &seasons);
+    void seasonDetailReceived(const QString &seasonId, const QVariantMap &detail);
+    void episodesReceived(const QString &seasonId, const QVariantList &episodes);
     void playbackStarted(const QVariantMap &info);
     void sessionPolled(const QVariantMap &info);
     void seekCompleted(const QString &sessionId, double positionSeconds);

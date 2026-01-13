@@ -119,6 +119,7 @@ int main(int argc, char *argv[]) {
     apiClient.setAuthToken(sessionManager.authToken());
     apiClient.setAccessTokenExpiresAt(sessionManager.accessTokenExpiresAt());
     apiClient.setNetworkType(sessionManager.networkType());
+    libraryModel.setBaseUrl(sessionManager.baseUrl());
     controlPlaneClient.setBaseUrl(sessionManager.registryUrl());
     controlPlaneClient.setAuthToken(sessionManager.controlPlaneToken());
     controlPlaneClient.setAccessTokenExpiresAt(sessionManager.controlPlaneExpiresAt());
@@ -139,6 +140,9 @@ int main(int argc, char *argv[]) {
 
     QObject::connect(&sessionManager, &SessionManager::baseUrlChanged, &apiClient, [&]() {
         apiClient.setBaseUrl(sessionManager.baseUrl());
+    });
+    QObject::connect(&sessionManager, &SessionManager::baseUrlChanged, &libraryModel, [&]() {
+        libraryModel.setBaseUrl(sessionManager.baseUrl());
     });
     QObject::connect(&sessionManager, &SessionManager::authTokenChanged, &apiClient, [&]() {
         apiClient.setAuthToken(sessionManager.authToken());

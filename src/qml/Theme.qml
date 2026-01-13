@@ -2,26 +2,49 @@ pragma Singleton
 import QtQuick 6.5
 
 QtObject {
-    property color backgroundDark: "#050509"
-    property color backgroundMid: "#0B0E14"
-    property color backgroundCard: "#11141B"
-    property color backgroundCardRaised: "#171B25"
-    property color accent: "#FF7A2F"
-    property color accentSoft: "#FF7A2F40"
-    property color textPrimary: "#F5F6FA"
-    property color textSecondary: "#B4B8C2"
-    property color textMuted: "#7A7F8A"
-    property color border: "#222836"
+    // Plex-like Spec Constants
+    // Colors
+    property color bgMain: "#282a2d"       // Main window background
+    property color bgSidebar: "#1f2124"    // Sidebar background
+    property color bgCard: "#2c2f33"       // Placeholder for loading cards
+    property color accent: "#e5a00d"       // The "Plex Orange"
+    property color textPrimary: "#ececec"
+    property color textSecondary: "#999999"
+    property color divider: "#3e4247"
 
-    property string fontDisplay: "Sora"
-    property string fontBody: "Sora"
+    // Dimensions
+    property int sidebarWidth: 240
+    property int topBarHeight: 60
+    property int posterWidth: 160
+    property int posterHeight: 240
+    property int landscapeWidth: 320
+    property int landscapeHeight: 180
+    property int cardSpacing: 16
+    property int sectionSpacing: 40
 
-    property int radiusSmall: 8
-    property int radiusMedium: 12
-    property int radiusLarge: 18
+    // Typography (using Open Sans if available, falling back to system sans-serif)
+    property font headerFont: Qt.font({ family: "Open Sans", pixelSize: 22, weight: Font.Bold })
+    property font sectionTitleFont: Qt.font({ family: "Open Sans", pixelSize: 13, weight: Font.Bold, capitalization: Font.AllUppercase })
+    property font bodyFont: Qt.font({ family: "Open Sans", pixelSize: 14 })
 
-    property int spacingSmall: 6
-    property int spacingMedium: 12
-    property int spacingLarge: 20
+    // Legacy Compatibility (Mapped to new palette)
+    property color backgroundDark: bgMain
+    property color backgroundMid: bgSidebar
+    property color backgroundCard: bgCard
+    property color backgroundCardRaised: "#383b40" // Slightly lighter than bgCard
+    property color accentSoft: "#40e5a00d" // Transparent orange
+    property color textMuted: "#777777"
+    property color border: divider
+
+    property string fontDisplay: "Open Sans"
+    property string fontBodyName: "Open Sans" // Renamed to avoid conflict with font object
+
+    property int radiusSmall: 4
+    property int radiusMedium: 6
+    property int radiusLarge: 8
+
+    property int spacingSmall: 8
+    property int spacingMedium: 16
+    property int spacingLarge: 24
     property int spacingXLarge: 32
 }

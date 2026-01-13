@@ -12,7 +12,7 @@ ApplicationWindow {
     height: 720
     visible: true
     title: "Elixir"
-    color: Theme.backgroundDark
+    color: Theme.bgMain // Spec: #282a2d
     property string authNotice: ""
 
     function goHome() {
@@ -45,27 +45,62 @@ ApplicationWindow {
         }
     }
 
-    ColumnLayout {
+    RowLayout {
         anchors.fill: parent
         spacing: 0
 
-        TopBar {
-            Layout.fillWidth: true
-            onHomeRequested: {
-                root.goHome()
+        Sidebar {
+            id: sidebar
+            Layout.fillHeight: true
+            Layout.preferredWidth: 240
+            visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
+            currentView: {
+                if (!stackView.currentItem) return "home"
+                if (stackView.currentItem.objectName === "homeView") return "home"
+                if (stackView.currentItem.objectName === "settingsView") return "settings"
+                // Add logic for movies/series/anime views when they exist as separate pages
+                return "home"
             }
+            
+            onHomeRequested: root.goHome()
             onSettingsRequested: {
                 if (!stackView.currentItem || stackView.currentItem.objectName !== "settingsView") {
                     stackView.push(Qt.resolvedUrl("views/SettingsView.qml"), { stackView: stackView })
                 }
             }
+            // Placeholder handlers for now
+            onMoviesRequested: console.log("Movies requested")
+            onSeriesRequested: console.log("Series requested")
+            onAnimeRequested: console.log("Anime requested")
         }
 
-        StackView {
-            id: stackView
+        ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            initialItem: ConnectServerView { stackView: stackView; notice: root.authNotice }
+            spacing: 0
+
+            TopBar {
+                Layout.fillWidth: true
+                visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
+                // Connect search signal to current view if applicable
+                onSearchChanged: {
+                    if (stackView.currentItem && stackView.currentItem.objectName === "homeView") {
+                        stackView.currentItem.setSearchQuery(text)
+                    }
+                }
+            }
+
+            StackView {
+                id: stackView
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                initialItem: ConnectServerView { stackView: stackView; notice: root.authNotice }
+                
+                // Add background for stackview area
+                background: Rectangle {
+                    color: Theme.backgroundDark
+                }
+            }
         }
     }
 
