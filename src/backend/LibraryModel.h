@@ -16,6 +16,7 @@ namespace MediaRoles {
         PosterRole,
         BackdropRole,
         OverviewRole,
+        GenresRole,
         ProgressRole,
         RuntimeRole,
         UpdatedAtRole
@@ -113,6 +114,7 @@ private:
     QString extractDescription(const QVariantMap &metadata) const;
     QString extractTitle(const QVariantMap &metadata) const;
     int extractYear(const QVariantMap &metadata) const;
+    QStringList extractGenres(const QVariantMap &map, const QVariantMap &metadata) const;
     QString resolveUrl(const QString &value) const;
     void applySearchQuery();
     void applySortMode();

@@ -167,7 +167,31 @@ void ApiClient::fetchMediaDetails(const QString &mediaItemId) {
                         emit requestFailed("/api/v1/library/items/:id", "Details response was not an object.");
                         return;
                     }
-                    emit mediaDetailsReceived(doc.object().toVariantMap());
+                    QVariantMap details = doc.object().toVariantMap();
+                    const QVariant existingGenres = details.value("genres");
+                    if (existingGenres.toList().isEmpty()) {
+                        QVariantList parsed;
+                        const QVariantMap meta = details.value("metadata").toMap();
+                        const QVariant metaGenres = meta.value("genres");
+                        if (metaGenres.canConvert<QVariantList>()) {
+                            parsed = metaGenres.toList();
+                        } else if (metaGenres.canConvert<QStringList>()) {
+                            const QStringList list = metaGenres.toStringList();
+                            for (const QString &value : list) {
+                                parsed.append(value);
+                            }
+                        }
+                        if (parsed.isEmpty()) {
+                            const QString single = meta.value("genre").toString();
+                            if (!single.trimmed().isEmpty()) {
+                                parsed.append(single);
+                            }
+                        }
+                        if (!parsed.isEmpty()) {
+                            details.insert("genres", parsed);
+                        }
+                    }
+                    emit mediaDetailsReceived(details);
                 });
 }
 

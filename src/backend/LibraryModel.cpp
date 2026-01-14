@@ -134,6 +134,8 @@ QVariant LibraryModel::data(const QModelIndex &index, int role) const {
             return item.backdropUrl;
         case MediaRoles::OverviewRole:
             return item.overview;
+        case MediaRoles::GenresRole:
+            return item.genres;
         case MediaRoles::ProgressRole:
             return item.progress;
         case MediaRoles::RuntimeRole:
@@ -154,6 +156,7 @@ QHash<int, QByteArray> LibraryModel::roleNames() const {
         {MediaRoles::PosterRole, "poster"},
         {MediaRoles::BackdropRole, "backdrop"},
         {MediaRoles::OverviewRole, "overview"},
+        {MediaRoles::GenresRole, "genres"},
         {MediaRoles::ProgressRole, "progress"},
         {MediaRoles::RuntimeRole, "runtime"},
         {MediaRoles::UpdatedAtRole, "updatedAt"},
@@ -177,6 +180,7 @@ QVariantMap LibraryModel::get(int index) const {
         {"poster", item.posterUrl},
         {"backdrop", item.backdropUrl},
         {"overview", item.overview},
+        {"genres", item.genres},
         {"progress", item.progress},
         {"runtime", item.runtimeSeconds},
         {"updatedAt", item.updatedAt},
@@ -323,6 +327,7 @@ MediaItem LibraryModel::itemFromVariant(const QVariantMap &map) const {
             item.overview = map.value("summary").toString();
         }
     }
+    item.genres = extractGenres(map, metadata);
 
     return item;
 }
@@ -459,6 +464,49 @@ int LibraryModel::extractYear(const QVariantMap &metadata) const {
     }
 
     return 0;
+}
+
+QStringList LibraryModel::extractGenres(const QVariantMap &map, const QVariantMap &metadata) const {
+    QStringList genres;
+    auto addGenre = [&genres](const QString &value) {
+        const QString trimmed = value.trimmed();
+        if (!trimmed.isEmpty() && !genres.contains(trimmed)) {
+            genres.append(trimmed);
+        }
+    };
+
+    const QVariant rawGenres = map.value("genres");
+    if (rawGenres.canConvert<QVariantList>()) {
+        const QVariantList list = rawGenres.toList();
+        for (const QVariant &entry : list) {
+            addGenre(entry.toString());
+        }
+    }
+    if (genres.isEmpty() && rawGenres.canConvert<QStringList>()) {
+        const QStringList list = rawGenres.toStringList();
+        for (const QString &entry : list) {
+            addGenre(entry);
+        }
+    }
+
+    const QVariant metaGenres = metadata.value("genres");
+    if (genres.isEmpty() && metaGenres.canConvert<QVariantList>()) {
+        const QVariantList list = metaGenres.toList();
+        for (const QVariant &entry : list) {
+            addGenre(entry.toString());
+        }
+    }
+    if (genres.isEmpty() && metaGenres.canConvert<QStringList>()) {
+        const QStringList list = metaGenres.toStringList();
+        for (const QString &entry : list) {
+            addGenre(entry);
+        }
+    }
+    if (genres.isEmpty()) {
+        addGenre(metadata.value("genre").toString());
+    }
+
+    return genres;
 }
 
 void LibraryModel::applySearchQuery() {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 
 struct MediaItem {
     QString id;
@@ -12,5 +13,6 @@ struct MediaItem {
     QString posterUrl;
     QString backdropUrl;
     QString overview;
+    QStringList genres;
     double progress = 0.0;
 };

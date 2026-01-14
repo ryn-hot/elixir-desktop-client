@@ -342,6 +342,20 @@ Item {
                             PillTag { text: details && details.runtime_seconds ? details.runtime_seconds + "s" : (libraryItem && libraryItem.runtime ? libraryItem.runtime + "s" : "") }
                         }
 
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: Theme.spacingSmall
+                            visible: {
+                                var list = details && details.genres ? details.genres : (libraryItem ? libraryItem.genres : [])
+                                return list && list.length > 0
+                            }
+
+                            Repeater {
+                                model: details && details.genres ? details.genres : (libraryItem ? libraryItem.genres : [])
+                                delegate: PillTag { text: modelData }
+                            }
+                        }
+
                         Label {
                             text: details && details.description
                                   ? details.description
@@ -350,6 +364,9 @@ Item {
                             font.pixelSize: 13
                             font.family: Theme.fontBody
                             wrapMode: Text.Wrap
+                            Layout.fillWidth: true
+                            maximumLineCount: 4
+                            elide: Text.ElideRight
                         }
 
                         RowLayout {
@@ -457,6 +474,7 @@ Item {
             Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 50
+                Layout.leftMargin: Theme.spacingLarge
                 visible: isSeriesType() && details !== null && seasons && seasons.length > 0
                 z: 100 // Ensure dropdown appears on top
 
@@ -573,6 +591,7 @@ Item {
             // Episodes List
             ColumnLayout {
                 Layout.fillWidth: true
+                Layout.leftMargin: Theme.spacingLarge
                 spacing: 15
                 visible: isSeriesType() && details !== null
 
