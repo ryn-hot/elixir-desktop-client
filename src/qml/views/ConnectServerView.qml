@@ -117,7 +117,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: parent.height * 0.35
+            Layout.preferredHeight: Math.max(240, root.height * 0.35)
             radius: Theme.radiusLarge
             color: Theme.backgroundCard
             border.color: Theme.border
@@ -270,12 +270,12 @@ Item {
                         font.family: Theme.fontBody
                     }
 
-                    Label {
+                    InlineToast {
                         text: controlPlaneStatusText
+                        autoClear: false
                         color: Theme.textSecondary
                         font.pixelSize: 11
                         font.family: Theme.fontBody
-                        visible: controlPlaneStatusText !== ""
                     }
 
                     Rectangle {
@@ -400,18 +400,18 @@ Item {
                         }
                     }
 
-                    Label {
+                    InlineToast {
                         text: statusText
+                        autoClear: false
                         color: Theme.textSecondary
                         font.pixelSize: 12
                         font.family: Theme.fontBody
-                        visible: statusText !== ""
                     }
                 }
             }
 
             Rectangle {
-                Layout.preferredWidth: parent.width * 0.35
+                Layout.preferredWidth: Math.max(320, root.width * 0.35)
                 Layout.fillHeight: true
                 radius: Theme.radiusLarge
                 color: Theme.backgroundCardRaised
@@ -499,13 +499,13 @@ Item {
                             model: serverDiscovery.mdnsModel
                             delegate: ServerListItem {
                                 Layout.fillWidth: true
-                                name: model.name
-                                source: model.source
-                                status: model.status
-                                lastSeenAt: model.lastSeenAt
-                                selectedEndpoint: model.selectedEndpoint
-                                selectedNetwork: model.selectedNetwork
-                                selectedReachable: model.selectedReachable
+                                name: model.name || ""
+                                source: model.source || ""
+                                status: model.status || ""
+                                lastSeenAt: model.lastSeenAt || ""
+                                selectedEndpoint: model.selectedEndpoint || ""
+                                selectedNetwork: model.selectedNetwork || ""
+                                selectedReachable: model.selectedReachable === true
                                 onUseRequested: function(endpoint, network) {
                                     autoSelectEnabled = false
                                     sessionManager.baseUrl = normalizeEndpoint(endpoint)
@@ -580,17 +580,17 @@ Item {
                             model: serverDiscovery.registryModel
                             delegate: ServerListItem {
                                 Layout.fillWidth: true
-                                name: model.name
-                                source: model.source
-                                status: model.status
-                                lastSeenAt: model.lastSeenAt
-                                selectedEndpoint: model.selectedEndpoint
-                                selectedNetwork: model.selectedNetwork
-                                selectedReachable: model.selectedReachable
+                                name: model.name || ""
+                                source: model.source || ""
+                                status: model.status || ""
+                                lastSeenAt: model.lastSeenAt || ""
+                                selectedEndpoint: model.selectedEndpoint || ""
+                                selectedNetwork: model.selectedNetwork || ""
+                                selectedReachable: model.selectedReachable === true
                                 onUseRequested: function(endpoint, network) {
                                     autoSelectEnabled = true
                                     sessionManager.baseUrl = normalizeEndpoint(endpoint)
-                                    sessionManager.selectedServerId = model.serverId
+                                    sessionManager.selectedServerId = model.serverId || ""
                                     if (network !== "") {
                                         sessionManager.networkType = network
                                     }
@@ -608,12 +608,12 @@ Item {
                         }
                     }
 
-                    Label {
+                    InlineToast {
                         text: serverDiscovery.statusMessage
+                        autoClear: false
                         color: Theme.textMuted
                         font.pixelSize: 10
                         font.family: Theme.fontBody
-                        visible: serverDiscovery.statusMessage !== ""
                     }
                 }
             }
@@ -827,13 +827,13 @@ Item {
                     }
                 }
 
-                Label {
+                InlineToast {
                     text: resetStatusText
+                    autoClear: false
                     color: Theme.textSecondary
                     font.pixelSize: 11
                     font.family: Theme.fontBody
                     wrapMode: Text.Wrap
-                    visible: resetStatusText !== ""
                 }
             }
         }

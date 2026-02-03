@@ -13,10 +13,30 @@
         <file alias="components/SidebarItem.qml">../src/qml/components/SidebarItem.qml</file>
         <file alias="components/LandscapeCard.qml">../src/qml/components/LandscapeCard.qml</file>
         <file alias="components/ServerListItem.qml">../src/qml/components/ServerListItem.qml</file>
+        <file alias="components/InlineToast.qml">../src/qml/components/InlineToast.qml</file>
         <file alias="views/ConnectServerView.qml">../src/qml/views/ConnectServerView.qml</file>
         <file alias="views/HomeView.qml">../src/qml/views/HomeView.qml</file>
         <file alias="views/DetailsView.qml">../src/qml/views/DetailsView.qml</file>
         <file alias="views/PlayerView.qml">../src/qml/views/PlayerView.qml</file>
         <file alias="views/SettingsView.qml">../src/qml/views/SettingsView.qml</file>
+        <file alias="views/ExtensionsView.qml">../src/qml/views/ExtensionsView.qml</file>
+    </qresource>
+    <qresource prefix="/icons">
+        <file alias="activity.svg">icons/activity.svg</file>
+        <file alias="animation.svg">icons/animation.svg</file>
+        <file alias="cast.svg">icons/cast.svg</file>
+        <file alias="close.svg">icons/close.svg</file>
+        <file alias="home.svg">icons/home.svg</file>
+        <file alias="more_vert.svg">icons/more_vert.svg</file>
+        <file alias="movie.svg">icons/movie.svg</file>
+        <file alias="play.svg">icons/play.svg</file>
+        <file alias="search.svg">icons/search.svg</file>
+        <file alias="settings.svg">icons/settings.svg</file>
+        <file alias="tv.svg">icons/tv.svg</file>
+    </qresource>
+    <qresource prefix="/fonts">
+        <file alias="OpenSans.ttf">fonts/OpenSans[wdth,wght].ttf</file>
+        <file alias="OpenSans-Italic.ttf">fonts/OpenSans-Italic[wdth,wght].ttf</file>
+        <file alias="OFL.txt">fonts/OFL.txt</file>
     </qresource>
 </RCC>

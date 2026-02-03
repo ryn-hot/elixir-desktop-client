@@ -14,6 +14,21 @@ Item {
         return text.split(/\\s*,\\s*/).filter(function(item) { return item.length > 0 })
     }
 
+    Component.onCompleted: {
+        if (apiClient.authToken !== "") {
+            apiClient.fetchExtensionsCatalog()
+        }
+    }
+
+    Connections {
+        target: apiClient
+        function onAuthTokenChanged() {
+            if (apiClient.authToken !== "") {
+                apiClient.fetchExtensionsCatalog()
+            }
+        }
+    }
+
     Flickable {
         anchors.fill: parent
         contentWidth: width
@@ -274,12 +289,66 @@ Item {
                     }
                 }
 
-                Label {
+                InlineToast {
                     text: serverDiscovery.statusMessage
+                    autoClear: false
                     color: Theme.textMuted
                     font.pixelSize: 10
                     font.family: Theme.fontBody
-                    visible: serverDiscovery.statusMessage !== ""
+                }
+
+                Rectangle {
+                    height: 1
+                    color: Theme.border
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: "Extensions"
+                    color: Theme.textPrimary
+                    font.pixelSize: 16
+                    font.family: Theme.fontDisplay
+                }
+
+                RowLayout {
+                    spacing: Theme.spacingSmall
+
+                    Button {
+                        text: "Refresh extensions"
+                        enabled: apiClient.authToken !== ""
+                        onClicked: apiClient.refreshExtensionsCatalog()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Label {
+                    text: apiClient.extensionsLastRefreshSuccessAt !== ""
+                          ? "Last refresh success: " + apiClient.extensionsLastRefreshSuccessAt
+                          : "Last refresh success: never"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                Label {
+                    text: apiClient.extensionsLastRefreshError !== ""
+                          ? "Last refresh error: " + apiClient.extensionsLastRefreshError
+                          : "Last refresh error: none"
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
                 }
 
                 Rectangle {

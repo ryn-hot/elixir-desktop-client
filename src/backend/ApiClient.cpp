@@ -3,10 +3,36 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonParseError>
 #include <QNetworkReply>
 #include <QUrlQuery>
 #include <QDebug>
 #include <QLocale>
+
+namespace {
+QString formatRegistryError(const QJsonValue &errorValue) {
+    if (!errorValue.isObject()) {
+        return QString();
+    }
+    const QJsonObject errorObj = errorValue.toObject();
+    const QString url = errorObj.value("url").toString();
+    const QString message = errorObj.value("error").toString();
+    const QString occurredAt = errorObj.value("occurred_at").toString();
+    QString errorMessage;
+    if (!url.isEmpty()) {
+        errorMessage = url;
+    }
+    if (!message.isEmpty()) {
+        errorMessage = errorMessage.isEmpty() ? message : QString("%1 - %2").arg(errorMessage, message);
+    }
+    if (!occurredAt.isEmpty()) {
+        errorMessage = errorMessage.isEmpty()
+            ? occurredAt
+            : QString("%1 (%2)").arg(errorMessage, occurredAt);
+    }
+    return errorMessage;
+}
+} // namespace
 
 ApiClient::ApiClient(QObject *parent)
     : QObject(parent) {}
@@ -70,6 +96,70 @@ void ApiClient::setNetworkType(const QString &value) {
     }
     m_networkType = value;
     emit networkTypeChanged();
+}
+
+QVariantList ApiClient::extensionsInstalled() const {
+    return m_extensionsInstalled;
+}
+
+QVariantList ApiClient::extensionsAvailable() const {
+    return m_extensionsAvailable;
+}
+
+QString ApiClient::extensionsLastRefreshedAt() const {
+    return m_extensionsLastRefreshedAt;
+}
+
+QString ApiClient::extensionsLastRefreshSuccessAt() const {
+    return m_extensionsLastRefreshSuccessAt;
+}
+
+QString ApiClient::extensionsLastRefreshError() const {
+    return m_extensionsLastRefreshError;
+}
+
+QVariantList ApiClient::extensionsInstances() const {
+    return m_extensionsInstances;
+}
+
+QVariantList ApiClient::extensionsSecrets() const {
+    return m_extensionsSecrets;
+}
+
+QVariantMap ApiClient::extensionsPlan() const {
+    return m_extensionsPlan;
+}
+
+QVariantList ApiClient::extensionsPlanConflicts() const {
+    return m_extensionsPlanConflicts;
+}
+
+QString ApiClient::extensionsPlanId() const {
+    return m_extensionsPlanId;
+}
+
+QVariantMap ApiClient::extensionsRun() const {
+    return m_extensionsRun;
+}
+
+QVariantList ApiClient::extensionsRunSteps() const {
+    return m_extensionsRunSteps;
+}
+
+QString ApiClient::extensionsRunId() const {
+    return m_extensionsRunId;
+}
+
+QVariantList ApiClient::extensionsRuns() const {
+    return m_extensionsRuns;
+}
+
+QVariantMap ApiClient::extensionsReconcileRun() const {
+    return m_extensionsReconcileRun;
+}
+
+QVariantList ApiClient::extensionsDesiredBlueprints() const {
+    return m_extensionsDesiredBlueprints;
 }
 
 void ApiClient::login(const QString &email, const QString &password) {
@@ -367,6 +457,722 @@ void ApiClient::applyReviewMatch(
         QString("/api/v1/library/review/queue/%1/apply").arg(reviewId),
         body,
         [this, reviewId](const QJsonDocument &) { emit reviewApplied(reviewId); });
+}
+
+void ApiClient::fetchExtensionsCatalog() {
+    sendRequest(
+        "GET",
+        "/api/v1/extensions/catalog",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/catalog", "Extensions catalog response was not an object.");
+                return;
+            }
+            updateExtensionsCatalog(doc.object());
+        });
+}
+
+void ApiClient::refreshExtensionsCatalog() {
+    sendRequest(
+        "POST",
+        "/api/v1/extensions/registries/refresh",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/registries/refresh", "Extensions refresh response was not an object.");
+                return;
+            }
+            updateExtensionsCatalog(doc.object());
+        });
+}
+
+void ApiClient::installExtension(const QString &downloadUrl) {
+    const QString trimmed = downloadUrl.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/install", "Download URL is required.");
+        return;
+    }
+    QJsonObject body{{"downloadUrl", trimmed}};
+    sendRequest(
+        "POST",
+        "/api/v1/extensions/install",
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/install", "Install response was not an object.");
+                return;
+            }
+            fetchExtensionsCatalog();
+            fetchExtensionInstances();
+        });
+}
+
+void ApiClient::enableExtension(const QString &extensionId) {
+    const QString trimmed = extensionId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/:id/enable", "Extension id is required.");
+        return;
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/extensions/%1/enable").arg(trimmed),
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/:id/enable", "Enable response was not an object.");
+                return;
+            }
+            fetchExtensionsCatalog();
+            fetchExtensionInstances();
+        });
+}
+
+void ApiClient::disableExtension(const QString &extensionId) {
+    const QString trimmed = extensionId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/:id/disable", "Extension id is required.");
+        return;
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/extensions/%1/disable").arg(trimmed),
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/:id/disable", "Disable response was not an object.");
+                return;
+            }
+            fetchExtensionsCatalog();
+            fetchExtensionInstances();
+        });
+}
+
+void ApiClient::uninstallExtension(const QString &extensionId) {
+    const QString trimmed = extensionId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/:id/uninstall", "Extension id is required.");
+        return;
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/extensions/%1/uninstall").arg(trimmed),
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/:id/uninstall", "Uninstall response was not an object.");
+                return;
+            }
+            fetchExtensionsCatalog();
+            fetchExtensionInstances();
+        });
+}
+
+void ApiClient::fetchExtensionInstances(const QString &extensionId) {
+    QString path = "/api/v1/extensions/instances";
+    if (!extensionId.trimmed().isEmpty()) {
+        path = QString("%1?extension_id=%2")
+                   .arg(path, QUrl::toPercentEncoding(extensionId));
+    }
+    sendRequest(
+        "GET",
+        path,
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isArray()) {
+                emit requestFailed("/api/v1/extensions/instances", "Instances response was not a list.");
+                return;
+            }
+            const QVariantList instances = doc.array().toVariantList();
+            if (m_extensionsInstances != instances) {
+                m_extensionsInstances = instances;
+                emit extensionsInstancesChanged();
+            }
+        });
+}
+
+void ApiClient::createExtensionInstance(
+    const QString &extensionId,
+    const QString &instanceName,
+    const QString &configJson) {
+    const QString trimmed = extensionId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/:id/instances", "Extension id is required.");
+        return;
+    }
+    QJsonObject body;
+    if (!instanceName.trimmed().isEmpty()) {
+        body.insert("instanceName", instanceName.trimmed());
+    }
+    if (!configJson.trimmed().isEmpty()) {
+        QJsonParseError parseError{};
+        const QJsonDocument parsed = QJsonDocument::fromJson(configJson.toUtf8(), &parseError);
+        if (parseError.error != QJsonParseError::NoError) {
+            emit requestFailed("/api/v1/extensions/:id/instances", "Config JSON is invalid.");
+            return;
+        }
+        if (parsed.isObject()) {
+            body.insert("config", parsed.object());
+        } else if (parsed.isArray()) {
+            body.insert("config", parsed.array());
+        } else if (!parsed.isNull()) {
+            body.insert("config", QJsonValue::fromVariant(parsed.toVariant()));
+        }
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/extensions/%1/instances").arg(trimmed),
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+            emit requestFailed("/api/v1/extensions/:id/instances", "Create instance response was not an object.");
+            return;
+        }
+        fetchExtensionInstances();
+    });
+}
+
+void ApiClient::updateExtensionInstanceConfig(const QString &instanceId, const QString &configJson) {
+    const QString trimmed = instanceId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/instances/:id", "Instance id is required.");
+        return;
+    }
+    QJsonObject body;
+    const QString trimmedConfig = configJson.trimmed();
+    if (trimmedConfig.isEmpty()) {
+        body.insert("config", QJsonValue());
+    } else {
+        QJsonParseError parseError{};
+        const QJsonDocument parsed = QJsonDocument::fromJson(trimmedConfig.toUtf8(), &parseError);
+        if (parseError.error != QJsonParseError::NoError) {
+            emit requestFailed("/api/v1/extensions/instances/:id", "Config JSON is invalid.");
+            return;
+        }
+        if (parsed.isObject()) {
+            body.insert("config", parsed.object());
+        } else if (parsed.isArray()) {
+            body.insert("config", parsed.array());
+        } else if (parsed.isNull()) {
+            body.insert("config", QJsonValue());
+        } else {
+            body.insert("config", QJsonValue::fromVariant(parsed.toVariant()));
+        }
+    }
+    sendRequest(
+        "PATCH",
+        QString("/api/v1/extensions/instances/%1").arg(trimmed),
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/instances/:id", "Update config response was not an object.");
+                return;
+            }
+            fetchExtensionInstances();
+        });
+}
+
+void ApiClient::setExtensionInstanceEnabled(const QString &instanceId, bool enabled) {
+    const QString trimmed = instanceId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/instances/:id", "Instance id is required.");
+        return;
+    }
+    QJsonObject body{{"enabled", enabled}};
+    sendRequest(
+        "PATCH",
+        QString("/api/v1/extensions/instances/%1").arg(trimmed),
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/instances/:id", "Update instance response was not an object.");
+                return;
+            }
+            fetchExtensionInstances();
+        });
+}
+
+void ApiClient::deleteExtensionInstance(const QString &instanceId) {
+    const QString trimmed = instanceId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/instances/:id", "Instance id is required.");
+        return;
+    }
+    sendRequest(
+        "DELETE",
+        QString("/api/v1/extensions/instances/%1").arg(trimmed),
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/instances/:id", "Delete instance response was not an object.");
+                return;
+            }
+            fetchExtensionInstances();
+            fetchInstanceSecrets();
+        });
+}
+
+void ApiClient::rollbackExtensionInstance(const QString &instanceId) {
+    const QString trimmed = instanceId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/instances/:id/rollback", "Instance id is required.");
+        return;
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/extensions/instances/%1/rollback").arg(trimmed),
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/instances/:id/rollback", "Rollback response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            updateExtensionsPlan(obj);
+            const QString planId = obj.contains("plan_id")
+                ? obj.value("plan_id").toString()
+                : obj.value("planId").toString();
+            if (planId.isEmpty()) {
+                emit requestFailed("/api/v1/extensions/instances/:id/rollback", "Rollback plan id missing.");
+                return;
+            }
+            confirmExtensionsPlan(planId, QVariantList());
+        });
+}
+
+void ApiClient::createSecret(
+    const QString &scope,
+    const QString &scopeId,
+    const QString &key,
+    const QString &value,
+    bool rotatable) {
+    const QString trimmedScope = scope.trimmed();
+    const QString trimmedKey = key.trimmed();
+    const QString trimmedScopeId = scopeId.trimmed();
+    if (trimmedScope.isEmpty() || trimmedKey.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/secrets", "Scope and key are required.");
+        return;
+    }
+    if ((trimmedScope == "instance" || trimmedScope == "provider") && trimmedScopeId.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/secrets", "Scope id is required for instance/provider secrets.");
+        return;
+    }
+    QJsonObject body{
+        {"scope", trimmedScope},
+        {"key", trimmedKey},
+        {"value", value}
+    };
+    if (!trimmedScopeId.isEmpty()) {
+        body.insert("scopeId", trimmedScopeId);
+    }
+    if (rotatable) {
+        body.insert("rotatable", true);
+    }
+    sendRequest(
+        "POST",
+        "/api/v1/extensions/secrets",
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/secrets", "Create secret response was not an object.");
+                return;
+            }
+            fetchInstanceSecrets();
+        });
+}
+
+void ApiClient::createInstanceSecret(
+    const QString &instanceId,
+    const QString &key,
+    const QString &value,
+    bool rotatable) {
+    createSecret("instance", instanceId, key, value, rotatable);
+}
+
+void ApiClient::fetchInstanceSecrets(const QString &instanceId) {
+    const QString trimmedId = instanceId.trimmed();
+    QString path;
+    if (trimmedId.isEmpty()) {
+        path = "/api/v1/extensions/secrets";
+    } else {
+        path = QString("/api/v1/extensions/secrets?scope=instance&scopeId=%1")
+                   .arg(QUrl::toPercentEncoding(trimmedId));
+    }
+    sendRequest(
+        "GET",
+        path,
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isArray()) {
+                emit requestFailed("/api/v1/extensions/secrets", "Secrets response was not a list.");
+                return;
+            }
+            const QVariantList secrets = doc.array().toVariantList();
+            if (m_extensionsSecrets != secrets) {
+                m_extensionsSecrets = secrets;
+                emit extensionsSecretsChanged();
+            }
+        });
+}
+
+void ApiClient::rotateSecret(const QString &secretId, const QString &value) {
+    const QString trimmed = secretId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/secrets/:id/rotate", "Secret id is required.");
+        return;
+    }
+    QJsonObject body;
+    const QString trimmedValue = value.trimmed();
+    if (!trimmedValue.isEmpty()) {
+        body.insert("value", trimmedValue);
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/extensions/secrets/%1/rotate").arg(trimmed),
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/secrets/:id/rotate", "Rotate response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            emit secretRotated(obj.value("secret_id").toString(), obj.value("value").toString());
+            fetchInstanceSecrets();
+        });
+}
+
+void ApiClient::applyBlueprintPlan(const QString &blueprintId, const QString &paramsJson) {
+    const QString trimmed = blueprintId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/blueprints/apply", "Blueprint id is required.");
+        return;
+    }
+    QJsonObject body;
+    body.insert("blueprint_id", trimmed);
+    if (!paramsJson.trimmed().isEmpty()) {
+        QJsonParseError parseError{};
+        const QJsonDocument parsed = QJsonDocument::fromJson(paramsJson.toUtf8(), &parseError);
+        if (parseError.error != QJsonParseError::NoError) {
+            emit requestFailed("/api/v1/extensions/blueprints/apply", "Params JSON is invalid.");
+            return;
+        }
+        if (parsed.isObject()) {
+            body.insert("params", parsed.object());
+        } else if (parsed.isArray()) {
+            body.insert("params", parsed.array());
+        } else if (!parsed.isNull()) {
+            body.insert("params", QJsonValue::fromVariant(parsed.toVariant()));
+        }
+    }
+    sendRequest(
+        "POST",
+        "/api/v1/extensions/blueprints/apply",
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/blueprints/apply", "Plan response was not an object.");
+                return;
+            }
+            updateExtensionsPlan(doc.object());
+            fetchDesiredBlueprints();
+        });
+}
+
+void ApiClient::confirmExtensionsPlan(const QString &planId, const QVariantList &decisions) {
+    const QString trimmed = planId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/plan/:id/confirm", "Plan id is required.");
+        return;
+    }
+    QJsonObject body;
+    if (!decisions.isEmpty()) {
+        QJsonArray slotConflicts;
+        for (const QVariant &entry : decisions) {
+            const QVariantMap map = entry.toMap();
+            const QString conflictId = map.value("conflictId").toString().trimmed();
+            const QString action = map.value("action").toString().trimmed();
+            if (conflictId.isEmpty() || action.isEmpty()) {
+                continue;
+            }
+            QJsonObject item;
+            item.insert("conflictId", conflictId);
+            item.insert("action", action);
+            slotConflicts.append(item);
+        }
+        if (!slotConflicts.isEmpty()) {
+            QJsonObject decisionsObj;
+            decisionsObj.insert("slotConflicts", slotConflicts);
+            body.insert("decisions", decisionsObj);
+        }
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/extensions/plan/%1/confirm").arg(trimmed),
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/plan/:id/confirm", "Plan confirm response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            const QString runId = obj.value("run_id").toString();
+            const QString status = obj.value("status").toString();
+            bool changed = false;
+            if (!runId.isEmpty() && m_extensionsRunId != runId) {
+                m_extensionsRunId = runId;
+                if (!m_extensionsRunSteps.isEmpty()) {
+                    m_extensionsRunSteps.clear();
+                }
+                changed = true;
+            }
+            if (!runId.isEmpty()) {
+                QVariantMap runSummary = m_extensionsRun;
+                runSummary.insert("run_id", runId);
+                if (!status.isEmpty()) {
+                    runSummary.insert("status", status);
+                }
+                if (m_extensionsRun != runSummary) {
+                    m_extensionsRun = runSummary;
+                    changed = true;
+                }
+                if (changed) {
+                    emit extensionsRunChanged();
+                }
+                fetchExtensionRunDetail(runId);
+                fetchExtensionRuns();
+            }
+            fetchDesiredBlueprints();
+            emit extensionsPlanChanged();
+        });
+}
+
+void ApiClient::cancelExtensionsPlan(const QString &planId) {
+    const QString trimmed = planId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/plan/:id/cancel", "Plan id is required.");
+        return;
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/extensions/plan/%1/cancel").arg(trimmed),
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/plan/:id/cancel", "Plan cancel response was not an object.");
+                return;
+            }
+            emit extensionsPlanChanged();
+        });
+}
+
+void ApiClient::fetchExtensionRunDetail(const QString &runId) {
+    const QString trimmed = runId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/runs/:id", "Run id is required.");
+        return;
+    }
+    sendRequest(
+        "GET",
+        QString("/api/v1/extensions/runs/%1").arg(trimmed),
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/runs/:id", "Run detail response was not an object.");
+                return;
+            }
+            updateExtensionsRun(doc.object());
+        });
+}
+
+void ApiClient::fetchExtensionRuns(int limit) {
+    QString path = "/api/v1/extensions/runs";
+    if (limit > 0) {
+        path = QString("%1?limit=%2").arg(path).arg(limit);
+    }
+    sendRequest(
+        "GET",
+        path,
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isArray()) {
+                emit requestFailed("/api/v1/extensions/runs", "Runs response was not a list.");
+                return;
+            }
+            const QVariantList runs = doc.array().toVariantList();
+            if (m_extensionsRuns != runs) {
+                m_extensionsRuns = runs;
+                emit extensionsRunsChanged();
+            }
+        });
+}
+
+void ApiClient::fetchLatestReconcileRun() {
+    sendRequest(
+        "GET",
+        "/api/v1/extensions/reconcile/latest",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/reconcile/latest", "Reconcile response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            const QJsonObject runObj = obj.value("run").toObject();
+            const QVariantMap run = runObj.toVariantMap();
+            if (m_extensionsReconcileRun != run) {
+                m_extensionsReconcileRun = run;
+                emit extensionsReconcileRunChanged();
+            }
+        });
+}
+
+void ApiClient::reconcileNow() {
+    sendRequest(
+        "POST",
+        "/api/v1/extensions/reconcile/now",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/reconcile/now", "Reconcile response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            const QJsonObject runObj = obj.value("run").toObject();
+            const QVariantMap run = runObj.toVariantMap();
+            if (m_extensionsReconcileRun != run) {
+                m_extensionsReconcileRun = run;
+                emit extensionsReconcileRunChanged();
+            }
+            fetchExtensionRuns();
+            fetchExtensionInstances();
+            fetchDesiredBlueprints();
+        });
+}
+
+void ApiClient::fetchDesiredBlueprints(const QString &applied) {
+    QString path = "/api/v1/extensions/desired-blueprints";
+    const QString trimmed = applied.trimmed().toLower();
+    if (trimmed == "true" || trimmed == "false") {
+        path = QString("%1?applied=%2").arg(path, trimmed);
+    }
+    sendRequest(
+        "GET",
+        path,
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isArray()) {
+                emit requestFailed("/api/v1/extensions/desired-blueprints", "Desired blueprints response was not a list.");
+                return;
+            }
+            const QVariantList items = doc.array().toVariantList();
+            if (m_extensionsDesiredBlueprints != items) {
+                m_extensionsDesiredBlueprints = items;
+                emit extensionsDesiredBlueprintsChanged();
+            }
+        });
+}
+
+void ApiClient::clearDesiredBlueprints(const QString &applied) {
+    QString path = "/api/v1/extensions/desired-blueprints";
+    const QString trimmed = applied.trimmed().toLower();
+    if (trimmed == "true" || trimmed == "false") {
+        path = QString("%1?applied=%2").arg(path, trimmed);
+    }
+    sendRequest(
+        "DELETE",
+        path,
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/desired-blueprints", "Desired blueprints clear response was not an object.");
+                return;
+            }
+            const int deleted = doc.object().value("deleted").toInt();
+            emit desiredBlueprintsCleared(deleted);
+            fetchDesiredBlueprints();
+        });
+}
+
+void ApiClient::updateExtensionsCatalog(const QJsonObject &obj) {
+    const QVariantList installed = obj.value("installed").toArray().toVariantList();
+    const QVariantList available = obj.value("available").toArray().toVariantList();
+    const QString refreshedAt = obj.value("last_refreshed_at").toString();
+    const QString successAt = obj.value("last_refresh_success_at").toString();
+    const QString errorMessage = formatRegistryError(obj.value("last_refresh_error"));
+
+    if (m_extensionsInstalled != installed || m_extensionsAvailable != available) {
+        m_extensionsInstalled = installed;
+        m_extensionsAvailable = available;
+        emit extensionsCatalogChanged();
+    }
+    if (m_extensionsLastRefreshedAt != refreshedAt) {
+        m_extensionsLastRefreshedAt = refreshedAt;
+        emit extensionsLastRefreshedAtChanged();
+    }
+    if (m_extensionsLastRefreshSuccessAt != successAt) {
+        m_extensionsLastRefreshSuccessAt = successAt;
+        emit extensionsLastRefreshSuccessAtChanged();
+    }
+    if (m_extensionsLastRefreshError != errorMessage) {
+        m_extensionsLastRefreshError = errorMessage;
+        emit extensionsLastRefreshErrorChanged();
+    }
+}
+
+void ApiClient::updateExtensionsPlan(const QJsonObject &obj) {
+    const QVariantMap plan = obj.toVariantMap();
+    const QJsonValue planIdValue = obj.contains("plan_id")
+        ? obj.value("plan_id")
+        : obj.value("planId");
+    const QString planId = planIdValue.toString();
+    const QVariantList conflicts = obj.value("conflicts").toArray().toVariantList();
+
+    bool changed = false;
+    if (m_extensionsPlan != plan) {
+        m_extensionsPlan = plan;
+        changed = true;
+    }
+    if (m_extensionsPlanConflicts != conflicts) {
+        m_extensionsPlanConflicts = conflicts;
+        changed = true;
+    }
+    if (m_extensionsPlanId != planId) {
+        m_extensionsPlanId = planId;
+        changed = true;
+    }
+    if (changed) {
+        emit extensionsPlanChanged();
+    }
+}
+
+void ApiClient::updateExtensionsRun(const QJsonObject &obj) {
+    const QJsonObject runObj = obj.value("run").toObject();
+    const QVariantMap run = runObj.toVariantMap();
+    const QVariantList steps = obj.value("steps").toArray().toVariantList();
+    const QString runId = runObj.value("run_id").toString();
+    const QString prevStatus = m_extensionsRun.value("status").toString();
+    const QString nextStatus = runObj.value("status").toString();
+
+    bool changed = false;
+    if (m_extensionsRun != run) {
+        m_extensionsRun = run;
+        changed = true;
+    }
+    if (m_extensionsRunSteps != steps) {
+        m_extensionsRunSteps = steps;
+        changed = true;
+    }
+    if (!runId.isEmpty() && m_extensionsRunId != runId) {
+        m_extensionsRunId = runId;
+        changed = true;
+    }
+    if (changed) {
+        emit extensionsRunChanged();
+    }
+    if (nextStatus == "completed" && prevStatus != "completed") {
+        fetchExtensionInstances();
+        fetchInstanceSecrets();
+    }
 }
 
 QString ApiClient::normalizeBaseUrl(const QString &value) const {

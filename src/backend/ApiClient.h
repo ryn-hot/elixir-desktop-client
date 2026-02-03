@@ -16,6 +16,22 @@ class ApiClient : public QObject {
     Q_PROPERTY(QString accessTokenExpiresAt READ accessTokenExpiresAt WRITE setAccessTokenExpiresAt NOTIFY accessTokenExpiresAtChanged)
     Q_PROPERTY(QVariantMap clientCapabilities READ clientCapabilities WRITE setClientCapabilities NOTIFY clientCapabilitiesChanged)
     Q_PROPERTY(QString networkType READ networkType WRITE setNetworkType NOTIFY networkTypeChanged)
+    Q_PROPERTY(QVariantList extensionsInstalled READ extensionsInstalled NOTIFY extensionsCatalogChanged)
+    Q_PROPERTY(QVariantList extensionsAvailable READ extensionsAvailable NOTIFY extensionsCatalogChanged)
+    Q_PROPERTY(QVariantList extensionsInstances READ extensionsInstances NOTIFY extensionsInstancesChanged)
+    Q_PROPERTY(QVariantList extensionsSecrets READ extensionsSecrets NOTIFY extensionsSecretsChanged)
+    Q_PROPERTY(QVariantMap extensionsPlan READ extensionsPlan NOTIFY extensionsPlanChanged)
+    Q_PROPERTY(QVariantList extensionsPlanConflicts READ extensionsPlanConflicts NOTIFY extensionsPlanChanged)
+    Q_PROPERTY(QString extensionsPlanId READ extensionsPlanId NOTIFY extensionsPlanChanged)
+    Q_PROPERTY(QVariantMap extensionsRun READ extensionsRun NOTIFY extensionsRunChanged)
+    Q_PROPERTY(QVariantList extensionsRunSteps READ extensionsRunSteps NOTIFY extensionsRunChanged)
+    Q_PROPERTY(QString extensionsRunId READ extensionsRunId NOTIFY extensionsRunChanged)
+    Q_PROPERTY(QVariantList extensionsRuns READ extensionsRuns NOTIFY extensionsRunsChanged)
+    Q_PROPERTY(QVariantMap extensionsReconcileRun READ extensionsReconcileRun NOTIFY extensionsReconcileRunChanged)
+    Q_PROPERTY(QVariantList extensionsDesiredBlueprints READ extensionsDesiredBlueprints NOTIFY extensionsDesiredBlueprintsChanged)
+    Q_PROPERTY(QString extensionsLastRefreshedAt READ extensionsLastRefreshedAt NOTIFY extensionsLastRefreshedAtChanged)
+    Q_PROPERTY(QString extensionsLastRefreshSuccessAt READ extensionsLastRefreshSuccessAt NOTIFY extensionsLastRefreshSuccessAtChanged)
+    Q_PROPERTY(QString extensionsLastRefreshError READ extensionsLastRefreshError NOTIFY extensionsLastRefreshErrorChanged)
 
 public:
     explicit ApiClient(QObject *parent = nullptr);
@@ -35,6 +51,23 @@ public:
     QString networkType() const;
     void setNetworkType(const QString &value);
 
+    QVariantList extensionsInstalled() const;
+    QVariantList extensionsAvailable() const;
+    QString extensionsLastRefreshedAt() const;
+    QString extensionsLastRefreshSuccessAt() const;
+    QString extensionsLastRefreshError() const;
+    QVariantList extensionsInstances() const;
+    QVariantList extensionsSecrets() const;
+    QVariantMap extensionsPlan() const;
+    QVariantList extensionsPlanConflicts() const;
+    QString extensionsPlanId() const;
+    QVariantMap extensionsRun() const;
+    QVariantList extensionsRunSteps() const;
+    QString extensionsRunId() const;
+    QVariantList extensionsRuns() const;
+    QVariantMap extensionsReconcileRun() const;
+    QVariantList extensionsDesiredBlueprints() const;
+
     Q_INVOKABLE void login(const QString &email, const QString &password);
     Q_INVOKABLE void signup(const QString &email, const QString &password);
     Q_INVOKABLE void startPasswordReset(const QString &email);
@@ -52,6 +85,31 @@ public:
     Q_INVOKABLE void fetchReviewQueue(const QString &status, int limit, int offset);
     Q_INVOKABLE void fetchReviewQueueDetail(const QString &reviewId);
     Q_INVOKABLE void applyReviewMatch(const QString &reviewId, const QString &libraryType, const QVariantMap &externalIds, const QString &normalizedKey = QString());
+    Q_INVOKABLE void fetchExtensionsCatalog();
+    Q_INVOKABLE void refreshExtensionsCatalog();
+    Q_INVOKABLE void installExtension(const QString &downloadUrl);
+    Q_INVOKABLE void enableExtension(const QString &extensionId);
+    Q_INVOKABLE void disableExtension(const QString &extensionId);
+    Q_INVOKABLE void uninstallExtension(const QString &extensionId);
+    Q_INVOKABLE void fetchExtensionInstances(const QString &extensionId = QString());
+    Q_INVOKABLE void createExtensionInstance(const QString &extensionId, const QString &instanceName, const QString &configJson);
+    Q_INVOKABLE void updateExtensionInstanceConfig(const QString &instanceId, const QString &configJson);
+    Q_INVOKABLE void setExtensionInstanceEnabled(const QString &instanceId, bool enabled);
+    Q_INVOKABLE void deleteExtensionInstance(const QString &instanceId);
+    Q_INVOKABLE void rollbackExtensionInstance(const QString &instanceId);
+    Q_INVOKABLE void createSecret(const QString &scope, const QString &scopeId, const QString &key, const QString &value, bool rotatable = false);
+    Q_INVOKABLE void createInstanceSecret(const QString &instanceId, const QString &key, const QString &value, bool rotatable = false);
+    Q_INVOKABLE void fetchInstanceSecrets(const QString &instanceId = QString());
+    Q_INVOKABLE void rotateSecret(const QString &secretId, const QString &value = QString());
+    Q_INVOKABLE void applyBlueprintPlan(const QString &blueprintId, const QString &paramsJson = QString());
+    Q_INVOKABLE void confirmExtensionsPlan(const QString &planId, const QVariantList &decisions = QVariantList());
+    Q_INVOKABLE void cancelExtensionsPlan(const QString &planId);
+    Q_INVOKABLE void fetchExtensionRunDetail(const QString &runId);
+    Q_INVOKABLE void fetchExtensionRuns(int limit = 20);
+    Q_INVOKABLE void fetchLatestReconcileRun();
+    Q_INVOKABLE void reconcileNow();
+    Q_INVOKABLE void fetchDesiredBlueprints(const QString &applied = QString());
+    Q_INVOKABLE void clearDesiredBlueprints(const QString &applied = QString());
 
 signals:
     void baseUrlChanged();
@@ -59,6 +117,19 @@ signals:
     void accessTokenExpiresAtChanged();
     void clientCapabilitiesChanged();
     void networkTypeChanged();
+    void extensionsCatalogChanged();
+    void extensionsInstancesChanged();
+    void extensionsSecretsChanged();
+    void extensionsPlanChanged();
+    void extensionsRunChanged();
+    void extensionsRunsChanged();
+    void extensionsReconcileRunChanged();
+    void extensionsDesiredBlueprintsChanged();
+    void extensionsLastRefreshedAtChanged();
+    void extensionsLastRefreshSuccessAtChanged();
+    void extensionsLastRefreshErrorChanged();
+    void secretRotated(const QString &secretId, const QString &value);
+    void desiredBlueprintsCleared(int deleted);
 
     void loginSucceeded();
     void loginFailed(const QString &error);
@@ -87,6 +158,9 @@ private:
 
     QString normalizeBaseUrl(const QString &value) const;
     QUrl makeUrl(const QString &path) const;
+    void updateExtensionsCatalog(const QJsonObject &obj);
+    void updateExtensionsPlan(const QJsonObject &obj);
+    void updateExtensionsRun(const QJsonObject &obj);
     void sendRequest(
         const QString &method,
         const QString &path,
@@ -101,4 +175,20 @@ private:
     QString m_accessTokenExpiresAt;
     QVariantMap m_clientCapabilities;
     QString m_networkType;
+    QVariantList m_extensionsInstalled;
+    QVariantList m_extensionsAvailable;
+    QVariantList m_extensionsInstances;
+    QVariantList m_extensionsSecrets;
+    QVariantMap m_extensionsPlan;
+    QVariantList m_extensionsPlanConflicts;
+    QString m_extensionsPlanId;
+    QVariantMap m_extensionsRun;
+    QVariantList m_extensionsRunSteps;
+    QString m_extensionsRunId;
+    QVariantList m_extensionsRuns;
+    QVariantMap m_extensionsReconcileRun;
+    QVariantList m_extensionsDesiredBlueprints;
+    QString m_extensionsLastRefreshedAt;
+    QString m_extensionsLastRefreshSuccessAt;
+    QString m_extensionsLastRefreshError;
 };

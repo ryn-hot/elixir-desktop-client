@@ -8,6 +8,7 @@
 #include <QUrl>
 #include <QDateTime>
 #include <QFile>
+#include <QFontDatabase>
 #include <QDir>
 #include <QMutex>
 #include <QMutexLocker>
@@ -76,6 +77,15 @@ void initLogging() {
     qInstallMessageHandler(logMessageHandler);
     qInfo() << "Elixir client logging to" << (g_logFile ? g_logFile->fileName() : "stderr");
 }
+
+void loadFonts() {
+    if (QFontDatabase::addApplicationFont(":/fonts/OpenSans.ttf") < 0) {
+        qWarning() << "Failed to load Open Sans font resource";
+    }
+    if (QFontDatabase::addApplicationFont(":/fonts/OpenSans-Italic.ttf") < 0) {
+        qWarning() << "Failed to load Open Sans italic font resource";
+    }
+}
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -88,6 +98,7 @@ int main(int argc, char *argv[]) {
 
     QQuickStyle::setStyle("Fusion");
     initLogging();
+    loadFonts();
     qInfo() << "Elixir client starting" << QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
 
     SessionManager sessionManager;

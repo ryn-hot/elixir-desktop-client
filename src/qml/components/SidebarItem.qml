@@ -16,12 +16,12 @@ Item {
     width: ListView.view ? ListView.view.width : 240
     height: 44
 
-    HoverHandler {
-        id: hoverHandler
-    }
-
-    TapHandler {
-        onTapped: root.clicked()
+    MouseArea {
+        id: clickArea
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: root.clicked()
+        cursorShape: Qt.PointingHandCursor
     }
 
     // Background
@@ -32,7 +32,7 @@ Item {
         radius: 4
         color: {
             if (root.isActive) return "#1Affffff" // Active background
-            if (hoverHandler.hovered) return "#0Dffffff" // Hover background
+            if (clickArea.containsMouse) return "#0Dffffff" // Hover background
             return "transparent"
         }
     }
@@ -84,11 +84,15 @@ Item {
             sourceSize.height: 16
             Layout.preferredWidth: 16
             Layout.preferredHeight: 16
-            visible: root.hasActionMenu && hoverHandler.hovered
+            visible: root.hasActionMenu && clickArea.containsMouse
             opacity: 0.7
             
-            TapHandler {
-                onTapped: root.menuClicked()
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    root.menuClicked()
+                }
+                cursorShape: Qt.PointingHandCursor
             }
         }
     }

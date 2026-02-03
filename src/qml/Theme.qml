@@ -38,6 +38,7 @@ QtObject {
 
     property string fontDisplay: "Open Sans"
     property string fontBodyName: "Open Sans" // Renamed to avoid conflict with font object
+    property string fontBody: fontBodyName
 
     property int radiusSmall: 4
     property int radiusMedium: 6
@@ -47,4 +48,7 @@ QtObject {
     property int spacingMedium: 16
     property int spacingLarge: 24
     property int spacingXLarge: 32
+
+    property int toastDurationMs: 4000
+    property int toastFadeMs: 400
 }

@@ -12,9 +12,28 @@ Item {
     property bool statusIsError: false
     property bool isLoading: false
     property bool searchActive: libraryModel.searchQuery.trim() !== ""
+    property string sectionFilter: "all"
+    property bool filterActive: sectionFilter !== "all"
+    property string sectionLabel: {
+        if (sectionFilter === "movies") return "Movies"
+        if (sectionFilter === "series") return "TV Shows"
+        if (sectionFilter === "anime") return "Anime"
+        return ""
+    }
 
     function setSearchQuery(query) {
         libraryModel.searchQuery = query
+    }
+
+    function shouldShowSection(section) {
+        return sectionFilter === "all" || sectionFilter === section
+    }
+
+    function filteredCount() {
+        if (sectionFilter === "movies") return libraryModel.moviesModel().count
+        if (sectionFilter === "series") return libraryModel.seriesModel().count
+        if (sectionFilter === "anime") return libraryModel.animeModel().count
+        return libraryModel.count
     }
 
     Component.onCompleted: {
@@ -48,13 +67,27 @@ Item {
             anchors.top: parent.top
             anchors.topMargin: Theme.sectionSpacing
 
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.margins: Theme.cardSpacing
+                spacing: 12
+                visible: root.filterActive
+
+                Label {
+                    text: root.sectionLabel
+                    color: Theme.textPrimary
+                    font.pixelSize: 22
+                    font.family: Theme.headerFont.family
+                }
+            }
+
             // Continue Watching Section
             MediaRow {
                 Layout.fillWidth: true
                 title: "Continue Watching"
                 cardType: "landscape"
                 model: libraryModel.continueWatchingModel()
-                visible: !root.searchActive && count > 0
+                visible: !root.searchActive && !root.filterActive && count > 0
                 property int count: libraryModel.continueWatchingModel().count
                 onCardClicked: {
                     if (root.stackView) {
@@ -113,7 +146,7 @@ Item {
                 Layout.margins: Theme.cardSpacing
                 radius: Theme.radiusLarge
                 color: Theme.bgCard
-                visible: !root.searchActive && libraryModel.count === 0 && !root.statusIsError && !root.isLoading
+                visible: !root.searchActive && !root.filterActive && libraryModel.count === 0 && !root.statusIsError && !root.isLoading
 
                 ColumnLayout {
                     anchors.centerIn: parent
@@ -159,13 +192,42 @@ Item {
                 }
             }
 
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 140
+                Layout.margins: Theme.cardSpacing
+                radius: Theme.radiusLarge
+                color: Theme.bgCard
+                visible: !root.searchActive && root.filterActive && root.filteredCount() === 0 && !root.statusIsError && !root.isLoading
+
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: 8
+
+                    Label {
+                        text: "Nothing here yet"
+                        color: Theme.textPrimary
+                        font.pixelSize: 18
+                        font.family: Theme.headerFont.family
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                    Label {
+                        text: "Scan your library to populate " + root.sectionLabel.toLowerCase() + "."
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.bodyFont.family
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                }
+            }
+
             // Library Sections
             MediaRow {
                 Layout.fillWidth: true
-                title: "Recently Added Movies"
+                title: root.sectionFilter === "movies" ? "Movies" : "Recently Added Movies"
                 cardType: "portrait"
                 model: libraryModel.moviesModel()
-                visible: !root.searchActive && count > 0
+                visible: !root.searchActive && root.shouldShowSection("movies") && count > 0
                 property int count: libraryModel.moviesModel().count
                 onCardClicked: {
                     if (root.stackView) {
@@ -176,10 +238,10 @@ Item {
 
             MediaRow {
                 Layout.fillWidth: true
-                title: "Recently Added TV Shows"
+                title: root.sectionFilter === "series" ? "TV Shows" : "Recently Added TV Shows"
                 cardType: "portrait"
                 model: libraryModel.seriesModel()
-                visible: !root.searchActive && count > 0
+                visible: !root.searchActive && root.shouldShowSection("series") && count > 0
                 property int count: libraryModel.seriesModel().count
                 onCardClicked: {
                     if (root.stackView) {
@@ -190,10 +252,10 @@ Item {
 
             MediaRow {
                 Layout.fillWidth: true
-                title: "Recently Added Anime"
+                title: root.sectionFilter === "anime" ? "Anime" : "Recently Added Anime"
                 cardType: "portrait"
                 model: libraryModel.animeModel()
-                visible: !root.searchActive && count > 0
+                visible: !root.searchActive && root.shouldShowSection("anime") && count > 0
                 property int count: libraryModel.animeModel().count
                 onCardClicked: {
                     if (root.stackView) {
@@ -202,13 +264,13 @@ Item {
                 }
             }
 
-            Label {
+            InlineToast {
                 Layout.fillWidth: true
-                text: statusText
+                text: root.statusIsError ? "" : statusText
+                autoClear: false
                 color: Theme.textSecondary
                 font.pixelSize: 11
                 font.family: Theme.bodyFont.family
-                visible: statusText !== "" && !root.statusIsError
                 horizontalAlignment: Text.AlignRight
                 Layout.rightMargin: Theme.cardSpacing
             }

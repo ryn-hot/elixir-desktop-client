@@ -411,12 +411,12 @@ Item {
                             }
                         }
 
-                        Label {
-                            text: statusText
+                        InlineToast {
+                            text: details !== null ? statusText : ""
+                            autoClear: false
                             color: Theme.textSecondary
                             font.pixelSize: 12
                             font.family: Theme.fontBody
-                            visible: statusText !== "" && details !== null
                         }
                     }
                 }
@@ -442,12 +442,14 @@ Item {
                         font.family: Theme.fontDisplay
                     }
 
-                    Label {
+                    InlineToast {
                         text: statusText
+                        autoClear: false
                         color: Theme.textSecondary
                         font.pixelSize: 12
                         font.family: Theme.fontBody
                         wrapMode: Text.Wrap
+                        Layout.fillWidth: true
                     }
 
                     Button {
@@ -1000,12 +1002,12 @@ Item {
                     }
                 }
 
-                Label {
+                InlineToast {
                     text: reviewStatusText
+                    autoClear: false
                     color: Theme.textSecondary
                     font.pixelSize: 11
                     font.family: Theme.fontBody
-                    visible: reviewStatusText !== ""
                 }
             }
         }

@@ -15,13 +15,17 @@ ApplicationWindow {
     color: Theme.bgMain // Spec: #282a2d
     property string authNotice: ""
 
-    function goHome() {
+    function showLibrarySection(section) {
         stackView.clear()
         if (apiClient.authToken !== "") {
-            stackView.push(Qt.resolvedUrl("views/HomeView.qml"), { stackView: stackView })
+            stackView.push(Qt.resolvedUrl("views/HomeView.qml"), { stackView: stackView, sectionFilter: section })
         } else {
             stackView.push(Qt.resolvedUrl("views/ConnectServerView.qml"), { stackView: stackView, notice: root.authNotice })
         }
+    }
+
+    function goHome() {
+        showLibrarySection("all")
     }
 
     Rectangle {
@@ -56,8 +60,14 @@ ApplicationWindow {
             visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
             currentView: {
                 if (!stackView.currentItem) return "home"
-                if (stackView.currentItem.objectName === "homeView") return "home"
+                if (stackView.currentItem.objectName === "homeView") {
+                    if (stackView.currentItem.sectionFilter === "movies") return "movies"
+                    if (stackView.currentItem.sectionFilter === "series") return "series"
+                    if (stackView.currentItem.sectionFilter === "anime") return "anime"
+                    return "home"
+                }
                 if (stackView.currentItem.objectName === "settingsView") return "settings"
+                if (stackView.currentItem.objectName === "extensionsView") return "extensions"
                 // Add logic for movies/series/anime views when they exist as separate pages
                 return "home"
             }
@@ -68,10 +78,14 @@ ApplicationWindow {
                     stackView.push(Qt.resolvedUrl("views/SettingsView.qml"), { stackView: stackView })
                 }
             }
-            // Placeholder handlers for now
-            onMoviesRequested: console.log("Movies requested")
-            onSeriesRequested: console.log("Series requested")
-            onAnimeRequested: console.log("Anime requested")
+            onExtensionsRequested: {
+                if (!stackView.currentItem || stackView.currentItem.objectName !== "extensionsView") {
+                    stackView.push(Qt.resolvedUrl("views/ExtensionsView.qml"), { stackView: stackView })
+                }
+            }
+            onMoviesRequested: root.showLibrarySection("movies")
+            onSeriesRequested: root.showLibrarySection("series")
+            onAnimeRequested: root.showLibrarySection("anime")
         }
 
         ColumnLayout {
