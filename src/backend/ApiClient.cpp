@@ -106,6 +106,10 @@ QVariantList ApiClient::extensionsAvailable() const {
     return m_extensionsAvailable;
 }
 
+QVariantList ApiClient::extensionsCore() const {
+    return m_extensionsCore;
+}
+
 QString ApiClient::extensionsLastRefreshedAt() const {
     return m_extensionsLastRefreshedAt;
 }
@@ -160,6 +164,22 @@ QVariantMap ApiClient::extensionsReconcileRun() const {
 
 QVariantList ApiClient::extensionsDesiredBlueprints() const {
     return m_extensionsDesiredBlueprints;
+}
+
+bool ApiClient::extensionsAutoWireEnabled() const {
+    return m_extensionsAutoWireEnabled;
+}
+
+QString ApiClient::extensionsAutoWirePendingPlanId() const {
+    return m_extensionsAutoWirePendingPlanId;
+}
+
+QString ApiClient::extensionsAutoWirePendingReason() const {
+    return m_extensionsAutoWirePendingReason;
+}
+
+int ApiClient::extensionsAutoWirePendingConflicts() const {
+    return m_extensionsAutoWirePendingConflicts;
 }
 
 void ApiClient::login(const QString &email, const QString &password) {
@@ -1006,6 +1026,23 @@ void ApiClient::fetchExtensionRuns(int limit) {
         });
 }
 
+void ApiClient::clearExtensionRuns() {
+    sendRequest(
+        "DELETE",
+        "/api/v1/extensions/runs",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/runs", "Clear runs response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            const int deleted = obj.value("deleted").toInt();
+            emit runsCleared(deleted);
+            fetchExtensionRuns();
+        });
+}
+
 void ApiClient::fetchLatestReconcileRun() {
     sendRequest(
         "GET",
@@ -1046,6 +1083,7 @@ void ApiClient::reconcileNow() {
             fetchExtensionRuns();
             fetchExtensionInstances();
             fetchDesiredBlueprints();
+            fetchAutoWireStatus();
         });
 }
 
@@ -1093,16 +1131,111 @@ void ApiClient::clearDesiredBlueprints(const QString &applied) {
         });
 }
 
+void ApiClient::fetchAutoWireStatus() {
+    sendRequest(
+        "GET",
+        "/api/v1/extensions/auto-wire",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/auto-wire", "Auto-wire response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            const bool enabled = obj.value("enabled").toBool(m_extensionsAutoWireEnabled);
+            const QString pendingPlanId = obj.value("pendingPlanId").toString();
+            const QString pendingReason = obj.value("pendingReason").toString();
+            const int pendingConflicts = obj.value("pendingConflicts").toInt();
+
+            bool changed = false;
+            if (m_extensionsAutoWireEnabled != enabled) {
+                m_extensionsAutoWireEnabled = enabled;
+                changed = true;
+            }
+            if (m_extensionsAutoWirePendingPlanId != pendingPlanId) {
+                m_extensionsAutoWirePendingPlanId = pendingPlanId;
+                changed = true;
+            }
+            if (m_extensionsAutoWirePendingReason != pendingReason) {
+                m_extensionsAutoWirePendingReason = pendingReason;
+                changed = true;
+            }
+            if (m_extensionsAutoWirePendingConflicts != pendingConflicts) {
+                m_extensionsAutoWirePendingConflicts = pendingConflicts;
+                changed = true;
+            }
+            if (changed) {
+                emit extensionsAutoWireStatusChanged();
+            }
+        });
+}
+
+void ApiClient::setAutoWireEnabled(bool enabled) {
+    QJsonObject body{{"enabled", enabled}};
+    sendRequest(
+        "POST",
+        "/api/v1/extensions/auto-wire",
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/auto-wire", "Auto-wire response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            const bool nextEnabled = obj.value("enabled").toBool(m_extensionsAutoWireEnabled);
+            const QString pendingPlanId = obj.value("pendingPlanId").toString();
+            const QString pendingReason = obj.value("pendingReason").toString();
+            const int pendingConflicts = obj.value("pendingConflicts").toInt();
+
+            bool changed = false;
+            if (m_extensionsAutoWireEnabled != nextEnabled) {
+                m_extensionsAutoWireEnabled = nextEnabled;
+                changed = true;
+            }
+            if (m_extensionsAutoWirePendingPlanId != pendingPlanId) {
+                m_extensionsAutoWirePendingPlanId = pendingPlanId;
+                changed = true;
+            }
+            if (m_extensionsAutoWirePendingReason != pendingReason) {
+                m_extensionsAutoWirePendingReason = pendingReason;
+                changed = true;
+            }
+            if (m_extensionsAutoWirePendingConflicts != pendingConflicts) {
+                m_extensionsAutoWirePendingConflicts = pendingConflicts;
+                changed = true;
+            }
+            if (changed) {
+                emit extensionsAutoWireStatusChanged();
+            }
+        });
+}
+
+void ApiClient::fetchAutoWirePlan() {
+    sendRequest(
+        "GET",
+        "/api/v1/extensions/auto-wire/plan",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/auto-wire/plan", "Auto-wire plan response was not an object.");
+                return;
+            }
+            updateExtensionsPlan(doc.object());
+        });
+}
+
 void ApiClient::updateExtensionsCatalog(const QJsonObject &obj) {
     const QVariantList installed = obj.value("installed").toArray().toVariantList();
     const QVariantList available = obj.value("available").toArray().toVariantList();
+    const QVariantList core = obj.value("core_extensions").toArray().toVariantList();
     const QString refreshedAt = obj.value("last_refreshed_at").toString();
     const QString successAt = obj.value("last_refresh_success_at").toString();
     const QString errorMessage = formatRegistryError(obj.value("last_refresh_error"));
 
-    if (m_extensionsInstalled != installed || m_extensionsAvailable != available) {
+    if (m_extensionsInstalled != installed || m_extensionsAvailable != available || m_extensionsCore != core) {
         m_extensionsInstalled = installed;
         m_extensionsAvailable = available;
+        m_extensionsCore = core;
         emit extensionsCatalogChanged();
     }
     if (m_extensionsLastRefreshedAt != refreshedAt) {

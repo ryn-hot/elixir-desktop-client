@@ -18,6 +18,7 @@ class ApiClient : public QObject {
     Q_PROPERTY(QString networkType READ networkType WRITE setNetworkType NOTIFY networkTypeChanged)
     Q_PROPERTY(QVariantList extensionsInstalled READ extensionsInstalled NOTIFY extensionsCatalogChanged)
     Q_PROPERTY(QVariantList extensionsAvailable READ extensionsAvailable NOTIFY extensionsCatalogChanged)
+    Q_PROPERTY(QVariantList extensionsCore READ extensionsCore NOTIFY extensionsCatalogChanged)
     Q_PROPERTY(QVariantList extensionsInstances READ extensionsInstances NOTIFY extensionsInstancesChanged)
     Q_PROPERTY(QVariantList extensionsSecrets READ extensionsSecrets NOTIFY extensionsSecretsChanged)
     Q_PROPERTY(QVariantMap extensionsPlan READ extensionsPlan NOTIFY extensionsPlanChanged)
@@ -32,6 +33,10 @@ class ApiClient : public QObject {
     Q_PROPERTY(QString extensionsLastRefreshedAt READ extensionsLastRefreshedAt NOTIFY extensionsLastRefreshedAtChanged)
     Q_PROPERTY(QString extensionsLastRefreshSuccessAt READ extensionsLastRefreshSuccessAt NOTIFY extensionsLastRefreshSuccessAtChanged)
     Q_PROPERTY(QString extensionsLastRefreshError READ extensionsLastRefreshError NOTIFY extensionsLastRefreshErrorChanged)
+    Q_PROPERTY(bool extensionsAutoWireEnabled READ extensionsAutoWireEnabled NOTIFY extensionsAutoWireStatusChanged)
+    Q_PROPERTY(QString extensionsAutoWirePendingPlanId READ extensionsAutoWirePendingPlanId NOTIFY extensionsAutoWireStatusChanged)
+    Q_PROPERTY(QString extensionsAutoWirePendingReason READ extensionsAutoWirePendingReason NOTIFY extensionsAutoWireStatusChanged)
+    Q_PROPERTY(int extensionsAutoWirePendingConflicts READ extensionsAutoWirePendingConflicts NOTIFY extensionsAutoWireStatusChanged)
 
 public:
     explicit ApiClient(QObject *parent = nullptr);
@@ -53,6 +58,7 @@ public:
 
     QVariantList extensionsInstalled() const;
     QVariantList extensionsAvailable() const;
+    QVariantList extensionsCore() const;
     QString extensionsLastRefreshedAt() const;
     QString extensionsLastRefreshSuccessAt() const;
     QString extensionsLastRefreshError() const;
@@ -67,6 +73,10 @@ public:
     QVariantList extensionsRuns() const;
     QVariantMap extensionsReconcileRun() const;
     QVariantList extensionsDesiredBlueprints() const;
+    bool extensionsAutoWireEnabled() const;
+    QString extensionsAutoWirePendingPlanId() const;
+    QString extensionsAutoWirePendingReason() const;
+    int extensionsAutoWirePendingConflicts() const;
 
     Q_INVOKABLE void login(const QString &email, const QString &password);
     Q_INVOKABLE void signup(const QString &email, const QString &password);
@@ -106,10 +116,14 @@ public:
     Q_INVOKABLE void cancelExtensionsPlan(const QString &planId);
     Q_INVOKABLE void fetchExtensionRunDetail(const QString &runId);
     Q_INVOKABLE void fetchExtensionRuns(int limit = 20);
+    Q_INVOKABLE void clearExtensionRuns();
     Q_INVOKABLE void fetchLatestReconcileRun();
     Q_INVOKABLE void reconcileNow();
     Q_INVOKABLE void fetchDesiredBlueprints(const QString &applied = QString());
     Q_INVOKABLE void clearDesiredBlueprints(const QString &applied = QString());
+    Q_INVOKABLE void fetchAutoWireStatus();
+    Q_INVOKABLE void setAutoWireEnabled(bool enabled);
+    Q_INVOKABLE void fetchAutoWirePlan();
 
 signals:
     void baseUrlChanged();
@@ -128,8 +142,10 @@ signals:
     void extensionsLastRefreshedAtChanged();
     void extensionsLastRefreshSuccessAtChanged();
     void extensionsLastRefreshErrorChanged();
+    void extensionsAutoWireStatusChanged();
     void secretRotated(const QString &secretId, const QString &value);
     void desiredBlueprintsCleared(int deleted);
+    void runsCleared(int deleted);
 
     void loginSucceeded();
     void loginFailed(const QString &error);
@@ -177,6 +193,7 @@ private:
     QString m_networkType;
     QVariantList m_extensionsInstalled;
     QVariantList m_extensionsAvailable;
+    QVariantList m_extensionsCore;
     QVariantList m_extensionsInstances;
     QVariantList m_extensionsSecrets;
     QVariantMap m_extensionsPlan;
@@ -191,4 +208,8 @@ private:
     QString m_extensionsLastRefreshedAt;
     QString m_extensionsLastRefreshSuccessAt;
     QString m_extensionsLastRefreshError;
+    bool m_extensionsAutoWireEnabled = true;
+    QString m_extensionsAutoWirePendingPlanId;
+    QString m_extensionsAutoWirePendingReason;
+    int m_extensionsAutoWirePendingConflicts = 0;
 };

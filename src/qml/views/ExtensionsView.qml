@@ -19,6 +19,12 @@ Item {
     property bool showStepLegend: false
     property bool pendingRunStatusScroll: false
     property string desiredFilter: "all"
+    property string lastAutoWirePromptPlanId: ""
+    property bool autoWireDesired: true
+    property bool pendingBlueprintDependencyInstall: false
+    property string pendingBlueprintPlanId: ""
+    property string pendingBlueprintPlanParams: ""
+    property var pendingBlueprintDependencies: []
 
     function isInstalled(extensionId) {
         for (var i = 0; i < apiClient.extensionsInstalled.length; ++i) {
@@ -28,6 +34,171 @@ Item {
             }
         }
         return false
+    }
+
+    function installedExtension(extensionId) {
+        for (var i = 0; i < apiClient.extensionsInstalled.length; ++i) {
+            var item = apiClient.extensionsInstalled[i]
+            if (item.extension_id === extensionId) {
+                return item
+            }
+        }
+        return null
+    }
+
+    function availableExtension(extensionId) {
+        for (var i = 0; i < apiClient.extensionsAvailable.length; ++i) {
+            var item = apiClient.extensionsAvailable[i]
+            if (item.id === extensionId) {
+                return item
+            }
+        }
+        return null
+    }
+
+    function isCoreExtension(extensionId) {
+        for (var i = 0; i < apiClient.extensionsCore.length; ++i) {
+            if (apiClient.extensionsCore[i] === extensionId) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function blueprintConnectorsFor(blueprintId) {
+        var entry = installedExtension(blueprintId)
+        if (!entry) {
+            return []
+        }
+        var manifest = entry.manifest_json !== undefined ? entry.manifest_json : entry.manifestJson
+        if (!manifest || manifest.connectors === undefined || manifest.connectors === null) {
+            return []
+        }
+        return manifest.connectors
+    }
+
+    function blueprintPreferredModulesFor(blueprintId) {
+        var entry = installedExtension(blueprintId)
+        if (!entry) {
+            return []
+        }
+        var manifest = entry.manifest_json !== undefined ? entry.manifest_json : entry.manifestJson
+        if (!manifest || !manifest.preferences || !manifest.preferences.providers) {
+            return []
+        }
+        var providers = manifest.preferences.providers
+        var modules = []
+        var seen = {}
+        for (var key in providers) {
+            if (!providers.hasOwnProperty(key)) {
+                continue
+            }
+            var pref = providers[key]
+            if (!pref || pref.prefer === undefined || pref.prefer === null) {
+                continue
+            }
+            var list = pref.prefer
+            for (var i = 0; i < list.length; ++i) {
+                var id = list[i]
+                if (id === blueprintId) {
+                    continue
+                }
+                if (!seen[id]) {
+                    seen[id] = true
+                    modules.push(id)
+                }
+            }
+        }
+        return modules
+    }
+
+    function clearPendingBlueprintPlan() {
+        pendingBlueprintDependencyInstall = false
+        pendingBlueprintPlanId = ""
+        pendingBlueprintPlanParams = ""
+        pendingBlueprintDependencies = []
+    }
+
+    function checkPendingBlueprintPlan() {
+        if (!pendingBlueprintDependencyInstall || pendingBlueprintPlanId === "") {
+            return
+        }
+        for (var i = 0; i < pendingBlueprintDependencies.length; ++i) {
+            var extensionId = pendingBlueprintDependencies[i]
+            var entry = installedExtension(extensionId)
+            if (!entry || entry.enabled !== true) {
+                return
+            }
+        }
+        var blueprintId = pendingBlueprintPlanId
+        var paramsJson = pendingBlueprintPlanParams
+        clearPendingBlueprintPlan()
+        apiClient.applyBlueprintPlan(blueprintId, paramsJson)
+    }
+
+    function ensureBlueprintDependencies(blueprintId, paramsJson) {
+        if (blueprintId === "") {
+            apiClient.applyBlueprintPlan(blueprintId, paramsJson)
+            return
+        }
+        if (blueprintId === "auto_wire") {
+            return
+        }
+        var connectors = blueprintConnectorsFor(blueprintId)
+        var modules = blueprintPreferredModulesFor(blueprintId)
+        var required = []
+        var seen = {}
+        for (var i = 0; i < connectors.length; ++i) {
+            var id = connectors[i]
+            if (!seen[id]) {
+                seen[id] = true
+                required.push(id)
+            }
+        }
+        for (var j = 0; j < modules.length; ++j) {
+            var moduleId = modules[j]
+            if (!seen[moduleId]) {
+                seen[moduleId] = true
+                required.push(moduleId)
+            }
+        }
+        if (!required || required.length === 0) {
+            apiClient.applyBlueprintPlan(blueprintId, paramsJson)
+            return
+        }
+        var missingRegistry = []
+        var actions = 0
+        for (var k = 0; k < required.length; ++k) {
+            var extensionId = required[k]
+            var installed = installedExtension(extensionId)
+            if (!installed) {
+                var available = availableExtension(extensionId)
+                if (!available || available.download_url === undefined) {
+                    missingRegistry.push(extensionId)
+                    continue
+                }
+                apiClient.installExtension(available.download_url)
+                actions += 1
+                continue
+            }
+            if (installed.enabled === false) {
+                apiClient.enableExtension(extensionId)
+                actions += 1
+            }
+        }
+        if (missingRegistry.length > 0) {
+            actionToast.show("Missing extension packages: " + missingRegistry.join(", "))
+            return
+        }
+        if (actions === 0) {
+            apiClient.applyBlueprintPlan(blueprintId, paramsJson)
+            return
+        }
+        pendingBlueprintDependencyInstall = true
+        pendingBlueprintPlanId = blueprintId
+        pendingBlueprintPlanParams = paramsJson
+        pendingBlueprintDependencies = required
+        actionToast.show("Installing required extensions for " + blueprintId + "...")
     }
 
     function instancesFor(extensionId) {
@@ -259,7 +430,11 @@ Item {
 
     function finishSecretCreateBatch() {
         finalizeSecretCreates()
-        refreshCurrentPlan()
+        if (isAutoWirePlan()) {
+            apiClient.fetchAutoWireStatus()
+        } else {
+            refreshCurrentPlan()
+        }
     }
 
     function parseMissingSecretToken(token, conflict) {
@@ -458,12 +633,20 @@ Item {
         }
     }
 
+    function isAutoWirePlan() {
+        return currentPlanBlueprintId() === "auto_wire"
+    }
+
+    function autoWirePlanPending() {
+        return apiClient.extensionsAutoWirePendingPlanId !== ""
+    }
+
     function refreshCurrentPlan() {
         var blueprintId = currentPlanBlueprintId()
-        if (blueprintId === "") {
+        if (blueprintId === "" || blueprintId === "auto_wire") {
             return
         }
-        apiClient.applyBlueprintPlan(blueprintId, currentPlanParamsJson())
+        ensureBlueprintDependencies(blueprintId, currentPlanParamsJson())
     }
 
     function runStatusValue() {
@@ -613,7 +796,7 @@ Item {
     }
 
     function canConfirmPlan() {
-        if (apiClient.extensionsPlanId === "") {
+        if (apiClient.extensionsPlanId === "" || isAutoWirePlan()) {
             return false
         }
         var conflicts = apiClient.extensionsPlanConflicts
@@ -651,6 +834,7 @@ Item {
             apiClient.fetchDesiredBlueprints()
             apiClient.fetchLatestReconcileRun()
             apiClient.fetchExtensionRuns()
+            apiClient.fetchAutoWireStatus()
         }
     }
 
@@ -664,6 +848,7 @@ Item {
                 apiClient.fetchDesiredBlueprints()
                 apiClient.fetchLatestReconcileRun()
                 apiClient.fetchExtensionRuns()
+                apiClient.fetchAutoWireStatus()
             }
         }
         function onRequestFailed(endpoint, error) {
@@ -679,9 +864,13 @@ Item {
         }
         function onExtensionsCatalogChanged() {
             actionToast.clear()
+            apiClient.fetchAutoWireStatus()
+            checkPendingBlueprintPlan()
         }
         function onExtensionsInstancesChanged() {
             actionToast.clear()
+            apiClient.fetchAutoWireStatus()
+            checkPendingBlueprintPlan()
         }
         function onExtensionsSecretsChanged() {
             actionToast.clear()
@@ -703,6 +892,20 @@ Item {
                 root.scrollToRunStatus()
             }
         }
+        function onExtensionsAutoWireStatusChanged() {
+            autoWireDesired = apiClient.extensionsAutoWireEnabled
+            if (apiClient.extensionsAutoWirePendingPlanId === "") {
+                lastAutoWirePromptPlanId = ""
+                return
+            }
+            if (!apiClient.extensionsAutoWireEnabled) {
+                return
+            }
+            if (apiClient.extensionsAutoWirePendingPlanId !== lastAutoWirePromptPlanId) {
+                lastAutoWirePromptPlanId = apiClient.extensionsAutoWirePendingPlanId
+                autoWirePromptDialog.open()
+            }
+        }
         function onSecretRotated(secretId, value) {
             rotatedSecretId = secretId
             rotatedSecretValue = value
@@ -714,6 +917,13 @@ Item {
                 desiredToast.show("Cleared " + deleted + " desired blueprint" + (deleted === 1 ? "" : "s") + ".")
             } else {
                 desiredToast.show("No desired blueprints cleared.")
+            }
+        }
+        function onRunsCleared(deleted) {
+            if (deleted > 0) {
+                actionToast.show("Cleared " + deleted + " run" + (deleted === 1 ? "" : "s") + ".")
+            } else {
+                actionToast.show("No runs cleared.")
             }
         }
     }
@@ -859,6 +1069,104 @@ Item {
                 radius: Theme.radiusLarge
                 color: Theme.backgroundCard
                 border.color: Theme.border
+                implicitHeight: autoWireContent.implicitHeight + Theme.spacingLarge * 2
+                height: implicitHeight
+
+                ColumnLayout {
+                    id: autoWireContent
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingLarge
+                    spacing: Theme.spacingMedium
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        Label {
+                            text: "Auto-wire"
+                            color: Theme.textPrimary
+                            font.pixelSize: 16
+                            font.family: Theme.fontDisplay
+                            Layout.fillWidth: true
+                        }
+
+                        Switch {
+                            id: autoWireSwitch
+                            checked: autoWireDesired
+                            enabled: apiClient.authToken !== ""
+                            onClicked: {
+                                if (autoWireDesired) {
+                                    autoWireDisableDialog.open()
+                                } else {
+                                    apiClient.setAutoWireEnabled(true)
+                                }
+                            }
+                        }
+                    }
+
+                    Label {
+                        text: "Auto-wire keeps compatible extensions connected automatically. " +
+                              "Turning it off means installs will not be linked unless you run a plan manually."
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Label {
+                        text: "Auto-wire is disabled. New installs will not connect automatically."
+                        color: "#D95C5C"
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: !apiClient.extensionsAutoWireEnabled
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+                        visible: apiClient.extensionsAutoWirePendingPlanId !== ""
+
+                        Label {
+                            text: "Needs attention: " +
+                                  (apiClient.extensionsAutoWirePendingReason !== ""
+                                   ? apiClient.extensionsAutoWirePendingReason
+                                   : "Review auto-wire plan")
+                            color: Theme.textSecondary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+
+                        Button {
+                            text: "Review plan"
+                            enabled: apiClient.authToken !== ""
+                            onClicked: apiClient.fetchAutoWirePlan()
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                radius: Theme.radiusLarge
+                color: Theme.backgroundCard
+                border.color: Theme.border
                 implicitHeight: planContent.implicitHeight + Theme.spacingLarge * 2
                 height: implicitHeight
 
@@ -875,11 +1183,16 @@ Item {
                         spacing: Theme.spacingSmall
 
                         Label {
-                            text: "Blueprint plan"
+                            text: isAutoWirePlan() ? "Auto-wire plan" : "Blueprint plan"
                             color: Theme.textPrimary
                             font.pixelSize: 16
                             font.family: Theme.fontDisplay
                             Layout.fillWidth: true
+                        }
+
+                        PillTag {
+                            text: "Installing extensions..."
+                            visible: pendingBlueprintDependencyInstall
                         }
                     }
 
@@ -910,7 +1223,7 @@ Item {
                         Button {
                             text: "Preview plan"
                             enabled: apiClient.authToken !== ""
-                            onClicked: apiClient.applyBlueprintPlan(
+                            onClicked: ensureBlueprintDependencies(
                                 blueprintIdField.text,
                                 blueprintParamsField.text)
                             background: Rectangle {
@@ -966,7 +1279,7 @@ Item {
 
                         Button {
                             text: "Cancel"
-                            enabled: apiClient.extensionsPlanId !== ""
+                            enabled: apiClient.extensionsPlanId !== "" && !isAutoWirePlan()
                             onClicked: apiClient.cancelExtensionsPlan(apiClient.extensionsPlanId)
                             background: Rectangle {
                                 radius: Theme.radiusSmall
@@ -982,6 +1295,16 @@ Item {
                                 verticalAlignment: Text.AlignVCenter
                             }
                         }
+                    }
+
+                    Label {
+                        text: isAutoWirePlan()
+                              ? "Auto-wire plans apply automatically once conflicts are resolved."
+                              : ""
+                        color: Theme.textMuted
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: isAutoWirePlan()
                     }
 
                     Label {
@@ -1588,6 +1911,25 @@ Item {
                                     verticalAlignment: Text.AlignVCenter
                                 }
                             }
+
+                            Button {
+                                text: "Clear"
+                                enabled: apiClient.authToken !== "" && apiClient.extensionsRuns.length > 0
+                                onClicked: clearRunsDialog.open()
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.backgroundCardRaised
+                                    border.color: Theme.border
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
                         }
 
                         Label {
@@ -1671,6 +2013,30 @@ Item {
                                         font.family: Theme.fontBody
                                         visible: modelData.created_at !== undefined && modelData.created_at !== ""
                                     }
+                                }
+                            }
+                        }
+
+                        Dialog {
+                            id: clearRunsDialog
+                            modal: true
+                            title: "Clear run history"
+                            standardButtons: Dialog.Cancel | Dialog.Ok
+                            onAccepted: apiClient.clearExtensionRuns()
+                            contentItem: ColumnLayout {
+                                spacing: Theme.spacingSmall
+                                Label {
+                                    text: "Clear completed, failed, and canceled runs?"
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 13
+                                    font.family: Theme.fontDisplay
+                                }
+                                Label {
+                                    text: "Active runs will be kept."
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
                                 }
                             }
                         }
@@ -2056,6 +2422,136 @@ Item {
                         }
                     }
                 }
+
+                Dialog {
+                    id: autoWireDisableDialog
+                    modal: true
+                    title: "Disable auto-wire?"
+                    standardButtons: Dialog.NoButton
+                    contentItem: ColumnLayout {
+                        spacing: Theme.spacingSmall
+                        Label {
+                            text: "Auto-wire keeps extensions connected without manual steps."
+                            color: Theme.textPrimary
+                            font.pixelSize: 13
+                            font.family: Theme.fontDisplay
+                            wrapMode: Text.WordWrap
+                        }
+                        Label {
+                            text: "If you disable it, new installs will stay disconnected until you run plans manually."
+                            color: Theme.textSecondary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                    footer: RowLayout {
+                        spacing: Theme.spacingSmall
+                        Button {
+                            text: "Keep enabled"
+                            onClicked: autoWireDisableDialog.close()
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                        Button {
+                            text: "Disable auto-wire"
+                            onClicked: {
+                                autoWireDisableDialog.close()
+                                apiClient.setAutoWireEnabled(false)
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: "#3a2222"
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                    }
+                }
+
+                Dialog {
+                    id: autoWirePromptDialog
+                    modal: true
+                    title: "Auto-wire needs input"
+                    standardButtons: Dialog.NoButton
+                    contentItem: ColumnLayout {
+                        spacing: Theme.spacingSmall
+                        Label {
+                            text: apiClient.extensionsAutoWirePendingReason !== ""
+                                  ? apiClient.extensionsAutoWirePendingReason
+                                  : "Auto-wire could not apply the latest connections."
+                            color: Theme.textPrimary
+                            font.pixelSize: 13
+                            font.family: Theme.fontDisplay
+                            wrapMode: Text.WordWrap
+                        }
+                        Label {
+                            text: "Review the plan to add missing secrets or resolve conflicts."
+                            color: Theme.textSecondary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                    footer: RowLayout {
+                        spacing: Theme.spacingSmall
+                        Button {
+                            text: "Later"
+                            onClicked: autoWirePromptDialog.close()
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                        Button {
+                            text: "Review plan"
+                            onClicked: {
+                                autoWirePromptDialog.close()
+                                apiClient.fetchAutoWirePlan()
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                    }
+                }
             }
 
             Rectangle {
@@ -2156,6 +2652,7 @@ Item {
                                 Button {
                                     text: "Uninstall"
                                     enabled: apiClient.authToken !== ""
+                                    visible: !isCoreExtension(modelData.extension_id)
                                     onClicked: uninstallDialog.open()
                                     background: Rectangle {
                                         radius: Theme.radiusSmall
