@@ -12,6 +12,7 @@ Rectangle {
     signal moviesRequested()
     signal seriesRequested()
     signal animeRequested()
+    signal findMediaRequested()
     signal extensionsRequested()
     signal settingsRequested()
 
@@ -69,6 +70,7 @@ Rectangle {
                 ListElement { type: "item"; label: "Movies"; icon: "qrc:/icons/movie.svg"; action: "movies" }
                 ListElement { type: "item"; label: "TV Shows"; icon: "qrc:/icons/tv.svg"; action: "series" }
                 ListElement { type: "item"; label: "Anime"; icon: "qrc:/icons/animation.svg"; action: "anime" }
+                ListElement { type: "item"; label: "Find Media"; icon: "qrc:/icons/search.svg"; action: "find_media" }
                 ListElement { type: "item"; label: "Extensions"; icon: ""; action: "extensions" }
                 // Spacer could be handled differently, but for now just items
             }
@@ -81,6 +83,7 @@ Rectangle {
                     if (model.action === "movies" && root.currentView === "movies") return true
                     if (model.action === "series" && root.currentView === "series") return true
                     if (model.action === "anime" && root.currentView === "anime") return true
+                    if (model.action === "find_media" && root.currentView === "find_media") return true
                     if (model.action === "extensions" && root.currentView === "extensions") return true
                     return false
                 }
@@ -90,6 +93,7 @@ Rectangle {
                     else if (model.action === "movies") root.moviesRequested()
                     else if (model.action === "series") root.seriesRequested()
                     else if (model.action === "anime") root.animeRequested()
+                    else if (model.action === "find_media") root.findMediaRequested()
                     else if (model.action === "extensions") root.extensionsRequested()
                 }
             }

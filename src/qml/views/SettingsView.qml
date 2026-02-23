@@ -14,9 +14,72 @@ Item {
         return text.split(/\\s*,\\s*/).filter(function(item) { return item.length > 0 })
     }
 
+    function listValue(objectValue, snakeKey, camelKey) {
+        if (!objectValue) {
+            return []
+        }
+        var value = objectValue[snakeKey]
+        if (value === undefined && camelKey !== "") {
+            value = objectValue[camelKey]
+        }
+        return value === undefined || value === null ? [] : value
+    }
+
+    function managerPreferenceState() {
+        var value = apiClient.mediaManagerPreferences.preferences
+        if (value === undefined || value === null) {
+            value = apiClient.mediaManagerPreferences.preferencesState
+        }
+        return value || {}
+    }
+
+    function managerProvidersFor(type) {
+        var providers = listValue(apiClient.mediaManagerPreferences, type + "_providers", type + "Providers")
+        var options = [{ label: "Auto-select", value: "" }]
+        for (var i = 0; i < providers.length; ++i) {
+            var provider = providers[i]
+            var label = provider.label
+            if (label === undefined || label === "") {
+                label = provider.instance_name !== undefined ? provider.instance_name : provider.instanceName
+            }
+            var providerId = provider.provider_id !== undefined ? provider.provider_id : provider.providerId
+            options.push({ label: label, value: String(providerId || "") })
+        }
+        return options
+    }
+
+    function managerPreferenceFor(type) {
+        var pref = managerPreferenceState()
+        if (type === "movie") {
+            return String(pref.movie_provider_id || pref.movieProviderId || "")
+        }
+        if (type === "series") {
+            return String(pref.series_provider_id || pref.seriesProviderId || "")
+        }
+        return String(pref.anime_provider_id || pref.animeProviderId || "")
+    }
+
+    function optionIndexForValue(options, value) {
+        var needle = String(value || "")
+        for (var i = 0; i < options.length; ++i) {
+            if (String(options[i].value || "") === needle) {
+                return i
+            }
+        }
+        return 0
+    }
+
+    function saveManagerPreferences() {
+        var movie = movieManagerCombo.currentValue !== undefined ? String(movieManagerCombo.currentValue) : ""
+        var series = seriesManagerCombo.currentValue !== undefined ? String(seriesManagerCombo.currentValue) : ""
+        var anime = animeManagerCombo.currentValue !== undefined ? String(animeManagerCombo.currentValue) : ""
+        apiClient.updateManagerPreferences(movie, series, anime)
+    }
+
     Component.onCompleted: {
         if (apiClient.authToken !== "") {
             apiClient.fetchExtensionsCatalog()
+            apiClient.fetchManagerPreferences()
         }
     }
 
@@ -25,6 +88,7 @@ Item {
         function onAuthTokenChanged() {
             if (apiClient.authToken !== "") {
                 apiClient.fetchExtensionsCatalog()
+                apiClient.fetchManagerPreferences()
             }
         }
     }
@@ -349,6 +413,75 @@ Item {
                     color: Theme.textMuted
                     font.pixelSize: 11
                     font.family: Theme.fontBody
+                }
+
+                Rectangle {
+                    height: 1
+                    color: Theme.border
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: "Find Media Manager Routing"
+                    color: Theme.textPrimary
+                    font.pixelSize: 16
+                    font.family: Theme.fontDisplay
+                }
+
+                Label {
+                    text: "Movie manager"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                ComboBox {
+                    id: movieManagerCombo
+                    model: root.managerProvidersFor("movie")
+                    textRole: "label"
+                    valueRole: "value"
+                    currentIndex: root.optionIndexForValue(model, root.managerPreferenceFor("movie"))
+                    onActivated: root.saveManagerPreferences()
+                }
+
+                Label {
+                    text: "Series manager"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                ComboBox {
+                    id: seriesManagerCombo
+                    model: root.managerProvidersFor("series")
+                    textRole: "label"
+                    valueRole: "value"
+                    currentIndex: root.optionIndexForValue(model, root.managerPreferenceFor("series"))
+                    onActivated: root.saveManagerPreferences()
+                }
+
+                Label {
+                    text: "Anime manager"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                ComboBox {
+                    id: animeManagerCombo
+                    model: root.managerProvidersFor("anime")
+                    textRole: "label"
+                    valueRole: "value"
+                    currentIndex: root.optionIndexForValue(model, root.managerPreferenceFor("anime"))
+                    onActivated: root.saveManagerPreferences()
+                }
+
+                Label {
+                    text: "Auto-select uses the first healthy manager provider for each media type."
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
                 }
 
                 Rectangle {

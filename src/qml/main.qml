@@ -67,6 +67,7 @@ ApplicationWindow {
                     return "home"
                 }
                 if (stackView.currentItem.objectName === "settingsView") return "settings"
+                if (stackView.currentItem.objectName === "findMediaView") return "find_media"
                 if (stackView.currentItem.objectName === "extensionsView") return "extensions"
                 // Add logic for movies/series/anime views when they exist as separate pages
                 return "home"
@@ -81,6 +82,11 @@ ApplicationWindow {
             onExtensionsRequested: {
                 if (!stackView.currentItem || stackView.currentItem.objectName !== "extensionsView") {
                     stackView.push(Qt.resolvedUrl("views/ExtensionsView.qml"), { stackView: stackView })
+                }
+            }
+            onFindMediaRequested: {
+                if (!stackView.currentItem || stackView.currentItem.objectName !== "findMediaView") {
+                    stackView.push(Qt.resolvedUrl("views/FindMediaView.qml"), { stackView: stackView })
                 }
             }
             onMoviesRequested: root.showLibrarySection("movies")
@@ -98,7 +104,8 @@ ApplicationWindow {
                 visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
                 // Connect search signal to current view if applicable
                 onSearchChanged: {
-                    if (stackView.currentItem && stackView.currentItem.objectName === "homeView") {
+                    if (stackView.currentItem &&
+                            typeof stackView.currentItem.setSearchQuery === "function") {
                         stackView.currentItem.setSearchQuery(text)
                     }
                 }

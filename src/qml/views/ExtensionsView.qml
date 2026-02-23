@@ -25,6 +25,11 @@ Item {
     property string pendingBlueprintPlanId: ""
     property string pendingBlueprintPlanParams: ""
     property var pendingBlueprintDependencies: []
+    property bool oneClickBlueprintActive: false
+    property string oneClickBlueprintId: ""
+    property string oneClickBlueprintParams: ""
+    property string oneClickBlueprintStage: ""
+    property bool oneClickBlueprintConfirmSent: false
 
     function isInstalled(extensionId) {
         for (var i = 0; i < apiClient.extensionsInstalled.length; ++i) {
@@ -63,6 +68,14 @@ Item {
             }
         }
         return false
+    }
+
+    function isBlueprintId(extensionId) {
+        if (!extensionId) {
+            return false
+        }
+        var value = String(extensionId)
+        return value.indexOf(".blueprints.") >= 0 || value.indexOf("blueprint.") === 0
     }
 
     function blueprintConnectorsFor(blueprintId) {
@@ -117,6 +130,90 @@ Item {
         pendingBlueprintPlanId = ""
         pendingBlueprintPlanParams = ""
         pendingBlueprintDependencies = []
+    }
+
+    function clearOneClickBlueprintFlow() {
+        oneClickBlueprintActive = false
+        oneClickBlueprintId = ""
+        oneClickBlueprintParams = ""
+        oneClickBlueprintStage = ""
+        oneClickBlueprintConfirmSent = false
+    }
+
+    function startOneClickBlueprintInstall(blueprintId, downloadUrl, paramsJson) {
+        var targetId = String(blueprintId || "").trim()
+        if (targetId === "") {
+            return
+        }
+        var sourceUrl = String(downloadUrl || "").trim()
+        if (sourceUrl === "") {
+            actionToast.show("Cannot install " + targetId + ": missing package URL.")
+            return
+        }
+        oneClickBlueprintActive = true
+        oneClickBlueprintId = targetId
+        oneClickBlueprintParams = paramsJson || ""
+        oneClickBlueprintConfirmSent = false
+
+        if (!isInstalled(targetId)) {
+            oneClickBlueprintStage = "installing_blueprint"
+            apiClient.installExtension(sourceUrl)
+            actionToast.show("Installing " + targetId + "...")
+            return
+        }
+        oneClickBlueprintStage = "installing_dependencies"
+        ensureBlueprintDependencies(targetId, oneClickBlueprintParams)
+    }
+
+    function maybeAdvanceOneClickBlueprintInstall() {
+        if (!oneClickBlueprintActive || oneClickBlueprintId === "") {
+            return
+        }
+        if (oneClickBlueprintStage === "installing_blueprint") {
+            var installed = installedExtension(oneClickBlueprintId)
+            if (!installed) {
+                return
+            }
+            if (installed.enabled === false) {
+                apiClient.enableExtension(oneClickBlueprintId)
+                return
+            }
+            oneClickBlueprintStage = "installing_dependencies"
+            ensureBlueprintDependencies(oneClickBlueprintId, oneClickBlueprintParams)
+        }
+    }
+
+    function maybeAutoConfirmOneClickBlueprintPlan() {
+        if (!oneClickBlueprintActive || oneClickBlueprintId === "") {
+            return
+        }
+        if (apiClient.extensionsPlanId === "") {
+            return
+        }
+        var plan = apiClient.extensionsPlan
+        var planBlueprintId = ""
+        if (plan && plan.blueprint_id !== undefined) {
+            planBlueprintId = String(plan.blueprint_id || "")
+        } else if (plan && plan.blueprintId !== undefined) {
+            planBlueprintId = String(plan.blueprintId || "")
+        }
+        if (planBlueprintId !== oneClickBlueprintId) {
+            return
+        }
+        if (canConfirmPlan()) {
+            if (oneClickBlueprintConfirmSent) {
+                return
+            }
+            oneClickBlueprintStage = "confirming"
+            oneClickBlueprintConfirmSent = true
+            actionToast.show("Applying " + oneClickBlueprintId + "...")
+            apiClient.confirmExtensionsPlan(apiClient.extensionsPlanId, buildPlanDecisions())
+            return
+        }
+        oneClickBlueprintStage = "awaiting_user"
+        actionToast.show(
+            "Action required to finish " + oneClickBlueprintId +
+            ": resolve conflicts or secrets, then confirm.")
     }
 
     function checkPendingBlueprintPlan() {
@@ -188,6 +285,9 @@ Item {
         }
         if (missingRegistry.length > 0) {
             actionToast.show("Missing extension packages: " + missingRegistry.join(", "))
+            if (oneClickBlueprintActive && oneClickBlueprintId === blueprintId) {
+                clearOneClickBlueprintFlow()
+            }
             return
         }
         if (actions === 0) {
@@ -865,11 +965,13 @@ Item {
         function onExtensionsCatalogChanged() {
             actionToast.clear()
             apiClient.fetchAutoWireStatus()
+            maybeAdvanceOneClickBlueprintInstall()
             checkPendingBlueprintPlan()
         }
         function onExtensionsInstancesChanged() {
             actionToast.clear()
             apiClient.fetchAutoWireStatus()
+            maybeAdvanceOneClickBlueprintInstall()
             checkPendingBlueprintPlan()
         }
         function onExtensionsSecretsChanged() {
@@ -886,10 +988,30 @@ Item {
             secretDrafts = ({})
             planRefreshPendingCount = 0
             pendingSecretCreates = ({})
+            maybeAutoConfirmOneClickBlueprintPlan()
         }
         function onExtensionsRunChanged() {
             if (root.pendingRunStatusScroll) {
                 root.scrollToRunStatus()
+            }
+            if (apiClient.extensionsRun && apiClient.extensionsRun.status !== undefined) {
+                var runStatus = String(apiClient.extensionsRun.status || "")
+                if (runStatus === "completed" || runStatus === "failed" || runStatus === "canceled") {
+                    apiClient.fetchDesiredBlueprints()
+                }
+            }
+            if (oneClickBlueprintActive &&
+                    oneClickBlueprintStage === "confirming" &&
+                    apiClient.extensionsRun &&
+                    apiClient.extensionsRun.status !== undefined) {
+                var status = String(apiClient.extensionsRun.status || "")
+                if (status === "completed") {
+                    actionToast.show(oneClickBlueprintId + " installed and applied.")
+                    clearOneClickBlueprintFlow()
+                } else if (status === "failed" || status === "canceled") {
+                    actionToast.show("Failed applying " + oneClickBlueprintId + ".")
+                    clearOneClickBlueprintFlow()
+                }
             }
         }
         function onExtensionsAutoWireStatusChanged() {
@@ -942,6 +1064,17 @@ Item {
         repeat: true
         running: apiClient.authToken !== "" && root.reconcileIsActive()
         onTriggered: apiClient.fetchLatestReconcileRun()
+    }
+
+    Timer {
+        id: desiredStatePollTimer
+        interval: 3000
+        repeat: true
+        running: root.visible && apiClient.authToken !== "" && desiredBlueprintCount(false) > 0
+        onTriggered: {
+            apiClient.fetchDesiredBlueprints()
+            apiClient.fetchLatestReconcileRun()
+        }
     }
 
     Timer {
@@ -1280,7 +1413,12 @@ Item {
                         Button {
                             text: "Cancel"
                             enabled: apiClient.extensionsPlanId !== "" && !isAutoWirePlan()
-                            onClicked: apiClient.cancelExtensionsPlan(apiClient.extensionsPlanId)
+                            onClicked: {
+                                if (oneClickBlueprintActive) {
+                                    clearOneClickBlueprintFlow()
+                                }
+                                apiClient.cancelExtensionsPlan(apiClient.extensionsPlanId)
+                            }
                             background: Rectangle {
                                 radius: Theme.radiusSmall
                                 color: Theme.backgroundCardRaised
@@ -2777,7 +2915,16 @@ Item {
                                     property bool alreadyInstalled: root.isInstalled(modelData.id)
                                     text: alreadyInstalled ? "Installed" : "Install"
                                     enabled: apiClient.authToken !== "" && !alreadyInstalled && modelData.download_url !== undefined
-                                    onClicked: apiClient.installExtension(modelData.download_url)
+                                    onClicked: {
+                                        if (root.isBlueprintId(modelData.id)) {
+                                            root.startOneClickBlueprintInstall(
+                                                modelData.id,
+                                                modelData.download_url,
+                                                "")
+                                            return
+                                        }
+                                        apiClient.installExtension(modelData.download_url)
+                                    }
                                     background: Rectangle {
                                         radius: Theme.radiusSmall
                                         color: Theme.backgroundCard

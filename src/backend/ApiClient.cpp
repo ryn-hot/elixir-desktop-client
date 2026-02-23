@@ -32,6 +32,71 @@ QString formatRegistryError(const QJsonValue &errorValue) {
     }
     return errorMessage;
 }
+
+QString normalizeMediaType(const QString &value) {
+    const QString mediaType = value.trimmed().toLower();
+    if (mediaType == "movie" || mediaType == "movies") {
+        return "movies";
+    }
+    if (mediaType == "series" || mediaType == "tv") {
+        return "tv";
+    }
+    if (mediaType == "anime") {
+        return "anime";
+    }
+    return "movies";
+}
+
+QVariantMap normalizeFindMediaPreferencesPayload(const QVariantMap &payload) {
+    const QVariantMap pref = payload.value("preferences").toMap();
+    QVariantMap normalizedPref;
+    normalizedPref.insert(
+        "movieProviderId",
+        pref.value(
+            "moviesDefaultManagerProviderId",
+            pref.value(
+                "movies_default_manager_provider_id",
+                pref.value("movieProviderId", pref.value("movie_provider_id")))));
+    normalizedPref.insert(
+        "seriesProviderId",
+        pref.value(
+            "tvDefaultManagerProviderId",
+            pref.value(
+                "tv_default_manager_provider_id",
+                pref.value("seriesProviderId", pref.value("series_provider_id")))));
+    normalizedPref.insert(
+        "animeProviderId",
+        pref.value(
+            "animeDefaultManagerProviderId",
+            pref.value(
+                "anime_default_manager_provider_id",
+                pref.value("animeProviderId", pref.value("anime_provider_id")))));
+
+    QVariantMap normalized;
+    normalized.insert("preferences", normalizedPref);
+    normalized.insert(
+        "movieProviders",
+        payload.value(
+            "moviesManagerCandidates",
+            payload.value(
+                "movies_manager_candidates",
+                payload.value("movieProviders", payload.value("movie_providers")))));
+    normalized.insert(
+        "seriesProviders",
+        payload.value(
+            "tvManagerCandidates",
+            payload.value(
+                "tv_manager_candidates",
+                payload.value("seriesProviders", payload.value("series_providers")))));
+    normalized.insert(
+        "animeProviders",
+        payload.value(
+            "animeManagerCandidates",
+            payload.value(
+                "anime_manager_candidates",
+                payload.value("animeProviders", payload.value("anime_providers")))));
+    return normalized;
+}
 } // namespace
 
 ApiClient::ApiClient(QObject *parent)
@@ -180,6 +245,26 @@ QString ApiClient::extensionsAutoWirePendingReason() const {
 
 int ApiClient::extensionsAutoWirePendingConflicts() const {
     return m_extensionsAutoWirePendingConflicts;
+}
+
+QVariantMap ApiClient::mediaFindResult() const {
+    return m_mediaFindResult;
+}
+
+bool ApiClient::mediaFindLoading() const {
+    return m_mediaFindLoading;
+}
+
+QVariantMap ApiClient::mediaManagerPreferences() const {
+    return m_mediaManagerPreferences;
+}
+
+QVariantMap ApiClient::mediaAddResult() const {
+    return m_mediaAddResult;
+}
+
+bool ApiClient::mediaAddLoading() const {
+    return m_mediaAddLoading;
 }
 
 void ApiClient::login(const QString &email, const QString &password) {
@@ -937,6 +1022,9 @@ void ApiClient::confirmExtensionsPlan(const QString &planId, const QVariantList 
             const QJsonObject obj = doc.object();
             const QString runId = obj.value("run_id").toString();
             const QString status = obj.value("status").toString();
+            const auto isTerminal = [](const QString &value) {
+                return value == "completed" || value == "failed" || value == "canceled";
+            };
             bool changed = false;
             if (!runId.isEmpty() && m_extensionsRunId != runId) {
                 m_extensionsRunId = runId;
@@ -961,7 +1049,15 @@ void ApiClient::confirmExtensionsPlan(const QString &planId, const QVariantList 
                 fetchExtensionRunDetail(runId);
                 fetchExtensionRuns();
             }
-            fetchDesiredBlueprints();
+            if (isTerminal(status)) {
+                fetchExtensionInstances();
+                fetchInstanceSecrets();
+                fetchDesiredBlueprints();
+                fetchAutoWireStatus();
+                fetchManagerPreferences();
+            } else {
+                fetchDesiredBlueprints();
+            }
             emit extensionsPlanChanged();
         });
 }
@@ -1224,6 +1320,213 @@ void ApiClient::fetchAutoWirePlan() {
         });
 }
 
+void ApiClient::findMedia(
+    const QString &query,
+    const QString &mediaType,
+    const QVariantList &providerIds) {
+    const QString trimmedQuery = query.trimmed();
+    if (trimmedQuery.isEmpty()) {
+        if (!m_mediaFindResult.isEmpty()) {
+            m_mediaFindResult.clear();
+            emit mediaFindResultChanged();
+        }
+        if (m_mediaFindLoading) {
+            m_mediaFindLoading = false;
+            emit mediaFindLoadingChanged();
+        }
+        return;
+    }
+
+    QJsonArray providerArray;
+    for (const QVariant &entry : providerIds) {
+        const QString providerId = entry.toString().trimmed();
+        if (!providerId.isEmpty()) {
+            providerArray.append(providerId);
+        }
+    }
+
+    if (!m_mediaFindLoading) {
+        m_mediaFindLoading = true;
+        emit mediaFindLoadingChanged();
+    }
+
+    QUrlQuery targetsQuery;
+    targetsQuery.addQueryItem("media_type", normalizeMediaType(mediaType));
+    const QString targetsPath = QString("/api/v1/find-media/targets?%1")
+                                    .arg(targetsQuery.toString(QUrl::FullyEncoded));
+
+    sendRequest(
+        "GET",
+        targetsPath,
+        QJsonObject(),
+        [this, trimmedQuery, mediaType, providerArray](const QJsonDocument &targetsDoc) {
+            if (!targetsDoc.isObject()) {
+                if (m_mediaFindLoading) {
+                    m_mediaFindLoading = false;
+                    emit mediaFindLoadingChanged();
+                }
+                emit requestFailed("/api/v1/find-media/targets", "Targets response was not an object.");
+                return;
+            }
+            QJsonObject searchBody;
+            searchBody.insert("mediaType", normalizeMediaType(mediaType));
+            searchBody.insert("query", trimmedQuery);
+            if (!providerArray.isEmpty()) {
+                searchBody.insert("providers", providerArray);
+            }
+            const QJsonObject targetsObject = targetsDoc.object();
+            sendRequest(
+                "POST",
+                "/api/v1/find-media/search",
+                searchBody,
+                [this, targetsObject](const QJsonDocument &searchDoc) {
+                    if (!searchDoc.isObject()) {
+                        if (m_mediaFindLoading) {
+                            m_mediaFindLoading = false;
+                            emit mediaFindLoadingChanged();
+                        }
+                        emit requestFailed("/api/v1/find-media/search", "Search response was not an object.");
+                        return;
+                    }
+                    QJsonObject merged = searchDoc.object();
+                    merged.insert("searchProviders", targetsObject.value("searchProviders"));
+                    merged.insert("managerProviders", targetsObject.value("managerCandidates"));
+                    merged.insert("defaultManagerProviderId", targetsObject.value("defaultManagerProviderId"));
+                    merged.insert("preferredManagerProviderId", targetsObject.value("preferredManagerProviderId"));
+
+                    const QVariantMap result = merged.toVariantMap();
+                    if (m_mediaFindResult != result) {
+                        m_mediaFindResult = result;
+                        emit mediaFindResultChanged();
+                    }
+                    if (m_mediaFindLoading) {
+                        m_mediaFindLoading = false;
+                        emit mediaFindLoadingChanged();
+                    }
+                },
+                [this](const QString &) {
+                    if (m_mediaFindLoading) {
+                        m_mediaFindLoading = false;
+                        emit mediaFindLoadingChanged();
+                    }
+                });
+        },
+        [this](const QString &) {
+            if (m_mediaFindLoading) {
+                m_mediaFindLoading = false;
+                emit mediaFindLoadingChanged();
+            }
+        });
+}
+
+void ApiClient::addMediaToManager(
+    const QString &mediaType,
+    const QVariantMap &item,
+    const QString &managerProviderId,
+    const QVariantMap &options) {
+    QJsonObject body;
+    body.insert("mediaType", normalizeMediaType(mediaType));
+    body.insert("item", QJsonObject::fromVariantMap(item));
+    const QString trimmedManager = managerProviderId.trimmed();
+    if (!trimmedManager.isEmpty()) {
+        body.insert("managerProviderId", trimmedManager);
+    }
+    if (!options.isEmpty()) {
+        body.insert("options", QJsonObject::fromVariantMap(options));
+    }
+
+    if (!m_mediaAddLoading) {
+        m_mediaAddLoading = true;
+        emit mediaAddLoadingChanged();
+    }
+    sendRequest(
+        "POST",
+        "/api/v1/find-media/add",
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                if (m_mediaAddLoading) {
+                    m_mediaAddLoading = false;
+                    emit mediaAddLoadingChanged();
+                }
+                emit requestFailed("/api/v1/find-media/add", "Add response was not an object.");
+                return;
+            }
+            const QVariantMap result = doc.object().toVariantMap();
+            if (m_mediaAddResult != result) {
+                m_mediaAddResult = result;
+                emit mediaAddResultChanged();
+            }
+            if (m_mediaAddLoading) {
+                m_mediaAddLoading = false;
+                emit mediaAddLoadingChanged();
+            }
+        },
+        [this](const QString &) {
+            if (m_mediaAddLoading) {
+                m_mediaAddLoading = false;
+                emit mediaAddLoadingChanged();
+            }
+        });
+}
+
+void ApiClient::fetchManagerPreferences() {
+    sendRequest(
+        "GET",
+        "/api/v1/find-media/preferences",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/find-media/preferences",
+                    "Manager preferences response was not an object.");
+                return;
+            }
+            const QVariantMap payload = normalizeFindMediaPreferencesPayload(doc.object().toVariantMap());
+            if (m_mediaManagerPreferences != payload) {
+                m_mediaManagerPreferences = payload;
+                emit mediaManagerPreferencesChanged();
+            }
+        });
+}
+
+void ApiClient::updateManagerPreferences(
+    const QString &movieProviderId,
+    const QString &seriesProviderId,
+    const QString &animeProviderId) {
+    QJsonObject body;
+    const QString movie = movieProviderId.trimmed();
+    const QString series = seriesProviderId.trimmed();
+    const QString anime = animeProviderId.trimmed();
+    body.insert(
+        "moviesDefaultManagerProviderId",
+        movie.isEmpty() ? QJsonValue::Null : QJsonValue(movie));
+    body.insert(
+        "tvDefaultManagerProviderId",
+        series.isEmpty() ? QJsonValue::Null : QJsonValue(series));
+    body.insert(
+        "animeDefaultManagerProviderId",
+        anime.isEmpty() ? QJsonValue::Null : QJsonValue(anime));
+
+    sendRequest(
+        "PATCH",
+        "/api/v1/find-media/preferences",
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/find-media/preferences",
+                    "Manager preferences update response was not an object.");
+                return;
+            }
+            const QVariantMap payload = normalizeFindMediaPreferencesPayload(doc.object().toVariantMap());
+            if (m_mediaManagerPreferences != payload) {
+                m_mediaManagerPreferences = payload;
+                emit mediaManagerPreferencesChanged();
+            }
+        });
+}
+
 void ApiClient::updateExtensionsCatalog(const QJsonObject &obj) {
     const QVariantList installed = obj.value("installed").toArray().toVariantList();
     const QVariantList available = obj.value("available").toArray().toVariantList();
@@ -1302,9 +1605,15 @@ void ApiClient::updateExtensionsRun(const QJsonObject &obj) {
     if (changed) {
         emit extensionsRunChanged();
     }
-    if (nextStatus == "completed" && prevStatus != "completed") {
+    const auto isTerminal = [](const QString &status) {
+        return status == "completed" || status == "failed" || status == "canceled";
+    };
+    if (isTerminal(nextStatus) && !isTerminal(prevStatus)) {
         fetchExtensionInstances();
         fetchInstanceSecrets();
+        fetchDesiredBlueprints();
+        fetchAutoWireStatus();
+        fetchManagerPreferences();
     }
 }
 

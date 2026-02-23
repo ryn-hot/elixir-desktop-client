@@ -37,6 +37,11 @@ class ApiClient : public QObject {
     Q_PROPERTY(QString extensionsAutoWirePendingPlanId READ extensionsAutoWirePendingPlanId NOTIFY extensionsAutoWireStatusChanged)
     Q_PROPERTY(QString extensionsAutoWirePendingReason READ extensionsAutoWirePendingReason NOTIFY extensionsAutoWireStatusChanged)
     Q_PROPERTY(int extensionsAutoWirePendingConflicts READ extensionsAutoWirePendingConflicts NOTIFY extensionsAutoWireStatusChanged)
+    Q_PROPERTY(QVariantMap mediaFindResult READ mediaFindResult NOTIFY mediaFindResultChanged)
+    Q_PROPERTY(bool mediaFindLoading READ mediaFindLoading NOTIFY mediaFindLoadingChanged)
+    Q_PROPERTY(QVariantMap mediaManagerPreferences READ mediaManagerPreferences NOTIFY mediaManagerPreferencesChanged)
+    Q_PROPERTY(QVariantMap mediaAddResult READ mediaAddResult NOTIFY mediaAddResultChanged)
+    Q_PROPERTY(bool mediaAddLoading READ mediaAddLoading NOTIFY mediaAddLoadingChanged)
 
 public:
     explicit ApiClient(QObject *parent = nullptr);
@@ -77,6 +82,11 @@ public:
     QString extensionsAutoWirePendingPlanId() const;
     QString extensionsAutoWirePendingReason() const;
     int extensionsAutoWirePendingConflicts() const;
+    QVariantMap mediaFindResult() const;
+    bool mediaFindLoading() const;
+    QVariantMap mediaManagerPreferences() const;
+    QVariantMap mediaAddResult() const;
+    bool mediaAddLoading() const;
 
     Q_INVOKABLE void login(const QString &email, const QString &password);
     Q_INVOKABLE void signup(const QString &email, const QString &password);
@@ -124,6 +134,20 @@ public:
     Q_INVOKABLE void fetchAutoWireStatus();
     Q_INVOKABLE void setAutoWireEnabled(bool enabled);
     Q_INVOKABLE void fetchAutoWirePlan();
+    Q_INVOKABLE void findMedia(
+        const QString &query,
+        const QString &mediaType,
+        const QVariantList &providerIds = QVariantList());
+    Q_INVOKABLE void addMediaToManager(
+        const QString &mediaType,
+        const QVariantMap &item,
+        const QString &managerProviderId = QString(),
+        const QVariantMap &options = QVariantMap());
+    Q_INVOKABLE void fetchManagerPreferences();
+    Q_INVOKABLE void updateManagerPreferences(
+        const QString &movieProviderId,
+        const QString &seriesProviderId,
+        const QString &animeProviderId);
 
 signals:
     void baseUrlChanged();
@@ -143,6 +167,11 @@ signals:
     void extensionsLastRefreshSuccessAtChanged();
     void extensionsLastRefreshErrorChanged();
     void extensionsAutoWireStatusChanged();
+    void mediaFindResultChanged();
+    void mediaFindLoadingChanged();
+    void mediaManagerPreferencesChanged();
+    void mediaAddResultChanged();
+    void mediaAddLoadingChanged();
     void secretRotated(const QString &secretId, const QString &value);
     void desiredBlueprintsCleared(int deleted);
     void runsCleared(int deleted);
@@ -212,4 +241,9 @@ private:
     QString m_extensionsAutoWirePendingPlanId;
     QString m_extensionsAutoWirePendingReason;
     int m_extensionsAutoWirePendingConflicts = 0;
+    QVariantMap m_mediaFindResult;
+    bool m_mediaFindLoading = false;
+    QVariantMap m_mediaManagerPreferences;
+    QVariantMap m_mediaAddResult;
+    bool m_mediaAddLoading = false;
 };
