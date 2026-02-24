@@ -81,7 +81,7 @@ ApplicationWindow {
             }
             onExtensionsRequested: {
                 if (!stackView.currentItem || stackView.currentItem.objectName !== "extensionsView") {
-                    stackView.push(Qt.resolvedUrl("views/ExtensionsView.qml"), { stackView: stackView })
+                    stackView.push(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), { stackView: stackView })
                 }
             }
             onFindMediaRequested: {
@@ -102,9 +102,10 @@ ApplicationWindow {
             TopBar {
                 Layout.fillWidth: true
                 visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
-                // Connect search signal to current view if applicable
+                // Global top bar search is reserved for library views.
                 onSearchChanged: {
                     if (stackView.currentItem &&
+                            stackView.currentItem.objectName === "homeView" &&
                             typeof stackView.currentItem.setSearchQuery === "function") {
                         stackView.currentItem.setSearchQuery(text)
                     }
@@ -116,6 +117,20 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 initialItem: ConnectServerView { stackView: stackView; notice: root.authNotice }
+                pushEnter: Transition {
+                    NumberAnimation { property: "x"; from: stackView.width * 0.03; to: 0; duration: 150; easing.type: Easing.OutCubic }
+                    NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 130 }
+                }
+                pushExit: Transition {
+                    NumberAnimation { property: "opacity"; from: 1.0; to: 0.97; duration: 90 }
+                }
+                popEnter: Transition {
+                    NumberAnimation { property: "opacity"; from: 0.97; to: 1.0; duration: 110 }
+                }
+                popExit: Transition {
+                    NumberAnimation { property: "x"; from: 0; to: stackView.width * 0.02; duration: 120; easing.type: Easing.InCubic }
+                    NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: 120 }
+                }
                 
                 // Add background for stackview area
                 background: Rectangle {

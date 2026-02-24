@@ -30,6 +30,7 @@ Item {
     property string oneClickBlueprintParams: ""
     property string oneClickBlueprintStage: ""
     property bool oneClickBlueprintConfirmSent: false
+    property bool initialDataLoadScheduled: false
 
     function isInstalled(extensionId) {
         for (var i = 0; i < apiClient.extensionsInstalled.length; ++i) {
@@ -926,29 +927,25 @@ Item {
         return true
     }
 
-    Component.onCompleted: {
-        if (apiClient.authToken !== "") {
-            apiClient.fetchExtensionsCatalog()
-            apiClient.fetchExtensionInstances()
-            apiClient.fetchInstanceSecrets()
-            apiClient.fetchDesiredBlueprints()
-            apiClient.fetchLatestReconcileRun()
-            apiClient.fetchExtensionRuns()
-            apiClient.fetchAutoWireStatus()
+    function scheduleInitialDataLoad() {
+        if (apiClient.authToken === "" || initialDataLoadScheduled) {
+            return
         }
+        initialDataLoadScheduled = true
+        initialLoadTimer.restart()
+    }
+
+    Component.onCompleted: {
+        scheduleInitialDataLoad()
     }
 
     Connections {
         target: apiClient
         function onAuthTokenChanged() {
             if (apiClient.authToken !== "") {
-                apiClient.fetchExtensionsCatalog()
-                apiClient.fetchExtensionInstances()
-                apiClient.fetchInstanceSecrets()
-                apiClient.fetchDesiredBlueprints()
-                apiClient.fetchLatestReconcileRun()
-                apiClient.fetchExtensionRuns()
-                apiClient.fetchAutoWireStatus()
+                scheduleInitialDataLoad()
+            } else {
+                initialDataLoadScheduled = false
             }
         }
         function onRequestFailed(endpoint, error) {
@@ -1047,6 +1044,30 @@ Item {
             } else {
                 actionToast.show("No runs cleared.")
             }
+        }
+    }
+
+    Timer {
+        id: initialLoadTimer
+        interval: 120
+        repeat: false
+        onTriggered: {
+            apiClient.fetchExtensionsCatalog()
+            apiClient.fetchExtensionInstances()
+            apiClient.fetchInstanceSecrets()
+            apiClient.fetchDesiredBlueprints()
+            postLoadTimer.restart()
+        }
+    }
+
+    Timer {
+        id: postLoadTimer
+        interval: 220
+        repeat: false
+        onTriggered: {
+            apiClient.fetchLatestReconcileRun()
+            apiClient.fetchExtensionRuns(20)
+            apiClient.fetchAutoWireStatus()
         }
     }
 

@@ -18,6 +18,10 @@ Item {
     property string pendingAddKey: ""
 
     function setSearchQuery(query) {
+        updateSearchQuery(query, false)
+    }
+
+    function updateSearchQuery(query, immediate) {
         searchQuery = query
         if (query.trim() === "") {
             selectedProviderIds = []
@@ -26,7 +30,11 @@ Item {
             apiClient.findMedia("", selectedType, [])
             return
         }
-        searchDebounce.restart()
+        if (immediate) {
+            triggerSearch()
+        } else {
+            searchDebounce.restart()
+        }
     }
 
     function lower(value) {
@@ -117,7 +125,21 @@ Item {
     function managerProvidersFor(type) {
         var key = type + "_providers"
         var camel = type + "Providers"
-        return listValue(apiClient.mediaManagerPreferences, key, camel)
+        var providers = listValue(apiClient.mediaManagerPreferences, key, camel)
+        if (providers.length > 0) {
+            return providers
+        }
+        if (type === "movie") {
+            providers = listValue(apiClient.mediaManagerPreferences, "movies_manager_candidates", "moviesManagerCandidates")
+        } else if (type === "series") {
+            providers = listValue(apiClient.mediaManagerPreferences, "tv_manager_candidates", "tvManagerCandidates")
+        } else {
+            providers = listValue(apiClient.mediaManagerPreferences, "anime_manager_candidates", "animeManagerCandidates")
+        }
+        if (providers.length > 0) {
+            return providers
+        }
+        return managerProvidersFromResult()
     }
 
     function preferencesObject() {
@@ -283,6 +305,11 @@ Item {
         return text
     }
 
+    function isFindEndpoint(endpoint, suffix) {
+        return endpoint.indexOf("/api/v1/find/" + suffix) === 0
+                || endpoint.indexOf("/api/v1/find-media/" + suffix) === 0
+    }
+
     function defaultManagerLabel() {
         return managerLabelByProviderId(defaultManagerProviderId())
     }
@@ -320,8 +347,11 @@ Item {
         selectedProviderIds = []
         if (apiClient.authToken !== "") {
             apiClient.fetchManagerPreferences()
+            apiClient.findMedia("", selectedType, [])
         }
-        searchDebounce.restart()
+        if (searchQuery.trim() !== "") {
+            searchDebounce.restart()
+        }
     }
 
     onSelectedProviderIdsChanged: {
@@ -333,6 +363,7 @@ Item {
     Component.onCompleted: {
         if (apiClient.authToken !== "") {
             apiClient.fetchManagerPreferences()
+            apiClient.findMedia("", selectedType, [])
         }
     }
 
@@ -357,6 +388,7 @@ Item {
         function onAuthTokenChanged() {
             if (apiClient.authToken !== "") {
                 apiClient.fetchManagerPreferences()
+                apiClient.findMedia("", root.selectedType, [])
                 if (root.searchQuery.trim() !== "") {
                     searchDebounce.restart()
                 }
@@ -392,13 +424,13 @@ Item {
         }
 
         function onRequestFailed(endpoint, error) {
-            if (endpoint.indexOf("/api/v1/find-media/search") === 0 ||
-                    endpoint.indexOf("/api/v1/find-media/targets") === 0) {
+            if (root.isFindEndpoint(endpoint, "search") ||
+                    root.isFindEndpoint(endpoint, "targets")) {
                 root.requestPending = false
                 root.statusText = error
-            } else if (endpoint.indexOf("/api/v1/find-media/preferences") === 0) {
+            } else if (root.isFindEndpoint(endpoint, "preferences")) {
                 root.statusText = error
-            } else if (endpoint.indexOf("/api/v1/find-media/add") === 0) {
+            } else if (root.isFindEndpoint(endpoint, "add")) {
                 root.pendingAddKey = ""
                 root.addStatusText = root.formatAddError(error)
             }
@@ -420,12 +452,14 @@ Item {
         function onExtensionsCatalogChanged() {
             if (apiClient.authToken !== "") {
                 apiClient.fetchManagerPreferences()
+                apiClient.findMedia("", root.selectedType, [])
             }
         }
 
         function onExtensionsInstancesChanged() {
             if (apiClient.authToken !== "") {
                 apiClient.fetchManagerPreferences()
+                apiClient.findMedia("", root.selectedType, [])
             }
         }
     }
@@ -448,6 +482,44 @@ Item {
                 color: Theme.textPrimary
                 font.pixelSize: 24
                 font.family: Theme.fontDisplay
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                radius: Theme.radiusLarge
+                color: Theme.backgroundCard
+                border.color: Theme.border
+                implicitHeight: searchRow.implicitHeight + Theme.spacingLarge * 2
+
+                RowLayout {
+                    id: searchRow
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingLarge
+                    spacing: Theme.spacingSmall
+
+                    TextField {
+                        id: findSearchField
+                        Layout.fillWidth: true
+                        text: root.searchQuery
+                        placeholderText: "Search " + root.mediaTypeLabel(root.selectedType) + " titles"
+                        onTextEdited: root.updateSearchQuery(text, false)
+                        onAccepted: root.updateSearchQuery(text, true)
+                    }
+
+                    Button {
+                        text: "Search"
+                        enabled: findSearchField.text.trim() !== ""
+                        onClicked: root.updateSearchQuery(findSearchField.text, true)
+                    }
+
+                    Button {
+                        text: "Clear"
+                        enabled: findSearchField.text.trim() !== ""
+                        onClicked: root.updateSearchQuery("", true)
+                    }
+                }
             }
 
             RowLayout {
@@ -655,7 +727,7 @@ Item {
             Label {
                 Layout.fillWidth: true
                 text: searchQuery.trim() === ""
-                      ? "Use the top search bar to find titles."
+                      ? "Enter a title to search."
                       : (root.findResults().length === 0 && !root.requestPending && !apiClient.mediaFindLoading
                          ? "No results found."
                          : "")

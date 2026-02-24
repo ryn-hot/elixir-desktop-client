@@ -1101,10 +1101,8 @@ void ApiClient::fetchExtensionRunDetail(const QString &runId) {
 }
 
 void ApiClient::fetchExtensionRuns(int limit) {
-    QString path = "/api/v1/extensions/runs";
-    if (limit > 0) {
-        path = QString("%1?limit=%2").arg(path).arg(limit);
-    }
+    const int effectiveLimit = limit > 0 ? limit : 50;
+    const QString path = QString("/api/v1/extensions/runs?limit=%1").arg(effectiveLimit);
     sendRequest(
         "GET",
         path,
@@ -1325,15 +1323,59 @@ void ApiClient::findMedia(
     const QString &mediaType,
     const QVariantList &providerIds) {
     const QString trimmedQuery = query.trimmed();
+    const QString normalizedType = normalizeMediaType(mediaType);
     if (trimmedQuery.isEmpty()) {
-        if (!m_mediaFindResult.isEmpty()) {
-            m_mediaFindResult.clear();
-            emit mediaFindResultChanged();
-        }
         if (m_mediaFindLoading) {
             m_mediaFindLoading = false;
-            emit mediaFindLoadingChanged();
         }
+        m_mediaFindLoading = true;
+        emit mediaFindLoadingChanged();
+
+        QUrlQuery targetsQuery;
+        targetsQuery.addQueryItem("media_type", normalizedType);
+        const QString targetsPath = QString("/api/v1/find/targets?%1")
+                                        .arg(targetsQuery.toString(QUrl::FullyEncoded));
+
+        sendRequest(
+            "GET",
+            targetsPath,
+            QJsonObject(),
+            [this, normalizedType](const QJsonDocument &targetsDoc) {
+                if (!targetsDoc.isObject()) {
+                    if (m_mediaFindLoading) {
+                        m_mediaFindLoading = false;
+                        emit mediaFindLoadingChanged();
+                    }
+                    emit requestFailed("/api/v1/find/targets", "Targets response was not an object.");
+                    return;
+                }
+                const QJsonObject targetsObject = targetsDoc.object();
+                QJsonObject merged;
+                merged.insert("query", "");
+                merged.insert("mediaType", normalizedType);
+                merged.insert("results", QJsonArray());
+                merged.insert("providerErrors", QJsonArray());
+                merged.insert("searchProviders", targetsObject.value("searchProviders"));
+                merged.insert("managerProviders", targetsObject.value("managerCandidates"));
+                merged.insert("defaultManagerProviderId", targetsObject.value("defaultManagerProviderId"));
+                merged.insert("preferredManagerProviderId", targetsObject.value("preferredManagerProviderId"));
+
+                const QVariantMap result = merged.toVariantMap();
+                if (m_mediaFindResult != result) {
+                    m_mediaFindResult = result;
+                    emit mediaFindResultChanged();
+                }
+                if (m_mediaFindLoading) {
+                    m_mediaFindLoading = false;
+                    emit mediaFindLoadingChanged();
+                }
+            },
+            [this](const QString &) {
+                if (m_mediaFindLoading) {
+                    m_mediaFindLoading = false;
+                    emit mediaFindLoadingChanged();
+                }
+            });
         return;
     }
 
@@ -1351,25 +1393,25 @@ void ApiClient::findMedia(
     }
 
     QUrlQuery targetsQuery;
-    targetsQuery.addQueryItem("media_type", normalizeMediaType(mediaType));
-    const QString targetsPath = QString("/api/v1/find-media/targets?%1")
+    targetsQuery.addQueryItem("media_type", normalizedType);
+    const QString targetsPath = QString("/api/v1/find/targets?%1")
                                     .arg(targetsQuery.toString(QUrl::FullyEncoded));
 
     sendRequest(
         "GET",
         targetsPath,
         QJsonObject(),
-        [this, trimmedQuery, mediaType, providerArray](const QJsonDocument &targetsDoc) {
+        [this, trimmedQuery, normalizedType, providerArray](const QJsonDocument &targetsDoc) {
             if (!targetsDoc.isObject()) {
                 if (m_mediaFindLoading) {
                     m_mediaFindLoading = false;
                     emit mediaFindLoadingChanged();
                 }
-                emit requestFailed("/api/v1/find-media/targets", "Targets response was not an object.");
+                emit requestFailed("/api/v1/find/targets", "Targets response was not an object.");
                 return;
             }
             QJsonObject searchBody;
-            searchBody.insert("mediaType", normalizeMediaType(mediaType));
+            searchBody.insert("mediaType", normalizedType);
             searchBody.insert("query", trimmedQuery);
             if (!providerArray.isEmpty()) {
                 searchBody.insert("providers", providerArray);
@@ -1377,7 +1419,7 @@ void ApiClient::findMedia(
             const QJsonObject targetsObject = targetsDoc.object();
             sendRequest(
                 "POST",
-                "/api/v1/find-media/search",
+                "/api/v1/find/search",
                 searchBody,
                 [this, targetsObject](const QJsonDocument &searchDoc) {
                     if (!searchDoc.isObject()) {
@@ -1385,7 +1427,7 @@ void ApiClient::findMedia(
                             m_mediaFindLoading = false;
                             emit mediaFindLoadingChanged();
                         }
-                        emit requestFailed("/api/v1/find-media/search", "Search response was not an object.");
+                        emit requestFailed("/api/v1/find/search", "Search response was not an object.");
                         return;
                     }
                     QJsonObject merged = searchDoc.object();
@@ -1441,7 +1483,7 @@ void ApiClient::addMediaToManager(
     }
     sendRequest(
         "POST",
-        "/api/v1/find-media/add",
+        "/api/v1/find/add",
         body,
         [this](const QJsonDocument &doc) {
             if (!doc.isObject()) {
@@ -1449,7 +1491,7 @@ void ApiClient::addMediaToManager(
                     m_mediaAddLoading = false;
                     emit mediaAddLoadingChanged();
                 }
-                emit requestFailed("/api/v1/find-media/add", "Add response was not an object.");
+                emit requestFailed("/api/v1/find/add", "Add response was not an object.");
                 return;
             }
             const QVariantMap result = doc.object().toVariantMap();
@@ -1473,12 +1515,12 @@ void ApiClient::addMediaToManager(
 void ApiClient::fetchManagerPreferences() {
     sendRequest(
         "GET",
-        "/api/v1/find-media/preferences",
+        "/api/v1/find/preferences",
         QJsonObject(),
         [this](const QJsonDocument &doc) {
             if (!doc.isObject()) {
                 emit requestFailed(
-                    "/api/v1/find-media/preferences",
+                    "/api/v1/find/preferences",
                     "Manager preferences response was not an object.");
                 return;
             }
@@ -1510,12 +1552,12 @@ void ApiClient::updateManagerPreferences(
 
     sendRequest(
         "PATCH",
-        "/api/v1/find-media/preferences",
+        "/api/v1/find/preferences",
         body,
         [this](const QJsonDocument &doc) {
             if (!doc.isObject()) {
                 emit requestFailed(
-                    "/api/v1/find-media/preferences",
+                    "/api/v1/find/preferences",
                     "Manager preferences update response was not an object.");
                 return;
             }
