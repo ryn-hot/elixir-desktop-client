@@ -6,6 +6,7 @@ import Elixir 1.0
 Item {
     id: root
     property string searchQuery: ""
+    property bool searchVisible: true
     signal searchChanged(string text)
 
     height: Theme.topBarHeight
@@ -23,12 +24,13 @@ Item {
 
         // Search Bar (Left-Aligned)
         Rectangle {
-            Layout.preferredWidth: 250
+            Layout.preferredWidth: root.searchVisible ? 250 : 0
             Layout.preferredHeight: 36
             radius: 4
             color: Theme.bgSidebar // Slightly lighter than main bg
             border.color: searchField.activeFocus ? Theme.accent : "transparent"
             border.width: 1
+            visible: root.searchVisible
             
             RowLayout {
                 anchors.fill: parent

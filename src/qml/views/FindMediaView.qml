@@ -9,6 +9,7 @@ Item {
     id: root
     objectName: "findMediaView"
     property StackView stackView: null
+    property int minLiveSearchChars: 2
     property string searchQuery: ""
     property string selectedType: "movie"
     property var selectedProviderIds: []
@@ -23,8 +24,15 @@ Item {
 
     function updateSearchQuery(query, immediate) {
         searchQuery = query
-        if (query.trim() === "") {
+        var trimmed = query.trim()
+        if (trimmed === "") {
             selectedProviderIds = []
+            requestPending = false
+            statusText = ""
+            apiClient.findMedia("", selectedType, [])
+            return
+        }
+        if (!immediate && trimmed.length < minLiveSearchChars) {
             requestPending = false
             statusText = ""
             apiClient.findMedia("", selectedType, [])
@@ -72,6 +80,7 @@ Item {
     function searchProviderOptions() {
         var providers = listValue(apiClient.mediaFindResult, "search_providers", "searchProviders")
         var options = []
+        var seen = {}
         for (var i = 0; i < providers.length; ++i) {
             var provider = providers[i]
             var label = provider.label
@@ -81,8 +90,10 @@ Item {
                 label = implementation ? (instance + " (" + implementation + ")") : instance
             }
             var providerId = provider.provider_id !== undefined ? provider.provider_id : provider.providerId
-            if (providerId !== undefined && providerId !== null && String(providerId) !== "") {
-                options.push({ label: label, value: String(providerId || "") })
+            var id = String(providerId || "")
+            if (id !== "" && !seen[id]) {
+                seen[id] = true
+                options.push({ label: label, value: id })
             }
         }
         return options
@@ -331,6 +342,72 @@ Item {
         return title + "::" + year
     }
 
+    function resultPosterUrl(item) {
+        if (!item) {
+            return ""
+        }
+        var value = item.poster_url
+        if (value === undefined || value === null || String(value) === "") {
+            value = item.posterUrl
+        }
+        return value !== undefined && value !== null ? String(value) : ""
+    }
+
+    function resultDescription(item) {
+        if (!item) {
+            return ""
+        }
+        var text = item.description || ""
+        text = String(text)
+        return text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim()
+    }
+
+    function resultPopularityLabel(item) {
+        if (!item) {
+            return ""
+        }
+        var value = item.popularity_score
+        if (value === undefined || value === null) {
+            value = item.popularityScore
+        }
+        if (value === undefined || value === null || isNaN(Number(value))) {
+            return ""
+        }
+        return "Popularity " + Number(value).toFixed(1)
+    }
+
+    function resultTitleWithYear(item) {
+        if (!item) {
+            return "Untitled"
+        }
+        var title = item.title || "Untitled"
+        var year = item.year || ""
+        return year !== "" ? (title + " (" + year + ")") : title
+    }
+
+    function resultSourceSummary(item) {
+        if (!item) {
+            return ""
+        }
+        var labels = item.source_labels || item.sourceLabels || []
+        if (!labels || labels.length === 0) {
+            return ""
+        }
+        if (labels.length === 1) {
+            return "Source: " + labels[0]
+        }
+        return "Sources: " + labels.join(", ")
+    }
+
+    function addTargetLabel() {
+        var managerId = resolvedManagerProviderIdForAdd()
+        if (managerId === "") {
+            return "Target manager not selected"
+        }
+        var label = managerLabelByProviderId(managerId)
+        return label !== "" ? ("Add to " + label) : "Add to selected manager"
+    }
+
     function addResultToManager(item) {
         var blockedReason = addDisabledReason()
         if (blockedReason !== "") {
@@ -349,13 +426,13 @@ Item {
             apiClient.fetchManagerPreferences()
             apiClient.findMedia("", selectedType, [])
         }
-        if (searchQuery.trim() !== "") {
+        if (searchQuery.trim().length >= minLiveSearchChars) {
             searchDebounce.restart()
         }
     }
 
     onSelectedProviderIdsChanged: {
-        if (searchQuery.trim() !== "") {
+        if (searchQuery.trim().length >= minLiveSearchChars) {
             searchDebounce.restart()
         }
     }
@@ -389,7 +466,7 @@ Item {
             if (apiClient.authToken !== "") {
                 apiClient.fetchManagerPreferences()
                 apiClient.findMedia("", root.selectedType, [])
-                if (root.searchQuery.trim() !== "") {
+                if (root.searchQuery.trim().length >= root.minLiveSearchChars) {
                     searchDebounce.restart()
                 }
             } else {
@@ -728,109 +805,218 @@ Item {
                 Layout.fillWidth: true
                 text: searchQuery.trim() === ""
                       ? "Enter a title to search."
+                      : (searchQuery.trim().length < root.minLiveSearchChars
+                         ? ("Type at least " + root.minLiveSearchChars + " characters for live search, or press Enter.")
                       : (root.findResults().length === 0 && !root.requestPending && !apiClient.mediaFindLoading
                          ? "No results found."
-                         : "")
+                         : ""))
                 color: Theme.textMuted
                 font.pixelSize: 12
                 font.family: Theme.fontBody
                 wrapMode: Text.WordWrap
             }
 
-            Repeater {
-                model: root.findResults()
-                delegate: Rectangle {
-                    Layout.fillWidth: true
-                    radius: Theme.radiusLarge
-                    color: Theme.backgroundCard
-                    border.color: Theme.border
-                    implicitHeight: rowLayout.implicitHeight + Theme.spacingMedium * 2
+            Label {
+                Layout.fillWidth: true
+                text: root.findResults().length > 0
+                      ? (root.findResults().length + " result" + (root.findResults().length === 1 ? "" : "s"))
+                      : ""
+                color: Theme.textMuted
+                font.pixelSize: 11
+                font.family: Theme.fontBody
+                visible: text !== ""
+            }
 
-                    ColumnLayout {
-                        id: rowLayout
+            ListView {
+                id: resultsList
+                Layout.fillWidth: true
+                Layout.preferredHeight: contentHeight
+                model: root.findResults()
+                spacing: Theme.spacingSmall
+                clip: true
+                interactive: false
+                reuseItems: true
+                delegate: Rectangle {
+                    id: resultRow
+                    required property var modelData
+                    required property int index
+
+                    readonly property string rowKey: root.resultKey(modelData)
+                    readonly property bool addPending: root.pendingAddKey === rowKey && apiClient.mediaAddLoading
+                    readonly property string addReason: root.addDisabledReason()
+
+                    width: ListView.view ? ListView.view.width : 0
+                    radius: Theme.radiusMedium
+                    color: index % 2 === 0 ? Theme.backgroundCard : Theme.backgroundCardRaised
+                    border.color: rowHover.hovered ? Theme.accent : Theme.border
+                    implicitHeight: rowContent.implicitHeight + Theme.spacingSmall * 2
+
+                    HoverHandler {
+                        id: rowHover
+                    }
+
+                    RowLayout {
+                        id: rowContent
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: parent.top
-                        anchors.margins: Theme.spacingMedium
-                        spacing: Theme.spacingSmall
+                        anchors.margins: Theme.spacingSmall
+                        spacing: Theme.spacingMedium
 
-                        RowLayout {
+                        Rectangle {
+                            Layout.preferredWidth: 78
+                            Layout.preferredHeight: 114
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCard
+                            border.color: Theme.border
+                            clip: true
+
+                            Image {
+                                id: posterImage
+                                anchors.fill: parent
+                                source: root.resultPosterUrl(modelData)
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                cache: true
+                                visible: source !== "" && status === Image.Ready
+                            }
+
+                            Label {
+                                anchors.centerIn: parent
+                                text: root.mediaTypeLabel(modelData.type || "")
+                                color: Theme.textMuted
+                                font.pixelSize: 10
+                                font.family: Theme.fontBody
+                                visible: !posterImage.visible
+                            }
+                        }
+
+                        ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: Theme.spacingSmall
+                            spacing: 6
 
                             Label {
                                 Layout.fillWidth: true
-                                text: {
-                                    var title = modelData.title || "Untitled"
-                                    var year = modelData.year || ""
-                                    return year !== "" ? (title + " (" + year + ")") : title
-                                }
+                                text: root.resultTitleWithYear(modelData)
                                 color: Theme.textPrimary
-                                font.pixelSize: 16
+                                font.pixelSize: 17
                                 font.family: Theme.fontDisplay
                                 elide: Text.ElideRight
                             }
 
-                            Rectangle {
-                                radius: Theme.radiusSmall
-                                color: Theme.backgroundCardRaised
-                                border.color: Theme.border
-                                implicitWidth: typeLabel.implicitWidth + Theme.spacingSmall * 2
-                                implicitHeight: typeLabel.implicitHeight + 6
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
 
-                                Label {
-                                    id: typeLabel
-                                    anchors.centerIn: parent
-                                    text: root.mediaTypeLabel(modelData.type || "")
-                                    color: Theme.textSecondary
-                                    font.pixelSize: 11
-                                    font.family: Theme.fontBody
+                                Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.backgroundCard
+                                    border.color: Theme.border
+                                    implicitWidth: mediaTypeChip.implicitWidth + 12
+                                    implicitHeight: mediaTypeChip.implicitHeight + 4
+
+                                    Label {
+                                        id: mediaTypeChip
+                                        anchors.centerIn: parent
+                                        text: root.mediaTypeLabel(modelData.type || "")
+                                        color: Theme.textSecondary
+                                        font.pixelSize: 10
+                                        font.family: Theme.fontBody
+                                    }
+                                }
+
+                                Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.backgroundCard
+                                    border.color: Theme.border
+                                    visible: (modelData.year || "") !== ""
+                                    implicitWidth: yearChip.implicitWidth + 12
+                                    implicitHeight: yearChip.implicitHeight + 4
+
+                                    Label {
+                                        id: yearChip
+                                        anchors.centerIn: parent
+                                        text: String(modelData.year || "")
+                                        color: Theme.textSecondary
+                                        font.pixelSize: 10
+                                        font.family: Theme.fontBody
+                                    }
+                                }
+
+                                Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.backgroundCard
+                                    border.color: Theme.border
+                                    visible: root.resultPopularityLabel(modelData) !== ""
+                                    implicitWidth: popularityChip.implicitWidth + 12
+                                    implicitHeight: popularityChip.implicitHeight + 4
+
+                                    Label {
+                                        id: popularityChip
+                                        anchors.centerIn: parent
+                                        text: root.resultPopularityLabel(modelData)
+                                        color: Theme.textSecondary
+                                        font.pixelSize: 10
+                                        font.family: Theme.fontBody
+                                    }
                                 }
                             }
 
+                            Text {
+                                Layout.fillWidth: true
+                                text: root.resultDescription(modelData)
+                                color: Theme.textSecondary
+                                font.pixelSize: 12
+                                font.family: Theme.fontBody
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
+                                visible: text !== ""
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.resultSourceSummary(modelData)
+                                color: Theme.textMuted
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                visible: text !== ""
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.preferredWidth: 190
+                            Layout.alignment: Qt.AlignTop
+                            spacing: 6
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.addTargetLabel()
+                                color: Theme.textMuted
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignRight
+                                wrapMode: Text.WordWrap
+                            }
+
                             Button {
-                                readonly property string addReason: root.addDisabledReason()
-                                text: root.pendingAddKey === root.resultKey(modelData) && apiClient.mediaAddLoading
-                                      ? "Adding..."
-                                      : "Add"
-                                enabled: !apiClient.mediaAddLoading && addReason === ""
+                                Layout.alignment: Qt.AlignRight
+                                text: resultRow.addPending ? "Adding..." : "Add"
+                                enabled: !apiClient.mediaAddLoading && resultRow.addReason === ""
                                 onClicked: root.addResultToManager(modelData)
                             }
-                        }
 
-                        Label {
-                            Layout.fillWidth: true
-                            text: root.addDisabledReason()
-                            color: Theme.textMuted
-                            font.pixelSize: 11
-                            font.family: Theme.fontBody
-                            visible: text !== ""
-                            wrapMode: Text.WordWrap
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: modelData.description || ""
-                            color: Theme.textSecondary
-                            font.pixelSize: 12
-                            font.family: Theme.fontBody
-                            wrapMode: Text.WordWrap
-                            visible: text !== ""
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: {
-                                var labels = modelData.source_labels || modelData.sourceLabels || []
-                                return labels.length > 0
-                                    ? ("Sources: " + labels.join(", "))
-                                    : ""
+                            Label {
+                                Layout.fillWidth: true
+                                text: resultRow.addReason
+                                color: Theme.textMuted
+                                font.pixelSize: 10
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignRight
+                                wrapMode: Text.WordWrap
+                                visible: text !== ""
                             }
-                            color: Theme.textMuted
-                            font.pixelSize: 11
-                            font.family: Theme.fontBody
-                            visible: text !== ""
-                            wrapMode: Text.WordWrap
                         }
                     }
                 }

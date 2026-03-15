@@ -102,6 +102,7 @@ ApplicationWindow {
             TopBar {
                 Layout.fillWidth: true
                 visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
+                searchVisible: stackView.currentItem && stackView.currentItem.objectName === "homeView"
                 // Global top bar search is reserved for library views.
                 onSearchChanged: {
                     if (stackView.currentItem &&

@@ -1324,6 +1324,7 @@ void ApiClient::findMedia(
     const QVariantList &providerIds) {
     const QString trimmedQuery = query.trimmed();
     const QString normalizedType = normalizeMediaType(mediaType);
+    const quint64 requestId = ++m_mediaFindRequestId;
     if (trimmedQuery.isEmpty()) {
         if (m_mediaFindLoading) {
             m_mediaFindLoading = false;
@@ -1340,7 +1341,10 @@ void ApiClient::findMedia(
             "GET",
             targetsPath,
             QJsonObject(),
-            [this, normalizedType](const QJsonDocument &targetsDoc) {
+            [this, requestId, normalizedType](const QJsonDocument &targetsDoc) {
+                if (requestId != m_mediaFindRequestId) {
+                    return;
+                }
                 if (!targetsDoc.isObject()) {
                     if (m_mediaFindLoading) {
                         m_mediaFindLoading = false;
@@ -1370,7 +1374,10 @@ void ApiClient::findMedia(
                     emit mediaFindLoadingChanged();
                 }
             },
-            [this](const QString &) {
+            [this, requestId](const QString &) {
+                if (requestId != m_mediaFindRequestId) {
+                    return;
+                }
                 if (m_mediaFindLoading) {
                     m_mediaFindLoading = false;
                     emit mediaFindLoadingChanged();
@@ -1401,7 +1408,10 @@ void ApiClient::findMedia(
         "GET",
         targetsPath,
         QJsonObject(),
-        [this, trimmedQuery, normalizedType, providerArray](const QJsonDocument &targetsDoc) {
+        [this, requestId, trimmedQuery, normalizedType, providerArray](const QJsonDocument &targetsDoc) {
+            if (requestId != m_mediaFindRequestId) {
+                return;
+            }
             if (!targetsDoc.isObject()) {
                 if (m_mediaFindLoading) {
                     m_mediaFindLoading = false;
@@ -1421,7 +1431,10 @@ void ApiClient::findMedia(
                 "POST",
                 "/api/v1/find/search",
                 searchBody,
-                [this, targetsObject](const QJsonDocument &searchDoc) {
+                [this, requestId, targetsObject](const QJsonDocument &searchDoc) {
+                    if (requestId != m_mediaFindRequestId) {
+                        return;
+                    }
                     if (!searchDoc.isObject()) {
                         if (m_mediaFindLoading) {
                             m_mediaFindLoading = false;
@@ -1446,14 +1459,20 @@ void ApiClient::findMedia(
                         emit mediaFindLoadingChanged();
                     }
                 },
-                [this](const QString &) {
+                [this, requestId](const QString &) {
+                    if (requestId != m_mediaFindRequestId) {
+                        return;
+                    }
                     if (m_mediaFindLoading) {
                         m_mediaFindLoading = false;
                         emit mediaFindLoadingChanged();
                     }
                 });
         },
-        [this](const QString &) {
+        [this, requestId](const QString &) {
+            if (requestId != m_mediaFindRequestId) {
+                return;
+            }
             if (m_mediaFindLoading) {
                 m_mediaFindLoading = false;
                 emit mediaFindLoadingChanged();

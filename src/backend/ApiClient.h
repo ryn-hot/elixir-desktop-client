@@ -243,6 +243,7 @@ private:
     int m_extensionsAutoWirePendingConflicts = 0;
     QVariantMap m_mediaFindResult;
     bool m_mediaFindLoading = false;
+    quint64 m_mediaFindRequestId = 0;
     QVariantMap m_mediaManagerPreferences;
     QVariantMap m_mediaAddResult;
     bool m_mediaAddLoading = false;
