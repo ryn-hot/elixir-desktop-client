@@ -247,6 +247,34 @@ int ApiClient::extensionsAutoWirePendingConflicts() const {
     return m_extensionsAutoWirePendingConflicts;
 }
 
+QString ApiClient::extensionsDownloaderProfile() const {
+    return m_extensionsDownloaderProfile;
+}
+
+QString ApiClient::extensionsDownloaderDefaultProfile() const {
+    return m_extensionsDownloaderDefaultProfile;
+}
+
+QString ApiClient::extensionsDownloaderProfileSource() const {
+    return m_extensionsDownloaderProfileSource;
+}
+
+QString ApiClient::extensionsDownloaderProfileUpdatedAt() const {
+    return m_extensionsDownloaderProfileUpdatedAt;
+}
+
+int ApiClient::extensionsDownloaderPendingUpdateCount() const {
+    return m_extensionsDownloaderPendingUpdateCount;
+}
+
+QVariantList ApiClient::extensionsDownloaderProfileOptions() const {
+    return m_extensionsDownloaderProfileOptions;
+}
+
+QVariantList ApiClient::extensionsDownloaderTelemetry() const {
+    return m_extensionsDownloaderTelemetry;
+}
+
 QVariantMap ApiClient::mediaFindResult() const {
     return m_mediaFindResult;
 }
@@ -1316,6 +1344,83 @@ void ApiClient::fetchAutoWirePlan() {
             }
             updateExtensionsPlan(doc.object());
         });
+}
+
+void ApiClient::fetchDownloaderProfile() {
+    sendRequest(
+        "GET",
+        "/api/v1/extensions/downloaders/profile",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/downloaders/profile", "Downloader profile response was not an object.");
+                return;
+            }
+            updateDownloaderProfileState(doc.object());
+        });
+}
+
+void ApiClient::updateDownloaderProfile(const QString &profile) {
+    const QString trimmed = profile.trimmed().toLower();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/downloaders/profile", "Downloader profile is required.");
+        return;
+    }
+    QJsonObject body{{"profile", trimmed}};
+    sendRequest(
+        "PATCH",
+        "/api/v1/extensions/downloaders/profile",
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/downloaders/profile", "Downloader profile response was not an object.");
+                return;
+            }
+            updateDownloaderProfileState(doc.object());
+        });
+}
+
+void ApiClient::updateDownloaderProfileState(const QJsonObject &obj) {
+    const QString profile = obj.value("profile").toString();
+    const QString defaultProfile = obj.value("defaultProfile").toString();
+    const QString source = obj.value("source").toString();
+    const QString updatedAt = obj.value("updatedAt").toString();
+    const int pendingUpdates = obj.value("pendingUpdateCount").toInt();
+    const QVariantList options = obj.value("profiles").toArray().toVariantList();
+    const QVariantList telemetry = obj.value("downloaders").toArray().toVariantList();
+
+    bool changed = false;
+    if (m_extensionsDownloaderProfile != profile) {
+        m_extensionsDownloaderProfile = profile;
+        changed = true;
+    }
+    if (m_extensionsDownloaderDefaultProfile != defaultProfile) {
+        m_extensionsDownloaderDefaultProfile = defaultProfile;
+        changed = true;
+    }
+    if (m_extensionsDownloaderProfileSource != source) {
+        m_extensionsDownloaderProfileSource = source;
+        changed = true;
+    }
+    if (m_extensionsDownloaderProfileUpdatedAt != updatedAt) {
+        m_extensionsDownloaderProfileUpdatedAt = updatedAt;
+        changed = true;
+    }
+    if (m_extensionsDownloaderPendingUpdateCount != pendingUpdates) {
+        m_extensionsDownloaderPendingUpdateCount = pendingUpdates;
+        changed = true;
+    }
+    if (m_extensionsDownloaderProfileOptions != options) {
+        m_extensionsDownloaderProfileOptions = options;
+        changed = true;
+    }
+    if (m_extensionsDownloaderTelemetry != telemetry) {
+        m_extensionsDownloaderTelemetry = telemetry;
+        changed = true;
+    }
+    if (changed) {
+        emit extensionsDownloaderSettingsChanged();
+    }
 }
 
 void ApiClient::findMedia(

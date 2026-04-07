@@ -37,6 +37,13 @@ class ApiClient : public QObject {
     Q_PROPERTY(QString extensionsAutoWirePendingPlanId READ extensionsAutoWirePendingPlanId NOTIFY extensionsAutoWireStatusChanged)
     Q_PROPERTY(QString extensionsAutoWirePendingReason READ extensionsAutoWirePendingReason NOTIFY extensionsAutoWireStatusChanged)
     Q_PROPERTY(int extensionsAutoWirePendingConflicts READ extensionsAutoWirePendingConflicts NOTIFY extensionsAutoWireStatusChanged)
+    Q_PROPERTY(QString extensionsDownloaderProfile READ extensionsDownloaderProfile NOTIFY extensionsDownloaderSettingsChanged)
+    Q_PROPERTY(QString extensionsDownloaderDefaultProfile READ extensionsDownloaderDefaultProfile NOTIFY extensionsDownloaderSettingsChanged)
+    Q_PROPERTY(QString extensionsDownloaderProfileSource READ extensionsDownloaderProfileSource NOTIFY extensionsDownloaderSettingsChanged)
+    Q_PROPERTY(QString extensionsDownloaderProfileUpdatedAt READ extensionsDownloaderProfileUpdatedAt NOTIFY extensionsDownloaderSettingsChanged)
+    Q_PROPERTY(int extensionsDownloaderPendingUpdateCount READ extensionsDownloaderPendingUpdateCount NOTIFY extensionsDownloaderSettingsChanged)
+    Q_PROPERTY(QVariantList extensionsDownloaderProfileOptions READ extensionsDownloaderProfileOptions NOTIFY extensionsDownloaderSettingsChanged)
+    Q_PROPERTY(QVariantList extensionsDownloaderTelemetry READ extensionsDownloaderTelemetry NOTIFY extensionsDownloaderSettingsChanged)
     Q_PROPERTY(QVariantMap mediaFindResult READ mediaFindResult NOTIFY mediaFindResultChanged)
     Q_PROPERTY(bool mediaFindLoading READ mediaFindLoading NOTIFY mediaFindLoadingChanged)
     Q_PROPERTY(QVariantMap mediaManagerPreferences READ mediaManagerPreferences NOTIFY mediaManagerPreferencesChanged)
@@ -82,6 +89,13 @@ public:
     QString extensionsAutoWirePendingPlanId() const;
     QString extensionsAutoWirePendingReason() const;
     int extensionsAutoWirePendingConflicts() const;
+    QString extensionsDownloaderProfile() const;
+    QString extensionsDownloaderDefaultProfile() const;
+    QString extensionsDownloaderProfileSource() const;
+    QString extensionsDownloaderProfileUpdatedAt() const;
+    int extensionsDownloaderPendingUpdateCount() const;
+    QVariantList extensionsDownloaderProfileOptions() const;
+    QVariantList extensionsDownloaderTelemetry() const;
     QVariantMap mediaFindResult() const;
     bool mediaFindLoading() const;
     QVariantMap mediaManagerPreferences() const;
@@ -134,6 +148,8 @@ public:
     Q_INVOKABLE void fetchAutoWireStatus();
     Q_INVOKABLE void setAutoWireEnabled(bool enabled);
     Q_INVOKABLE void fetchAutoWirePlan();
+    Q_INVOKABLE void fetchDownloaderProfile();
+    Q_INVOKABLE void updateDownloaderProfile(const QString &profile);
     Q_INVOKABLE void findMedia(
         const QString &query,
         const QString &mediaType,
@@ -167,6 +183,7 @@ signals:
     void extensionsLastRefreshSuccessAtChanged();
     void extensionsLastRefreshErrorChanged();
     void extensionsAutoWireStatusChanged();
+    void extensionsDownloaderSettingsChanged();
     void mediaFindResultChanged();
     void mediaFindLoadingChanged();
     void mediaManagerPreferencesChanged();
@@ -206,6 +223,7 @@ private:
     void updateExtensionsCatalog(const QJsonObject &obj);
     void updateExtensionsPlan(const QJsonObject &obj);
     void updateExtensionsRun(const QJsonObject &obj);
+    void updateDownloaderProfileState(const QJsonObject &obj);
     void sendRequest(
         const QString &method,
         const QString &path,
@@ -241,6 +259,13 @@ private:
     QString m_extensionsAutoWirePendingPlanId;
     QString m_extensionsAutoWirePendingReason;
     int m_extensionsAutoWirePendingConflicts = 0;
+    QString m_extensionsDownloaderProfile;
+    QString m_extensionsDownloaderDefaultProfile;
+    QString m_extensionsDownloaderProfileSource;
+    QString m_extensionsDownloaderProfileUpdatedAt;
+    int m_extensionsDownloaderPendingUpdateCount = 0;
+    QVariantList m_extensionsDownloaderProfileOptions;
+    QVariantList m_extensionsDownloaderTelemetry;
     QVariantMap m_mediaFindResult;
     bool m_mediaFindLoading = false;
     quint64 m_mediaFindRequestId = 0;

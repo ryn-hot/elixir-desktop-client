@@ -31,6 +31,8 @@ Item {
     property string oneClickBlueprintStage: ""
     property bool oneClickBlueprintConfirmSent: false
     property bool initialDataLoadScheduled: false
+    property bool downloaderProfileUpdating: false
+    property string pendingDownloaderProfile: ""
 
     function isInstalled(extensionId) {
         for (var i = 0; i < apiClient.extensionsInstalled.length; ++i) {
@@ -311,6 +313,128 @@ Item {
             }
         }
         return results
+    }
+
+    function downloaderProfileLabel(profileId) {
+        var options = apiClient.extensionsDownloaderProfileOptions
+        for (var i = 0; i < options.length; ++i) {
+            var option = options[i]
+            if (option.id === profileId) {
+                return option.label || profileId
+            }
+        }
+        if (profileId === "aggressive") {
+            return "Aggressive"
+        }
+        if (profileId === "balanced") {
+            return "Balanced"
+        }
+        return profileId
+    }
+
+    function downloaderHealthColor(state) {
+        if (state === "healthy") {
+            return "#5fbf5a"
+        }
+        if (state === "degraded") {
+            return Theme.accent
+        }
+        if (state === "unhealthy") {
+            return "#D95C5C"
+        }
+        return Theme.textMuted
+    }
+
+    function downloaderSyncLabel(item) {
+        if (!item || !item.syncState) {
+            return "pending"
+        }
+        if (item.syncState === "up_to_date") {
+            return "applied"
+        }
+        if (item.syncState === "pending_update") {
+            return "update pending"
+        }
+        if (item.syncState === "pending_bootstrap") {
+            return "bootstrap pending"
+        }
+        return item.syncState
+    }
+
+    function downloaderSyncColor(item) {
+        if (!item || !item.syncState) {
+            return Theme.textMuted
+        }
+        if (item.syncState === "up_to_date") {
+            return "#5fbf5a"
+        }
+        if (item.syncState === "pending_update" || item.syncState === "pending_bootstrap") {
+            return Theme.accent
+        }
+        return Theme.textMuted
+    }
+
+    function formatDataSize(bytes) {
+        if (bytes === undefined || bytes === null || bytes < 0) {
+            return ""
+        }
+        var units = ["B", "KiB", "MiB", "GiB", "TiB"]
+        var value = Number(bytes)
+        var unitIndex = 0
+        while (value >= 1024 && unitIndex < units.length - 1) {
+            value /= 1024
+            unitIndex += 1
+        }
+        var decimals = value >= 100 || unitIndex === 0 ? 0 : 1
+        return value.toFixed(decimals) + " " + units[unitIndex]
+    }
+
+    function formatDataRate(bytesPerSecond) {
+        var size = formatDataSize(bytesPerSecond)
+        if (size === "") {
+            return ""
+        }
+        return size + "/s"
+    }
+
+    function downloaderLiveMetrics(item) {
+        if (!item) {
+            return ""
+        }
+        var parts = []
+        if (item.downloadRateBps !== undefined && item.downloadRateBps !== null) {
+            parts.push(formatDataRate(item.downloadRateBps) + " down")
+        }
+        if (item.uploadRateBps !== undefined && item.uploadRateBps !== null) {
+            parts.push(formatDataRate(item.uploadRateBps) + " up")
+        }
+        if (item.activeItems !== undefined && item.activeItems !== null) {
+            parts.push(item.activeItems + " active")
+        }
+        if (item.queuedItems !== undefined && item.queuedItems !== null && item.queuedItems > 0) {
+            parts.push(item.queuedItems + " queued")
+        }
+        if (item.postProcessItems !== undefined && item.postProcessItems !== null && item.postProcessItems > 0) {
+            parts.push(item.postProcessItems + " post")
+        }
+        if (item.errorItems !== undefined && item.errorItems !== null && item.errorItems > 0) {
+            parts.push(item.errorItems + " issue" + (item.errorItems === 1 ? "" : "s"))
+        }
+        return parts.join(" • ")
+    }
+
+    function downloaderTelemetryTimestamps(item) {
+        if (!item) {
+            return ""
+        }
+        var parts = []
+        if (item.lastSuccessfulSampleAt) {
+            parts.push("Last good sample: " + item.lastSuccessfulSampleAt)
+        }
+        if (item.lastErrorAt) {
+            parts.push("Last error: " + item.lastErrorAt)
+        }
+        return parts.join(" • ")
     }
 
     function secretsFor(instanceId) {
@@ -949,7 +1073,13 @@ Item {
             }
         }
         function onRequestFailed(endpoint, error) {
-            if (endpoint.indexOf("/api/v1/extensions/") === 0) {
+            if (endpoint === "/api/v1/extensions/downloaders/profile") {
+                downloaderProfileUpdating = false
+                pendingDownloaderProfile = ""
+                downloaderToast.show(error)
+            }
+            if (endpoint.indexOf("/api/v1/extensions/") === 0 &&
+                    endpoint !== "/api/v1/extensions/downloaders/profile") {
                 actionToast.show(error)
             }
             if (endpoint === "/api/v1/extensions/secrets" && planRefreshPendingCount > 0) {
@@ -968,6 +1098,7 @@ Item {
         function onExtensionsInstancesChanged() {
             actionToast.clear()
             apiClient.fetchAutoWireStatus()
+            apiClient.fetchDownloaderProfile()
             maybeAdvanceOneClickBlueprintInstall()
             checkPendingBlueprintPlan()
         }
@@ -995,6 +1126,7 @@ Item {
                 var runStatus = String(apiClient.extensionsRun.status || "")
                 if (runStatus === "completed" || runStatus === "failed" || runStatus === "canceled") {
                     apiClient.fetchDesiredBlueprints()
+                    apiClient.fetchDownloaderProfile()
                 }
             }
             if (oneClickBlueprintActive &&
@@ -1010,6 +1142,20 @@ Item {
                     clearOneClickBlueprintFlow()
                 }
             }
+        }
+        function onExtensionsReconcileRunChanged() {
+            apiClient.fetchDownloaderProfile()
+        }
+        function onExtensionsDownloaderSettingsChanged() {
+            if (!downloaderProfileUpdating) {
+                return
+            }
+            var appliedProfile = apiClient.extensionsDownloaderProfile
+            var selectedLabel = downloaderProfileLabel(
+                pendingDownloaderProfile !== "" ? pendingDownloaderProfile : appliedProfile)
+            downloaderProfileUpdating = false
+            pendingDownloaderProfile = ""
+            downloaderToast.show(selectedLabel + " profile saved.")
         }
         function onExtensionsAutoWireStatusChanged() {
             autoWireDesired = apiClient.extensionsAutoWireEnabled
@@ -1068,6 +1214,7 @@ Item {
             apiClient.fetchLatestReconcileRun()
             apiClient.fetchExtensionRuns(20)
             apiClient.fetchAutoWireStatus()
+            apiClient.fetchDownloaderProfile()
         }
     }
 
@@ -1214,6 +1361,236 @@ Item {
                         color: Theme.textMuted
                         font.pixelSize: 11
                         font.family: Theme.fontBody
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                radius: Theme.radiusLarge
+                color: Theme.backgroundCard
+                border.color: Theme.border
+                implicitHeight: downloaderProfileContent.implicitHeight + Theme.spacingLarge * 2
+                height: implicitHeight
+
+                ColumnLayout {
+                    id: downloaderProfileContent
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingLarge
+                    spacing: Theme.spacingMedium
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        Label {
+                            text: "Downloader defaults"
+                            color: Theme.textPrimary
+                            font.pixelSize: 16
+                            font.family: Theme.fontDisplay
+                            Layout.fillWidth: true
+                        }
+
+                        Repeater {
+                            model: apiClient.extensionsDownloaderProfileOptions
+                            delegate: Button {
+                                text: modelData.label || modelData.id
+                                checkable: true
+                                checked: apiClient.extensionsDownloaderProfile === modelData.id
+                                enabled: apiClient.authToken !== "" &&
+                                         !root.downloaderProfileUpdating &&
+                                         apiClient.extensionsDownloaderProfile !== "" &&
+                                         apiClient.extensionsDownloaderProfile !== modelData.id
+                                onClicked: {
+                                    root.downloaderProfileUpdating = true
+                                    root.pendingDownloaderProfile = modelData.id
+                                    apiClient.updateDownloaderProfile(modelData.id)
+                                }
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: parent.checked ? Theme.backgroundCard : Theme.backgroundCardRaised
+                                    border.color: parent.checked ? Theme.accent : Theme.border
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: parent.checked ? Theme.textPrimary : Theme.textSecondary
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+                    }
+
+                    Label {
+                        text: {
+                            var profileLabel = downloaderProfileLabel(apiClient.extensionsDownloaderProfile)
+                            var textValue = "Controls the managed performance tuning for built-in qBittorrent and NZBGet."
+                            if (apiClient.extensionsDownloaderProfile !== "") {
+                                textValue += " Current profile: " + profileLabel + "."
+                            }
+                            return textValue
+                        }
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Label {
+                        text: {
+                            if (apiClient.extensionsDownloaderPendingUpdateCount > 0) {
+                                return apiClient.extensionsDownloaderPendingUpdateCount +
+                                       " downloader" +
+                                       (apiClient.extensionsDownloaderPendingUpdateCount === 1 ? "" : "s") +
+                                       " will pick this up on the next reconcile or within about a minute."
+                            }
+                            if (apiClient.extensionsDownloaderProfileSource === "override" &&
+                                    apiClient.extensionsDownloaderProfileUpdatedAt !== "") {
+                                return "Saved override updated " +
+                                       apiClient.extensionsDownloaderProfileUpdatedAt + "."
+                            }
+                            if (apiClient.extensionsDownloaderDefaultProfile !== "") {
+                                return "Using the server default profile from configuration."
+                            }
+                            return ""
+                        }
+                        color: apiClient.extensionsDownloaderPendingUpdateCount > 0
+                               ? Theme.accent
+                               : Theme.textMuted
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: text !== ""
+                        wrapMode: Text.WordWrap
+                    }
+
+                    InlineToast {
+                        id: downloaderToast
+                        color: Theme.textMuted
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    Label {
+                        text: "No managed downloaders are installed yet."
+                        color: Theme.textMuted
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: apiClient.extensionsDownloaderTelemetry.length === 0
+                    }
+
+                    Repeater {
+                        model: apiClient.extensionsDownloaderTelemetry
+                        delegate: Rectangle {
+                            Layout.fillWidth: true
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                            implicitHeight: telemetryRow.implicitHeight + Theme.spacingSmall * 2
+                            height: implicitHeight
+
+                            ColumnLayout {
+                                id: telemetryRow
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: Theme.spacingSmall
+                                spacing: Theme.spacingSmall
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacingSmall
+
+                                    Label {
+                                        text: modelData.name || modelData.implementation || modelData.capability
+                                        color: Theme.textPrimary
+                                        font.pixelSize: 12
+                                        font.family: Theme.fontBody
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Rectangle {
+                                        radius: Theme.radiusSmall
+                                        color: Theme.backgroundCard
+                                        border.color: root.downloaderHealthColor(modelData.healthState)
+                                        implicitWidth: healthText.implicitWidth + 14
+                                        implicitHeight: 24
+
+                                        Label {
+                                            id: healthText
+                                            anchors.centerIn: parent
+                                            text: modelData.healthState || "unknown"
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 11
+                                            font.family: Theme.fontBody
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        radius: Theme.radiusSmall
+                                        color: Theme.backgroundCard
+                                        border.color: root.downloaderSyncColor(modelData)
+                                        implicitWidth: syncText.implicitWidth + 14
+                                        implicitHeight: 24
+
+                                        Label {
+                                            id: syncText
+                                            anchors.centerIn: parent
+                                            text: root.downloaderSyncLabel(modelData)
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 11
+                                            font.family: Theme.fontBody
+                                        }
+                                    }
+                                }
+
+                                Label {
+                                    text: root.downloaderLiveMetrics(modelData)
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    visible: text !== ""
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Label {
+                                    text: {
+                                        var parts = []
+                                        if (modelData.stateSummary) {
+                                            parts.push(modelData.stateSummary)
+                                        }
+                                        if (modelData.appliedProfile) {
+                                            parts.push("Applied: " + downloaderProfileLabel(modelData.appliedProfile))
+                                        }
+                                        if (root.downloaderTelemetryTimestamps(modelData) !== "") {
+                                            parts.push(root.downloaderTelemetryTimestamps(modelData))
+                                        }
+                                        if (modelData.lastHealthcheckAt) {
+                                            parts.push("Checked: " + modelData.lastHealthcheckAt)
+                                        }
+                                        return parts.join(" • ")
+                                    }
+                                    color: Theme.textMuted
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                    visible: text !== ""
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Label {
+                                    text: modelData.telemetryError || ""
+                                    color: "#D95C5C"
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                    visible: text !== ""
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
                     }
                 }
             }
