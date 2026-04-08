@@ -68,7 +68,8 @@ ApplicationWindow {
                 }
                 if (stackView.currentItem.objectName === "settingsView") return "settings"
                 if (stackView.currentItem.objectName === "findMediaView") return "find_media"
-                if (stackView.currentItem.objectName === "extensionsView") return "extensions"
+                if (stackView.currentItem.objectName === "extensionsView" ||
+                        stackView.currentItem.objectName === "advancedExtensionsView") return "extensions"
                 // Add logic for movies/series/anime views when they exist as separate pages
                 return "home"
             }
@@ -80,7 +81,11 @@ ApplicationWindow {
                 }
             }
             onExtensionsRequested: {
-                if (!stackView.currentItem || stackView.currentItem.objectName !== "extensionsView") {
+                if (!stackView.currentItem) {
+                    stackView.push(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), { stackView: stackView })
+                } else if (stackView.currentItem.objectName === "advancedExtensionsView") {
+                    stackView.replace(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), { stackView: stackView })
+                } else if (stackView.currentItem.objectName !== "extensionsView") {
                     stackView.push(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), { stackView: stackView })
                 }
             }

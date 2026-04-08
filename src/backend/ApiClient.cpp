@@ -231,6 +231,14 @@ QVariantList ApiClient::extensionsDesiredBlueprints() const {
     return m_extensionsDesiredBlueprints;
 }
 
+QVariantList ApiClient::extensionsStatusItems() const {
+    return m_extensionsStatusItems;
+}
+
+int ApiClient::extensionsNeedsAttentionCount() const {
+    return m_extensionsNeedsAttentionCount;
+}
+
 bool ApiClient::extensionsAutoWireEnabled() const {
     return m_extensionsAutoWireEnabled;
 }
@@ -1253,6 +1261,20 @@ void ApiClient::clearDesiredBlueprints(const QString &applied) {
         });
 }
 
+void ApiClient::fetchExtensionStatusSummary() {
+    sendRequest(
+        "GET",
+        "/api/v1/extensions/status-summary",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/status-summary", "Extension status response was not an object.");
+                return;
+            }
+            updateExtensionStatusSummary(doc.object());
+        });
+}
+
 void ApiClient::fetchAutoWireStatus() {
     sendRequest(
         "GET",
@@ -1780,6 +1802,24 @@ void ApiClient::updateExtensionsRun(const QJsonObject &obj) {
         fetchDesiredBlueprints();
         fetchAutoWireStatus();
         fetchManagerPreferences();
+    }
+}
+
+void ApiClient::updateExtensionStatusSummary(const QJsonObject &obj) {
+    const QVariantList items = obj.value("items").toArray().toVariantList();
+    const int needsAttention = obj.value("needsAttentionCount").toInt();
+
+    bool changed = false;
+    if (m_extensionsStatusItems != items) {
+        m_extensionsStatusItems = items;
+        changed = true;
+    }
+    if (m_extensionsNeedsAttentionCount != needsAttention) {
+        m_extensionsNeedsAttentionCount = needsAttention;
+        changed = true;
+    }
+    if (changed) {
+        emit extensionsStatusSummaryChanged();
     }
 }
 

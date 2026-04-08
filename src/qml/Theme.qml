@@ -8,6 +8,11 @@ QtObject {
     property color bgSidebar: "#1f2124"    // Sidebar background
     property color bgCard: "#2c2f33"       // Placeholder for loading cards
     property color accent: "#e5a00d"       // The "Plex Orange"
+    property color accentDanger: "#d86b6b"
+    property color accentDangerSoft: "#33d86b6b"
+    property color accentSuccess: "#5fbf5a"
+    property color accentSuccessSoft: "#2a5fbf5a"
+    property color accentMutedSoft: "#22777777"
     property color textPrimary: "#ececec"
     property color textSecondary: "#999999"
     property color divider: "#3e4247"

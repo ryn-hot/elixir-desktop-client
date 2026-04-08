@@ -22,6 +22,7 @@
         <file alias="views/SettingsView.qml">../src/qml/views/SettingsView.qml</file>
         <file alias="views/ExtensionsRouteView.qml">../src/qml/views/ExtensionsRouteView.qml</file>
         <file alias="views/ExtensionsView.qml">../src/qml/views/ExtensionsView.qml</file>
+        <file alias="views/AdvancedExtensionsView.qml">../src/qml/views/AdvancedExtensionsView.qml</file>
     </qresource>
     <qresource prefix="/icons">
         <file alias="activity.svg">icons/activity.svg</file>

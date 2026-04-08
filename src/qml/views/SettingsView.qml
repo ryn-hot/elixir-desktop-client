@@ -395,6 +395,25 @@ Item {
                             verticalAlignment: Text.AlignVCenter
                         }
                     }
+
+                    Button {
+                        text: "Open advanced extension settings"
+                        enabled: apiClient.authToken !== "" && root.stackView !== null
+                        onClicked: root.stackView.push(Qt.resolvedUrl("AdvancedExtensionsView.qml"), { stackView: root.stackView })
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
                 }
 
                 Label {

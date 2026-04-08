@@ -30,6 +30,8 @@ class ApiClient : public QObject {
     Q_PROPERTY(QVariantList extensionsRuns READ extensionsRuns NOTIFY extensionsRunsChanged)
     Q_PROPERTY(QVariantMap extensionsReconcileRun READ extensionsReconcileRun NOTIFY extensionsReconcileRunChanged)
     Q_PROPERTY(QVariantList extensionsDesiredBlueprints READ extensionsDesiredBlueprints NOTIFY extensionsDesiredBlueprintsChanged)
+    Q_PROPERTY(QVariantList extensionsStatusItems READ extensionsStatusItems NOTIFY extensionsStatusSummaryChanged)
+    Q_PROPERTY(int extensionsNeedsAttentionCount READ extensionsNeedsAttentionCount NOTIFY extensionsStatusSummaryChanged)
     Q_PROPERTY(QString extensionsLastRefreshedAt READ extensionsLastRefreshedAt NOTIFY extensionsLastRefreshedAtChanged)
     Q_PROPERTY(QString extensionsLastRefreshSuccessAt READ extensionsLastRefreshSuccessAt NOTIFY extensionsLastRefreshSuccessAtChanged)
     Q_PROPERTY(QString extensionsLastRefreshError READ extensionsLastRefreshError NOTIFY extensionsLastRefreshErrorChanged)
@@ -85,6 +87,8 @@ public:
     QVariantList extensionsRuns() const;
     QVariantMap extensionsReconcileRun() const;
     QVariantList extensionsDesiredBlueprints() const;
+    QVariantList extensionsStatusItems() const;
+    int extensionsNeedsAttentionCount() const;
     bool extensionsAutoWireEnabled() const;
     QString extensionsAutoWirePendingPlanId() const;
     QString extensionsAutoWirePendingReason() const;
@@ -145,6 +149,7 @@ public:
     Q_INVOKABLE void reconcileNow();
     Q_INVOKABLE void fetchDesiredBlueprints(const QString &applied = QString());
     Q_INVOKABLE void clearDesiredBlueprints(const QString &applied = QString());
+    Q_INVOKABLE void fetchExtensionStatusSummary();
     Q_INVOKABLE void fetchAutoWireStatus();
     Q_INVOKABLE void setAutoWireEnabled(bool enabled);
     Q_INVOKABLE void fetchAutoWirePlan();
@@ -179,6 +184,7 @@ signals:
     void extensionsRunsChanged();
     void extensionsReconcileRunChanged();
     void extensionsDesiredBlueprintsChanged();
+    void extensionsStatusSummaryChanged();
     void extensionsLastRefreshedAtChanged();
     void extensionsLastRefreshSuccessAtChanged();
     void extensionsLastRefreshErrorChanged();
@@ -223,6 +229,7 @@ private:
     void updateExtensionsCatalog(const QJsonObject &obj);
     void updateExtensionsPlan(const QJsonObject &obj);
     void updateExtensionsRun(const QJsonObject &obj);
+    void updateExtensionStatusSummary(const QJsonObject &obj);
     void updateDownloaderProfileState(const QJsonObject &obj);
     void sendRequest(
         const QString &method,
@@ -252,6 +259,8 @@ private:
     QVariantList m_extensionsRuns;
     QVariantMap m_extensionsReconcileRun;
     QVariantList m_extensionsDesiredBlueprints;
+    QVariantList m_extensionsStatusItems;
+    int m_extensionsNeedsAttentionCount = 0;
     QString m_extensionsLastRefreshedAt;
     QString m_extensionsLastRefreshSuccessAt;
     QString m_extensionsLastRefreshError;
