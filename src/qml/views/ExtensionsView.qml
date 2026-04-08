@@ -21,6 +21,11 @@ Item {
     property string pendingBlueprintPlanId: ""
     property string pendingBlueprintPlanParams: ""
     property var pendingBlueprintDependencies: []
+    property string activeOptionalAddonId: ""
+    property var activeOptionalAddonValues: ({})
+    property string pendingOptionalAddonId: ""
+    property string pendingOptionalAddonTargetInstanceId: ""
+    property var pendingOptionalAddonSecretKeys: []
 
     function scheduleStatusSummaryRefresh() {
         if (apiClient.authToken === "") {
@@ -256,6 +261,11 @@ Item {
         oneClickBlueprintParams = ""
         oneClickBlueprintStage = ""
         oneClickBlueprintConfirmSent = false
+    }
+
+    function clearOptionalAddonPrompt() {
+        activeOptionalAddonId = ""
+        activeOptionalAddonValues = ({})
     }
 
     function ensureBlueprintDependencies(blueprintId, paramsJson) {
@@ -506,6 +516,156 @@ Item {
         return { label: label, action: action }
     }
 
+    function addonFieldLabel(field) {
+        var key = String(field || "")
+        if (key === "api_key") {
+            return "API key"
+        }
+        if (key === "username") {
+            return "Username"
+        }
+        if (key === "password") {
+            return "Password"
+        }
+        return key.replace(/_/g, " ")
+    }
+
+    function optionalAddonValue(secretKey) {
+        return String(activeOptionalAddonValues[secretKey] || "")
+    }
+
+    function setOptionalAddonValue(secretKey, value) {
+        var next = {}
+        for (var key in activeOptionalAddonValues) {
+            if (activeOptionalAddonValues.hasOwnProperty(key)) {
+                next[key] = activeOptionalAddonValues[key]
+            }
+        }
+        next[String(secretKey || "")] = value
+        activeOptionalAddonValues = next
+    }
+
+    function hasInstanceSecret(instanceId, key) {
+        var present = instanceSecretKeys(instanceId)
+        return !!present[String(key || "")]
+    }
+
+    function activateOptionalAddon(addon) {
+        if (!addon) {
+            return
+        }
+        var extensionId = String(addon.extensionId || "")
+        if (extensionId === "") {
+            return
+        }
+        var secretScopeInstanceId = String(addon.secretScopeInstanceId || "")
+        var secretKeys = addon.secretKeys || []
+        var needsPrompt = secretScopeInstanceId !== "" && secretKeys.length > 0
+        if (needsPrompt) {
+            var missing = []
+            for (var i = 0; i < secretKeys.length; ++i) {
+                var key = String(secretKeys[i] || "")
+                if (key !== "" && !hasInstanceSecret(secretScopeInstanceId, key)) {
+                    missing.push(key)
+                }
+            }
+            if (missing.length > 0) {
+                activeOptionalAddonId = extensionId
+                activeOptionalAddonValues = ({})
+                return
+            }
+        }
+        if (String(addon.action || "") === "open") {
+            root.openAdvanced(extensionId)
+            return
+        }
+
+        if (secretScopeInstanceId !== "" && secretKeys.length > 0) {
+            for (var idx = 0; idx < secretKeys.length; ++idx) {
+                var createKey = String(secretKeys[idx] || "")
+                if (createKey === "") {
+                    continue
+                }
+                var secretValue = String(activeOptionalAddonValues[createKey] || "")
+                if (secretValue !== "") {
+                    apiClient.createInstanceSecret(secretScopeInstanceId, createKey, secretValue)
+                }
+            }
+        }
+
+        clearOptionalAddonPrompt()
+
+        pendingOptionalAddonId = extensionId
+        pendingOptionalAddonTargetInstanceId = secretScopeInstanceId
+        pendingOptionalAddonSecretKeys = secretKeys
+
+        var installed = installedExtension(extensionId)
+        if (installed) {
+            if (installed.enabled === false) {
+                apiClient.enableExtension(extensionId)
+                actionToast.show("Activating " + String(addon.title || extensionId) + "...")
+                return
+            }
+            apiClient.reconcileNow()
+            actionToast.show("Refreshing " + String(addon.title || extensionId) + "...")
+            pendingOptionalAddonId = ""
+            pendingOptionalAddonTargetInstanceId = ""
+            pendingOptionalAddonSecretKeys = []
+            return
+        }
+
+        var available = marketplaceEntry(extensionId)
+        var downloadUrl = available ? String(available.download_url || available.downloadUrl || "") : ""
+        if (downloadUrl === "") {
+            actionToast.show("This add-on is not available in the marketplace right now.")
+            pendingOptionalAddonId = ""
+            pendingOptionalAddonTargetInstanceId = ""
+            pendingOptionalAddonSecretKeys = []
+            return
+        }
+        apiClient.installExtension(downloadUrl)
+        actionToast.show("Activating " + String(addon.title || extensionId) + "...")
+    }
+
+    function submitOptionalAddonPrompt(addon) {
+        if (!addon) {
+            return
+        }
+        var secretKeys = addon.secretKeys || []
+        for (var i = 0; i < secretKeys.length; ++i) {
+            var key = String(secretKeys[i] || "")
+            if (key === "") {
+                continue
+            }
+            if (String(activeOptionalAddonValues[key] || "").trim() === "") {
+                actionToast.show("Enter " + addonFieldLabel((addon.requiredFields || [])[i] || key) + ".")
+                return
+            }
+        }
+        activateOptionalAddon(addon)
+    }
+
+    function checkPendingOptionalAddonActivation() {
+        if (pendingOptionalAddonId === "") {
+            return
+        }
+        var installed = installedExtension(pendingOptionalAddonId)
+        if (!installed || installed.enabled !== true) {
+            return
+        }
+        if (pendingOptionalAddonTargetInstanceId !== "" && pendingOptionalAddonSecretKeys.length > 0) {
+            for (var i = 0; i < pendingOptionalAddonSecretKeys.length; ++i) {
+                if (!hasInstanceSecret(pendingOptionalAddonTargetInstanceId, pendingOptionalAddonSecretKeys[i])) {
+                    return
+                }
+            }
+        }
+        apiClient.reconcileNow()
+        pendingOptionalAddonId = ""
+        pendingOptionalAddonTargetInstanceId = ""
+        pendingOptionalAddonSecretKeys = []
+    }
+
     function installedCards() {
         var cards = []
         for (var i = 0; i < apiClient.extensionsStatusItems.length; ++i) {
@@ -528,7 +688,8 @@ Item {
                     description: String(item.description || ""),
                     action: String(item.primaryAction || "open"),
                     actionLabel: String(item.primaryActionLabel || "Open")
-                }
+                },
+                optionalAddons: item.optionalAddons || []
             })
         }
         cards.sort(function(left, right) {
@@ -624,6 +785,10 @@ Item {
                 initialDataLoadScheduled = false
                 clearPendingBlueprintPlan()
                 clearOneClickBlueprintFlow()
+                clearOptionalAddonPrompt()
+                pendingOptionalAddonId = ""
+                pendingOptionalAddonTargetInstanceId = ""
+                pendingOptionalAddonSecretKeys = []
             }
         }
 
@@ -637,16 +802,19 @@ Item {
             root.scheduleStatusSummaryRefresh()
             maybeAdvanceOneClickBlueprintInstall()
             checkPendingBlueprintPlan()
+            checkPendingOptionalAddonActivation()
         }
 
         function onExtensionsInstancesChanged() {
             root.scheduleStatusSummaryRefresh()
             maybeAdvanceOneClickBlueprintInstall()
             checkPendingBlueprintPlan()
+            checkPendingOptionalAddonActivation()
         }
 
         function onExtensionsSecretsChanged() {
             root.scheduleStatusSummaryRefresh()
+            checkPendingOptionalAddonActivation()
         }
 
         function onExtensionsDesiredBlueprintsChanged() {
@@ -939,6 +1107,181 @@ Item {
                                             wrapMode: Text.WordWrap
                                         }
 
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: Theme.spacingSmall
+                                            visible: modelData.optionalAddons && modelData.optionalAddons.length > 0
+
+                                            Label {
+                                                text: "Optional add-ons"
+                                                color: Theme.textPrimary
+                                                font.pixelSize: 12
+                                                font.family: Theme.fontDisplay
+                                            }
+
+                                            Repeater {
+                                                model: modelData.optionalAddons || []
+                                                delegate: Rectangle {
+                                                    property var addon: modelData
+                                                    Layout.fillWidth: true
+                                                    radius: Theme.radiusSmall
+                                                    color: Theme.backgroundCard
+                                                    border.color: Theme.border
+                                                    implicitHeight: addonContent.implicitHeight + Theme.spacingSmall * 2
+                                                    height: implicitHeight
+
+                                                    ColumnLayout {
+                                                        id: addonContent
+                                                        anchors.fill: parent
+                                                        anchors.margins: Theme.spacingSmall
+                                                        spacing: Theme.spacingSmall
+
+                                                        RowLayout {
+                                                            Layout.fillWidth: true
+                                                            spacing: Theme.spacingSmall
+
+                                                            ColumnLayout {
+                                                                Layout.fillWidth: true
+                                                                spacing: 2
+
+                                                                Label {
+                                                                    text: String(addon.title || addon.extensionId || "")
+                                                                    color: Theme.textPrimary
+                                                                    font.pixelSize: 12
+                                                                    font.family: Theme.fontDisplay
+                                                                    Layout.fillWidth: true
+                                                                    elide: Text.ElideRight
+                                                                }
+
+                                                                Label {
+                                                                    text: String(addon.description || "")
+                                                                    color: Theme.textSecondary
+                                                                    font.pixelSize: 11
+                                                                    font.family: Theme.fontBody
+                                                                    wrapMode: Text.WordWrap
+                                                                    Layout.fillWidth: true
+                                                                }
+                                                            }
+
+                                                            Rectangle {
+                                                                radius: Theme.radiusSmall
+                                                                color: Theme.backgroundCardRaised
+                                                                border.color: Theme.border
+                                                                implicitHeight: 22
+                                                                implicitWidth: addonLabel.implicitWidth + 12
+
+                                                                Label {
+                                                                    id: addonLabel
+                                                                    anchors.centerIn: parent
+                                                                    text: String(addon.label || "Available")
+                                                                    color: Theme.textSecondary
+                                                                    font.pixelSize: 10
+                                                                    font.family: Theme.fontBody
+                                                                }
+                                                            }
+
+                                                            Button {
+                                                                text: String(addon.actionLabel || "Activate")
+                                                                enabled: apiClient.authToken !== ""
+                                                                onClicked: root.activateOptionalAddon(addon)
+                                                                background: Rectangle {
+                                                                    radius: Theme.radiusSmall
+                                                                    color: Theme.backgroundCardRaised
+                                                                    border.color: Theme.border
+                                                                }
+                                                                contentItem: Label {
+                                                                    text: parent.text
+                                                                    color: Theme.textPrimary
+                                                                    font.pixelSize: 11
+                                                                    font.family: Theme.fontBody
+                                                                    horizontalAlignment: Text.AlignHCenter
+                                                                    verticalAlignment: Text.AlignVCenter
+                                                                }
+                                                            }
+                                                        }
+
+                                                        ColumnLayout {
+                                                            Layout.fillWidth: true
+                                                            spacing: Theme.spacingSmall
+                                                            visible: root.activeOptionalAddonId === String(addon.extensionId || "") &&
+                                                                     (addon.secretKeys || []).length > 0
+
+                                                            Repeater {
+                                                                model: addon.secretKeys || []
+                                                                delegate: TextField {
+                                                                    property int fieldIndex: index
+                                                                    property var requiredFields: addon.requiredFields || []
+                                                                    property string secretKey: String(modelData || "")
+                                                                    Layout.fillWidth: true
+                                                                    placeholderText: root.addonFieldLabel(
+                                                                        fieldIndex < requiredFields.length
+                                                                        ? requiredFields[fieldIndex]
+                                                                        : secretKey
+                                                                    )
+                                                                    echoMode: placeholderText.toLowerCase().indexOf("password") >= 0
+                                                                              ? TextInput.Password
+                                                                              : TextInput.Normal
+                                                                    text: root.optionalAddonValue(secretKey)
+                                                                    onTextChanged: root.setOptionalAddonValue(secretKey, text)
+                                                                    color: Theme.textPrimary
+                                                                    font.pixelSize: 12
+                                                                    font.family: Theme.fontBody
+                                                                    placeholderTextColor: Theme.textMuted
+                                                                    background: Rectangle {
+                                                                        radius: Theme.radiusSmall
+                                                                        color: Theme.backgroundCardRaised
+                                                                        border.color: Theme.border
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            RowLayout {
+                                                                Layout.fillWidth: true
+                                                                spacing: Theme.spacingSmall
+
+                                                                Button {
+                                                                    text: "Save and activate"
+                                                                    enabled: apiClient.authToken !== ""
+                                                                    onClicked: root.submitOptionalAddonPrompt(addon)
+                                                                    background: Rectangle {
+                                                                        radius: Theme.radiusSmall
+                                                                        color: Theme.accent
+                                                                        border.color: Theme.accent
+                                                                    }
+                                                                    contentItem: Label {
+                                                                        text: parent.text
+                                                                        color: "#141414"
+                                                                        font.pixelSize: 11
+                                                                        font.family: Theme.fontBody
+                                                                        horizontalAlignment: Text.AlignHCenter
+                                                                        verticalAlignment: Text.AlignVCenter
+                                                                    }
+                                                                }
+
+                                                                Button {
+                                                                    text: "Cancel"
+                                                                    onClicked: root.clearOptionalAddonPrompt()
+                                                                    background: Rectangle {
+                                                                        radius: Theme.radiusSmall
+                                                                        color: Theme.backgroundCardRaised
+                                                                        border.color: Theme.border
+                                                                    }
+                                                                    contentItem: Label {
+                                                                        text: parent.text
+                                                                        color: Theme.textPrimary
+                                                                        font.pixelSize: 11
+                                                                        font.family: Theme.fontBody
+                                                                        horizontalAlignment: Text.AlignHCenter
+                                                                        verticalAlignment: Text.AlignVCenter
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         RowLayout {
                                             Layout.fillWidth: true
                                             spacing: Theme.spacingSmall
@@ -1058,6 +1401,181 @@ Item {
                                             font.pixelSize: 12
                                             font.family: Theme.fontBody
                                             wrapMode: Text.WordWrap
+                                        }
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: Theme.spacingSmall
+                                            visible: modelData.optionalAddons && modelData.optionalAddons.length > 0
+
+                                            Label {
+                                                text: "Optional add-ons"
+                                                color: Theme.textPrimary
+                                                font.pixelSize: 12
+                                                font.family: Theme.fontDisplay
+                                            }
+
+                                            Repeater {
+                                                model: modelData.optionalAddons || []
+                                                delegate: Rectangle {
+                                                    property var addon: modelData
+                                                    Layout.fillWidth: true
+                                                    radius: Theme.radiusSmall
+                                                    color: Theme.backgroundCard
+                                                    border.color: Theme.border
+                                                    implicitHeight: readyAddonContent.implicitHeight + Theme.spacingSmall * 2
+                                                    height: implicitHeight
+
+                                                    ColumnLayout {
+                                                        id: readyAddonContent
+                                                        anchors.fill: parent
+                                                        anchors.margins: Theme.spacingSmall
+                                                        spacing: Theme.spacingSmall
+
+                                                        RowLayout {
+                                                            Layout.fillWidth: true
+                                                            spacing: Theme.spacingSmall
+
+                                                            ColumnLayout {
+                                                                Layout.fillWidth: true
+                                                                spacing: 2
+
+                                                                Label {
+                                                                    text: String(addon.title || addon.extensionId || "")
+                                                                    color: Theme.textPrimary
+                                                                    font.pixelSize: 12
+                                                                    font.family: Theme.fontDisplay
+                                                                    Layout.fillWidth: true
+                                                                    elide: Text.ElideRight
+                                                                }
+
+                                                                Label {
+                                                                    text: String(addon.description || "")
+                                                                    color: Theme.textSecondary
+                                                                    font.pixelSize: 11
+                                                                    font.family: Theme.fontBody
+                                                                    wrapMode: Text.WordWrap
+                                                                    Layout.fillWidth: true
+                                                                }
+                                                            }
+
+                                                            Rectangle {
+                                                                radius: Theme.radiusSmall
+                                                                color: Theme.backgroundCardRaised
+                                                                border.color: Theme.border
+                                                                implicitHeight: 22
+                                                                implicitWidth: readyAddonLabel.implicitWidth + 12
+
+                                                                Label {
+                                                                    id: readyAddonLabel
+                                                                    anchors.centerIn: parent
+                                                                    text: String(addon.label || "Available")
+                                                                    color: Theme.textSecondary
+                                                                    font.pixelSize: 10
+                                                                    font.family: Theme.fontBody
+                                                                }
+                                                            }
+
+                                                            Button {
+                                                                text: String(addon.actionLabel || "Activate")
+                                                                enabled: apiClient.authToken !== ""
+                                                                onClicked: root.activateOptionalAddon(addon)
+                                                                background: Rectangle {
+                                                                    radius: Theme.radiusSmall
+                                                                    color: Theme.backgroundCardRaised
+                                                                    border.color: Theme.border
+                                                                }
+                                                                contentItem: Label {
+                                                                    text: parent.text
+                                                                    color: Theme.textPrimary
+                                                                    font.pixelSize: 11
+                                                                    font.family: Theme.fontBody
+                                                                    horizontalAlignment: Text.AlignHCenter
+                                                                    verticalAlignment: Text.AlignVCenter
+                                                                }
+                                                            }
+                                                        }
+
+                                                        ColumnLayout {
+                                                            Layout.fillWidth: true
+                                                            spacing: Theme.spacingSmall
+                                                            visible: root.activeOptionalAddonId === String(addon.extensionId || "") &&
+                                                                     (addon.secretKeys || []).length > 0
+
+                                                            Repeater {
+                                                                model: addon.secretKeys || []
+                                                                delegate: TextField {
+                                                                    property int fieldIndex: index
+                                                                    property var requiredFields: addon.requiredFields || []
+                                                                    property string secretKey: String(modelData || "")
+                                                                    Layout.fillWidth: true
+                                                                    placeholderText: root.addonFieldLabel(
+                                                                        fieldIndex < requiredFields.length
+                                                                        ? requiredFields[fieldIndex]
+                                                                        : secretKey
+                                                                    )
+                                                                    echoMode: placeholderText.toLowerCase().indexOf("password") >= 0
+                                                                              ? TextInput.Password
+                                                                              : TextInput.Normal
+                                                                    text: root.optionalAddonValue(secretKey)
+                                                                    onTextChanged: root.setOptionalAddonValue(secretKey, text)
+                                                                    color: Theme.textPrimary
+                                                                    font.pixelSize: 12
+                                                                    font.family: Theme.fontBody
+                                                                    placeholderTextColor: Theme.textMuted
+                                                                    background: Rectangle {
+                                                                        radius: Theme.radiusSmall
+                                                                        color: Theme.backgroundCardRaised
+                                                                        border.color: Theme.border
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            RowLayout {
+                                                                Layout.fillWidth: true
+                                                                spacing: Theme.spacingSmall
+
+                                                                Button {
+                                                                    text: "Save and activate"
+                                                                    enabled: apiClient.authToken !== ""
+                                                                    onClicked: root.submitOptionalAddonPrompt(addon)
+                                                                    background: Rectangle {
+                                                                        radius: Theme.radiusSmall
+                                                                        color: Theme.accent
+                                                                        border.color: Theme.accent
+                                                                    }
+                                                                    contentItem: Label {
+                                                                        text: parent.text
+                                                                        color: "#141414"
+                                                                        font.pixelSize: 11
+                                                                        font.family: Theme.fontBody
+                                                                        horizontalAlignment: Text.AlignHCenter
+                                                                        verticalAlignment: Text.AlignVCenter
+                                                                    }
+                                                                }
+
+                                                                Button {
+                                                                    text: "Cancel"
+                                                                    onClicked: root.clearOptionalAddonPrompt()
+                                                                    background: Rectangle {
+                                                                        radius: Theme.radiusSmall
+                                                                        color: Theme.backgroundCardRaised
+                                                                        border.color: Theme.border
+                                                                    }
+                                                                    contentItem: Label {
+                                                                        text: parent.text
+                                                                        color: Theme.textPrimary
+                                                                        font.pixelSize: 11
+                                                                        font.family: Theme.fontBody
+                                                                        horizontalAlignment: Text.AlignHCenter
+                                                                        verticalAlignment: Text.AlignVCenter
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         RowLayout {
