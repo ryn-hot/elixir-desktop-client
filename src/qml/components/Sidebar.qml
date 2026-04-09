@@ -13,10 +13,12 @@ Rectangle {
     signal seriesRequested()
     signal animeRequested()
     signal findMediaRequested()
+    signal acquisitionRequested()
     signal extensionsRequested()
     signal settingsRequested()
 
     property string currentView: "home"
+    property int acquisitionBadgeCount: 0
 
     ColumnLayout {
         anchors.fill: parent
@@ -71,6 +73,7 @@ Rectangle {
                 ListElement { type: "item"; label: "TV Shows"; icon: "qrc:/icons/tv.svg"; action: "series" }
                 ListElement { type: "item"; label: "Anime"; icon: "qrc:/icons/animation.svg"; action: "anime" }
                 ListElement { type: "item"; label: "Find Media"; icon: "qrc:/icons/search.svg"; action: "find_media" }
+                ListElement { type: "item"; label: "Acquisition"; icon: "qrc:/icons/activity.svg"; action: "acquisition" }
                 ListElement { type: "item"; label: "Extensions"; icon: ""; action: "extensions" }
                 // Spacer could be handled differently, but for now just items
             }
@@ -84,9 +87,11 @@ Rectangle {
                     if (model.action === "series" && root.currentView === "series") return true
                     if (model.action === "anime" && root.currentView === "anime") return true
                     if (model.action === "find_media" && root.currentView === "find_media") return true
+                    if (model.action === "acquisition" && root.currentView === "acquisition") return true
                     if (model.action === "extensions" && root.currentView === "extensions") return true
                     return false
                 }
+                badgeCount: model.action === "acquisition" ? root.acquisitionBadgeCount : 0
                 hasActionMenu: true
                 onClicked: {
                     if (model.action === "home") root.homeRequested()
@@ -94,6 +99,7 @@ Rectangle {
                     else if (model.action === "series") root.seriesRequested()
                     else if (model.action === "anime") root.animeRequested()
                     else if (model.action === "find_media") root.findMediaRequested()
+                    else if (model.action === "acquisition") root.acquisitionRequested()
                     else if (model.action === "extensions") root.extensionsRequested()
                 }
             }

@@ -9,6 +9,7 @@ Item {
     property string label: ""
     property bool isActive: false
     property bool hasActionMenu: false
+    property int badgeCount: 0
     
     signal clicked()
     signal menuClicked()
@@ -75,6 +76,25 @@ Item {
             font.pixelSize: 14
             font.weight: Font.Medium
             elide: Text.ElideRight
+        }
+
+        Rectangle {
+            visible: root.badgeCount > 0
+            radius: 9
+            color: Theme.accent
+            border.color: Theme.accent
+            implicitHeight: 18
+            implicitWidth: badgeLabel.implicitWidth + 10
+
+            Label {
+                id: badgeLabel
+                anchors.centerIn: parent
+                text: root.badgeCount > 99 ? "99+" : String(root.badgeCount)
+                color: "#141414"
+                font.family: Theme.bodyFont.family
+                font.pixelSize: 10
+                font.weight: Font.Bold
+            }
         }
 
         // Menu Icon (Three dots)

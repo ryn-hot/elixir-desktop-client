@@ -429,6 +429,16 @@ Item {
         })
     }
 
+    function openControl(extensionId) {
+        if (!stackView) {
+            return
+        }
+        stackView.push(Qt.resolvedUrl("ExtensionControlView.qml"), {
+            stackView: stackView,
+            extensionId: extensionId || ""
+        })
+    }
+
     function marketplaceEntry(extensionId) {
         var needle = String(extensionId || "")
         for (var i = 0; i < apiClient.extensionsAvailable.length; ++i) {
@@ -576,7 +586,7 @@ Item {
             }
         }
         if (String(addon.action || "") === "open") {
-            root.openAdvanced(extensionId)
+            root.openControl(extensionId)
             return
         }
 
@@ -1294,7 +1304,7 @@ Item {
                                                     if (actionSpec.action === "enable") {
                                                         apiClient.enableExtension(root.extensionIdFor(modelData.entry))
                                                     } else {
-                                                        root.openAdvanced(root.extensionIdFor(modelData.entry))
+                                                        root.openControl(root.extensionIdFor(modelData.entry))
                                                     }
                                                 }
                                                 background: Rectangle {
@@ -1600,7 +1610,7 @@ Item {
                                                 if (actionSpec.action === "enable") {
                                                     apiClient.enableExtension(root.extensionIdFor(modelData.entry))
                                                 } else {
-                                                    root.openAdvanced(root.extensionIdFor(modelData.entry))
+                                                    root.openControl(root.extensionIdFor(modelData.entry))
                                                 }
                                             }
                                             background: Rectangle {

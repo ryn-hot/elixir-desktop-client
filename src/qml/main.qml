@@ -14,6 +14,14 @@ ApplicationWindow {
     title: "Elixir"
     color: Theme.bgMain // Spec: #282a2d
     property string authNotice: ""
+    property int acquisitionUnreadCount: 0
+    property var seenAcquisitionIds: ({})
+
+    Component.onCompleted: {
+        if (apiClient.authToken !== "") {
+            apiClient.fetchMediaAcquisition()
+        }
+    }
 
     function showLibrarySection(section) {
         stackView.clear()
@@ -26,6 +34,59 @@ ApplicationWindow {
 
     function goHome() {
         showLibrarySection("all")
+    }
+
+    function acquisitionItemId(item) {
+        if (!item) {
+            return ""
+        }
+        var directId = String(item.intentId || item.id || "")
+        if (directId !== "") {
+            return directId
+        }
+        return String(item.title || "") + "|" + String(item.stage || "")
+    }
+
+    function markCurrentAcquisitionSeen() {
+        var items = apiClient.mediaAcquisitionItems || []
+        var seen = seenAcquisitionIds || ({})
+        for (var i = 0; i < items.length; ++i) {
+            var id = acquisitionItemId(items[i])
+            if (id !== "") {
+                seen[id] = true
+            }
+        }
+        seenAcquisitionIds = seen
+        acquisitionUnreadCount = 0
+    }
+
+    function refreshAcquisitionUnread() {
+        if (stackView.currentItem && stackView.currentItem.objectName === "acquisitionView") {
+            markCurrentAcquisitionSeen()
+            return
+        }
+        var items = apiClient.mediaAcquisitionItems || []
+        var seen = seenAcquisitionIds || ({})
+        var unread = 0
+        for (var i = 0; i < items.length; ++i) {
+            var id = acquisitionItemId(items[i])
+            if (id !== "" && !seen[id]) {
+                unread += 1
+            }
+        }
+        acquisitionUnreadCount = unread
+    }
+
+    function openAcquisition() {
+        if (!stackView.currentItem) {
+            stackView.push(Qt.resolvedUrl("views/AcquisitionView.qml"), { stackView: stackView })
+        } else if (stackView.currentItem.objectName !== "acquisitionView") {
+            stackView.push(Qt.resolvedUrl("views/AcquisitionView.qml"), { stackView: stackView })
+        }
+        markCurrentAcquisitionSeen()
+        if (apiClient.authToken !== "") {
+            apiClient.fetchMediaAcquisition()
+        }
     }
 
     Rectangle {
@@ -68,11 +129,14 @@ ApplicationWindow {
                 }
                 if (stackView.currentItem.objectName === "settingsView") return "settings"
                 if (stackView.currentItem.objectName === "findMediaView") return "find_media"
+                if (stackView.currentItem.objectName === "acquisitionView") return "acquisition"
                 if (stackView.currentItem.objectName === "extensionsView" ||
-                        stackView.currentItem.objectName === "advancedExtensionsView") return "extensions"
+                        stackView.currentItem.objectName === "advancedExtensionsView" ||
+                        stackView.currentItem.objectName === "extensionControlView") return "extensions"
                 // Add logic for movies/series/anime views when they exist as separate pages
                 return "home"
             }
+            acquisitionBadgeCount: root.acquisitionUnreadCount
             
             onHomeRequested: root.goHome()
             onSettingsRequested: {
@@ -83,7 +147,8 @@ ApplicationWindow {
             onExtensionsRequested: {
                 if (!stackView.currentItem) {
                     stackView.push(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), { stackView: stackView })
-                } else if (stackView.currentItem.objectName === "advancedExtensionsView") {
+                } else if (stackView.currentItem.objectName === "advancedExtensionsView" ||
+                           stackView.currentItem.objectName === "extensionControlView") {
                     stackView.replace(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), { stackView: stackView })
                 } else if (stackView.currentItem.objectName !== "extensionsView") {
                     stackView.push(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), { stackView: stackView })
@@ -94,6 +159,7 @@ ApplicationWindow {
                     stackView.push(Qt.resolvedUrl("views/FindMediaView.qml"), { stackView: stackView })
                 }
             }
+            onAcquisitionRequested: root.openAcquisition()
             onMoviesRequested: root.showLibrarySection("movies")
             onSeriesRequested: root.showLibrarySection("series")
             onAnimeRequested: root.showLibrarySection("anime")
@@ -148,6 +214,17 @@ ApplicationWindow {
 
     Connections {
         target: apiClient
+        function onAuthTokenChanged() {
+            if (apiClient.authToken !== "") {
+                apiClient.fetchMediaAcquisition()
+            } else {
+                root.seenAcquisitionIds = ({})
+                root.acquisitionUnreadCount = 0
+            }
+        }
+        function onMediaAcquisitionChanged() {
+            root.refreshAcquisitionUnread()
+        }
         function onPlaybackStarted(info) {
             Qt.callLater(function() {
                 console.log("playbackStarted", JSON.stringify(info))
@@ -161,8 +238,18 @@ ApplicationWindow {
             root.authNotice = message !== "" ? message : "Session expired. Please sign in again."
             playerController.endSession()
             sessionManager.clearAuth()
+            root.seenAcquisitionIds = ({})
+            root.acquisitionUnreadCount = 0
             root.goHome()
         }
+    }
+
+    Timer {
+        id: acquisitionPoll
+        interval: 4000
+        repeat: true
+        running: apiClient.authToken !== "" && stackView.currentItem && stackView.currentItem.objectName !== "connectView"
+        onTriggered: apiClient.fetchMediaAcquisition()
     }
 
     Connections {

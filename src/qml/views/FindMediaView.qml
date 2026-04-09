@@ -17,6 +17,7 @@ Item {
     property string statusText: ""
     property string addStatusText: ""
     property string pendingAddKey: ""
+    property string lastAddedIntentId: ""
 
     function setSearchQuery(query) {
         updateSearchQuery(query, false)
@@ -249,6 +250,14 @@ Item {
         return String(providerId || "")
     }
 
+    function validSelectedManagerPreferenceId() {
+        var preferred = selectedManagerPreferenceId()
+        if (preferred !== "" && managerExists(preferred)) {
+            return preferred
+        }
+        return ""
+    }
+
     function managerExists(providerId) {
         var id = String(providerId || "")
         if (id === "") {
@@ -266,8 +275,8 @@ Item {
     }
 
     function resolvedManagerProviderIdForAdd() {
-        var preferred = selectedManagerPreferenceId()
-        if (preferred !== "" && managerExists(preferred)) {
+        var preferred = validSelectedManagerPreferenceId()
+        if (preferred !== "") {
             return preferred
         }
         var defaultId = defaultManagerProviderId()
@@ -281,10 +290,6 @@ Item {
         var managers = managerProvidersFromResult()
         if (managers.length === 0) {
             return "No healthy manager provider is available for this media type."
-        }
-        var preferred = selectedManagerPreferenceId()
-        if (preferred !== "" && !managerExists(preferred)) {
-            return "Selected manager is unavailable. Choose another manager or Auto."
         }
         if (resolvedManagerProviderIdForAdd() === "") {
             return "Select a manager before adding."
@@ -399,6 +404,123 @@ Item {
         return "Sources: " + labels.join(", ")
     }
 
+    function acquisitionItems() {
+        return apiClient.mediaAcquisitionItems || []
+    }
+
+    function stringValue(value) {
+        if (value === undefined || value === null) {
+            return ""
+        }
+        return String(value)
+    }
+
+    function externalIdsFor(value) {
+        if (!value) {
+            return {}
+        }
+        var ids = value.external_ids
+        if (ids === undefined || ids === null) {
+            ids = value.externalIds
+        }
+        return ids || {}
+    }
+
+    function externalIdsOverlap(left, right) {
+        var leftIds = externalIdsFor(left)
+        var rightIds = externalIdsFor(right)
+        var keys = ["imdb", "tmdb", "tvdb", "tvdb_series", "tvdb_movie", "anilist", "anidb", "mal", "kitsu"]
+        for (var i = 0; i < keys.length; ++i) {
+            var key = keys[i]
+            var leftValue = stringValue(leftIds[key]).trim()
+            var rightValue = stringValue(rightIds[key]).trim()
+            if (leftValue !== "" && rightValue !== "" && leftValue === rightValue) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function acquisitionMatchesResult(acquisition, item) {
+        if (!acquisition || !item) {
+            return false
+        }
+        if (externalIdsOverlap(acquisition, item)) {
+            return true
+        }
+        var acquisitionTitle = lower(acquisition.title)
+        var resultTitle = lower(item.title)
+        if (acquisitionTitle === "" || acquisitionTitle !== resultTitle) {
+            return false
+        }
+        var acquisitionYear = stringValue(acquisition.year).trim()
+        var resultYear = stringValue(item.year).trim()
+        if (acquisitionYear === "" || resultYear === "") {
+            return true
+        }
+        return acquisitionYear === resultYear
+    }
+
+    function acquisitionForResult(item) {
+        var items = acquisitionItems()
+        var best = null
+        for (var i = 0; i < items.length; ++i) {
+            var acquisition = items[i]
+            if (!acquisitionMatchesResult(acquisition, item)) {
+                continue
+            }
+            if (stringValue(acquisition.intent_id || acquisition.intentId) === root.lastAddedIntentId) {
+                return acquisition
+            }
+            if (best === null) {
+                best = acquisition
+            }
+        }
+        return best
+    }
+
+    function acquisitionStageColor(stage) {
+        if (stage === "needs_attention" || stage === "failed") {
+            return Theme.accentDanger
+        }
+        if (stage === "ready") {
+            return Theme.accentSuccess
+        }
+        return Theme.accent
+    }
+
+    function acquisitionStageFill(stage) {
+        if (stage === "needs_attention" || stage === "failed") {
+            return Theme.accentDangerSoft
+        }
+        if (stage === "ready") {
+            return Theme.accentSuccessSoft
+        }
+        return Theme.accentSoft
+    }
+
+    function acquisitionProgressVisible(acquisition) {
+        if (!acquisition) {
+            return false
+        }
+        var value = acquisition.progress_percent
+        if (value === undefined || value === null) {
+            value = acquisition.progressPercent
+        }
+        return value !== undefined && value !== null && Number(value) > 0 && Number(value) < 100
+    }
+
+    function acquisitionProgressValue(acquisition) {
+        if (!acquisition) {
+            return 0
+        }
+        var value = acquisition.progress_percent
+        if (value === undefined || value === null) {
+            value = acquisition.progressPercent
+        }
+        return Number(value || 0)
+    }
+
     function addTargetLabel() {
         var managerId = resolvedManagerProviderIdForAdd()
         if (managerId === "") {
@@ -441,6 +563,7 @@ Item {
         if (apiClient.authToken !== "") {
             apiClient.fetchManagerPreferences()
             apiClient.findMedia("", selectedType, [])
+            apiClient.fetchMediaAcquisition()
         }
     }
 
@@ -466,6 +589,7 @@ Item {
             if (apiClient.authToken !== "") {
                 apiClient.fetchManagerPreferences()
                 apiClient.findMedia("", root.selectedType, [])
+                apiClient.fetchMediaAcquisition()
                 if (root.searchQuery.trim().length >= root.minLiveSearchChars) {
                     searchDebounce.restart()
                 }
@@ -477,6 +601,7 @@ Item {
 
         function onMediaFindResultChanged() {
             root.requestPending = false
+            root.statusText = ""
             var options = root.searchProviderOptions()
             var valid = {}
             for (var i = 0; i < options.length; ++i) {
@@ -515,9 +640,11 @@ Item {
 
         function onMediaAddResultChanged() {
             root.pendingAddKey = ""
+            root.lastAddedIntentId = String(apiClient.mediaAddResult.intent_id || apiClient.mediaAddResult.intentId || "")
             var title = apiClient.mediaAddResult.title || "Media"
             var manager = apiClient.mediaAddResult.manager_label || apiClient.mediaAddResult.managerLabel || "manager"
             root.addStatusText = title + " added via " + manager + "."
+            apiClient.fetchMediaAcquisition()
         }
 
         function onMediaAddLoadingChanged() {
@@ -844,6 +971,7 @@ Item {
                     readonly property string rowKey: root.resultKey(modelData)
                     readonly property bool addPending: root.pendingAddKey === rowKey && apiClient.mediaAddLoading
                     readonly property string addReason: root.addDisabledReason()
+                    readonly property var acquisition: root.acquisitionForResult(modelData)
 
                     width: ListView.view ? ListView.view.width : 0
                     radius: Theme.radiusMedium
@@ -1016,6 +1144,71 @@ Item {
                                 horizontalAlignment: Text.AlignRight
                                 wrapMode: Text.WordWrap
                                 visible: text !== ""
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                radius: Theme.radiusSmall
+                                color: root.acquisitionStageFill(resultRow.acquisition ? String(resultRow.acquisition.stage || "") : "")
+                                border.color: root.acquisitionStageColor(resultRow.acquisition ? String(resultRow.acquisition.stage || "") : "")
+                                visible: resultRow.acquisition !== null
+                                implicitHeight: acquisitionColumn.implicitHeight + 8
+
+                                ColumnLayout {
+                                    id: acquisitionColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: 4
+                                    spacing: 4
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+
+                                        Label {
+                                            text: resultRow.acquisition
+                                                  ? String(resultRow.acquisition.stageLabel || resultRow.acquisition.stage || "")
+                                                  : ""
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 10
+                                            font.family: Theme.fontBody
+                                        }
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: resultRow.acquisition
+                                                  && resultRow.acquisition.progressPercent !== undefined
+                                                  && resultRow.acquisition.progressPercent !== null
+                                                  && Number(resultRow.acquisition.progressPercent) > 0
+                                                  ? (Number(resultRow.acquisition.progressPercent).toFixed(0) + "%")
+                                                  : ""
+                                            color: Theme.textSecondary
+                                            font.pixelSize: 10
+                                            font.family: Theme.fontBody
+                                            horizontalAlignment: Text.AlignRight
+                                            visible: text !== ""
+                                        }
+                                    }
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: resultRow.acquisition ? String(resultRow.acquisition.description || "") : ""
+                                        color: Theme.textSecondary
+                                        font.pixelSize: 10
+                                        font.family: Theme.fontBody
+                                        wrapMode: Text.WordWrap
+                                        visible: text !== ""
+                                    }
+
+                                    ProgressBar {
+                                        Layout.fillWidth: true
+                                        from: 0
+                                        to: 100
+                                        value: root.acquisitionProgressValue(resultRow.acquisition)
+                                        visible: root.acquisitionProgressVisible(resultRow.acquisition)
+                                    }
+                                }
                             }
                         }
                     }

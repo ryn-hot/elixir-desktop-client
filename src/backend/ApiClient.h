@@ -32,6 +32,8 @@ class ApiClient : public QObject {
     Q_PROPERTY(QVariantList extensionsDesiredBlueprints READ extensionsDesiredBlueprints NOTIFY extensionsDesiredBlueprintsChanged)
     Q_PROPERTY(QVariantList extensionsStatusItems READ extensionsStatusItems NOTIFY extensionsStatusSummaryChanged)
     Q_PROPERTY(int extensionsNeedsAttentionCount READ extensionsNeedsAttentionCount NOTIFY extensionsStatusSummaryChanged)
+    Q_PROPERTY(QVariantMap extensionControlSurface READ extensionControlSurface NOTIFY extensionControlSurfaceChanged)
+    Q_PROPERTY(bool extensionControlLoading READ extensionControlLoading NOTIFY extensionControlLoadingChanged)
     Q_PROPERTY(QString extensionsLastRefreshedAt READ extensionsLastRefreshedAt NOTIFY extensionsLastRefreshedAtChanged)
     Q_PROPERTY(QString extensionsLastRefreshSuccessAt READ extensionsLastRefreshSuccessAt NOTIFY extensionsLastRefreshSuccessAtChanged)
     Q_PROPERTY(QString extensionsLastRefreshError READ extensionsLastRefreshError NOTIFY extensionsLastRefreshErrorChanged)
@@ -51,6 +53,11 @@ class ApiClient : public QObject {
     Q_PROPERTY(QVariantMap mediaManagerPreferences READ mediaManagerPreferences NOTIFY mediaManagerPreferencesChanged)
     Q_PROPERTY(QVariantMap mediaAddResult READ mediaAddResult NOTIFY mediaAddResultChanged)
     Q_PROPERTY(bool mediaAddLoading READ mediaAddLoading NOTIFY mediaAddLoadingChanged)
+    Q_PROPERTY(QVariantMap mediaAcquisitionStatus READ mediaAcquisitionStatus NOTIFY mediaAcquisitionChanged)
+    Q_PROPERTY(QVariantList mediaAcquisitionItems READ mediaAcquisitionItems NOTIFY mediaAcquisitionChanged)
+    Q_PROPERTY(int mediaAcquisitionActiveCount READ mediaAcquisitionActiveCount NOTIFY mediaAcquisitionChanged)
+    Q_PROPERTY(int mediaAcquisitionDownloadingCount READ mediaAcquisitionDownloadingCount NOTIFY mediaAcquisitionChanged)
+    Q_PROPERTY(int mediaAcquisitionNeedsAttentionCount READ mediaAcquisitionNeedsAttentionCount NOTIFY mediaAcquisitionChanged)
 
 public:
     explicit ApiClient(QObject *parent = nullptr);
@@ -89,6 +96,8 @@ public:
     QVariantList extensionsDesiredBlueprints() const;
     QVariantList extensionsStatusItems() const;
     int extensionsNeedsAttentionCount() const;
+    QVariantMap extensionControlSurface() const;
+    bool extensionControlLoading() const;
     bool extensionsAutoWireEnabled() const;
     QString extensionsAutoWirePendingPlanId() const;
     QString extensionsAutoWirePendingReason() const;
@@ -105,6 +114,11 @@ public:
     QVariantMap mediaManagerPreferences() const;
     QVariantMap mediaAddResult() const;
     bool mediaAddLoading() const;
+    QVariantMap mediaAcquisitionStatus() const;
+    QVariantList mediaAcquisitionItems() const;
+    int mediaAcquisitionActiveCount() const;
+    int mediaAcquisitionDownloadingCount() const;
+    int mediaAcquisitionNeedsAttentionCount() const;
 
     Q_INVOKABLE void login(const QString &email, const QString &password);
     Q_INVOKABLE void signup(const QString &email, const QString &password);
@@ -150,6 +164,12 @@ public:
     Q_INVOKABLE void fetchDesiredBlueprints(const QString &applied = QString());
     Q_INVOKABLE void clearDesiredBlueprints(const QString &applied = QString());
     Q_INVOKABLE void fetchExtensionStatusSummary();
+    Q_INVOKABLE void fetchExtensionControlSurface(const QString &extensionId);
+    Q_INVOKABLE void updateExtensionControlSurfaceSettings(const QString &extensionId, const QVariantMap &values);
+    Q_INVOKABLE void invokeExtensionControlAction(
+        const QString &extensionId,
+        const QString &actionId,
+        const QVariantMap &params = QVariantMap());
     Q_INVOKABLE void fetchAutoWireStatus();
     Q_INVOKABLE void setAutoWireEnabled(bool enabled);
     Q_INVOKABLE void fetchAutoWirePlan();
@@ -169,6 +189,7 @@ public:
         const QString &movieProviderId,
         const QString &seriesProviderId,
         const QString &animeProviderId);
+    Q_INVOKABLE void fetchMediaAcquisition(int limit = 12);
 
 signals:
     void baseUrlChanged();
@@ -185,6 +206,8 @@ signals:
     void extensionsReconcileRunChanged();
     void extensionsDesiredBlueprintsChanged();
     void extensionsStatusSummaryChanged();
+    void extensionControlSurfaceChanged();
+    void extensionControlLoadingChanged();
     void extensionsLastRefreshedAtChanged();
     void extensionsLastRefreshSuccessAtChanged();
     void extensionsLastRefreshErrorChanged();
@@ -195,6 +218,11 @@ signals:
     void mediaManagerPreferencesChanged();
     void mediaAddResultChanged();
     void mediaAddLoadingChanged();
+    void mediaAcquisitionChanged();
+    void extensionControlActionCompleted(
+        const QString &extensionId,
+        const QString &actionId,
+        const QString &message);
     void secretRotated(const QString &secretId, const QString &value);
     void desiredBlueprintsCleared(int deleted);
     void runsCleared(int deleted);
@@ -230,7 +258,9 @@ private:
     void updateExtensionsPlan(const QJsonObject &obj);
     void updateExtensionsRun(const QJsonObject &obj);
     void updateExtensionStatusSummary(const QJsonObject &obj);
+    void updateExtensionControlSurfaceState(const QJsonObject &obj);
     void updateDownloaderProfileState(const QJsonObject &obj);
+    void updateMediaAcquisitionState(const QJsonObject &obj);
     void sendRequest(
         const QString &method,
         const QString &path,
@@ -261,6 +291,8 @@ private:
     QVariantList m_extensionsDesiredBlueprints;
     QVariantList m_extensionsStatusItems;
     int m_extensionsNeedsAttentionCount = 0;
+    QVariantMap m_extensionControlSurface;
+    bool m_extensionControlLoading = false;
     QString m_extensionsLastRefreshedAt;
     QString m_extensionsLastRefreshSuccessAt;
     QString m_extensionsLastRefreshError;
@@ -281,4 +313,9 @@ private:
     QVariantMap m_mediaManagerPreferences;
     QVariantMap m_mediaAddResult;
     bool m_mediaAddLoading = false;
+    QVariantMap m_mediaAcquisitionStatus;
+    QVariantList m_mediaAcquisitionItems;
+    int m_mediaAcquisitionActiveCount = 0;
+    int m_mediaAcquisitionDownloadingCount = 0;
+    int m_mediaAcquisitionNeedsAttentionCount = 0;
 };

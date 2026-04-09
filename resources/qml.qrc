@@ -17,11 +17,13 @@
         <file alias="views/ConnectServerView.qml">../src/qml/views/ConnectServerView.qml</file>
         <file alias="views/HomeView.qml">../src/qml/views/HomeView.qml</file>
         <file alias="views/FindMediaView.qml">../src/qml/views/FindMediaView.qml</file>
+        <file alias="views/AcquisitionView.qml">../src/qml/views/AcquisitionView.qml</file>
         <file alias="views/DetailsView.qml">../src/qml/views/DetailsView.qml</file>
         <file alias="views/PlayerView.qml">../src/qml/views/PlayerView.qml</file>
         <file alias="views/SettingsView.qml">../src/qml/views/SettingsView.qml</file>
         <file alias="views/ExtensionsRouteView.qml">../src/qml/views/ExtensionsRouteView.qml</file>
         <file alias="views/ExtensionsView.qml">../src/qml/views/ExtensionsView.qml</file>
+        <file alias="views/ExtensionControlView.qml">../src/qml/views/ExtensionControlView.qml</file>
         <file alias="views/AdvancedExtensionsView.qml">../src/qml/views/AdvancedExtensionsView.qml</file>
     </qresource>
     <qresource prefix="/icons">
