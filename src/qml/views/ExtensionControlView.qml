@@ -11,6 +11,8 @@ Item {
     property StackView stackView: null
     property string extensionId: ""
     property var pendingAction: null
+    property var pendingSecretAction: null
+    property var actionSecretValues: ({})
 
     function controlSurface() {
         var surface = apiClient.extensionControlSurface || {}
@@ -25,6 +27,21 @@ Item {
             return
         }
         apiClient.fetchExtensionControlSurface(extensionId)
+        apiClient.fetchInstanceSecrets()
+    }
+
+    function openControl(targetExtensionId) {
+        var trimmed = String(targetExtensionId || "")
+        if (!stackView || trimmed === "") {
+            return
+        }
+        if (trimmed === String(extensionId || "")) {
+            return
+        }
+        stackView.push(Qt.resolvedUrl("ExtensionControlView.qml"), {
+            stackView: stackView,
+            extensionId: trimmed
+        })
     }
 
     function openAdvanced() {
@@ -120,11 +137,59 @@ Item {
         return merged
     }
 
-    function runAction(action, extraParams) {
+    function actionFieldLabel(field) {
+        var key = String(field || "")
+        if (key === "api_key") {
+            return "API key"
+        }
+        if (key === "username") {
+            return "Username"
+        }
+        if (key === "password") {
+            return "Password"
+        }
+        return key.replace(/_/g, " ")
+    }
+
+    function actionSecretValue(secretKey) {
+        return String(actionSecretValues[secretKey] || "")
+    }
+
+    function setActionSecretValue(secretKey, value) {
+        var next = {}
+        for (var key in actionSecretValues) {
+            if (actionSecretValues.hasOwnProperty(key)) {
+                next[key] = actionSecretValues[key]
+            }
+        }
+        next[String(secretKey || "")] = value
+        actionSecretValues = next
+    }
+
+    function instanceSecretKeys(instanceId) {
+        var keys = {}
+        for (var i = 0; i < apiClient.extensionsSecrets.length; ++i) {
+            var secret = apiClient.extensionsSecrets[i]
+            if (String(secret.scope || "") !== "instance") {
+                continue
+            }
+            if (String(secret.scopeId || "") !== String(instanceId || "")) {
+                continue
+            }
+            keys[String(secret.key || "")] = true
+        }
+        return keys
+    }
+
+    function hasInstanceSecret(instanceId, key) {
+        var present = instanceSecretKeys(instanceId)
+        return !!present[String(key || "")]
+    }
+
+    function runPreparedAction(action, params) {
         if (!action || extensionId === "") {
             return
         }
-        var params = mergeActionParams(action, extraParams)
         var confirmText = String(action.confirmText || "")
         if (confirmText !== "") {
             pendingAction = {
@@ -137,6 +202,82 @@ Item {
             return
         }
         apiClient.invokeExtensionControlAction(extensionId, String(action.id || ""), params)
+    }
+
+    function runAction(action, extraParams) {
+        if (!action || extensionId === "") {
+            return
+        }
+        var navigateExtensionId = String(action.navigateExtensionId || "")
+        if (navigateExtensionId !== "") {
+            openControl(navigateExtensionId)
+            return
+        }
+        var openUrl = String(action.openUrl || "")
+        if (openUrl !== "") {
+            Qt.openUrlExternally(openUrl)
+            return
+        }
+        var params = mergeActionParams(action, extraParams)
+        var secretScopeInstanceId = String(action.secretScopeInstanceId || "")
+        var secretKeys = action.secretKeys || []
+        if (secretScopeInstanceId !== "" && secretKeys.length > 0) {
+            var missing = []
+            for (var i = 0; i < secretKeys.length; ++i) {
+                var key = String(secretKeys[i] || "")
+                if (key !== "" && !hasInstanceSecret(secretScopeInstanceId, key)) {
+                    missing.push(key)
+                }
+            }
+            if (missing.length > 0) {
+                pendingSecretAction = {
+                    action: action,
+                    params: params
+                }
+                actionSecretValues = ({})
+                connectorSecretDialog.title = String(action.label || "Connector setup")
+                connectorSecretDialog.open()
+                return
+            }
+        }
+        runPreparedAction(action, params)
+    }
+
+    function submitPendingSecretAction() {
+        if (!pendingSecretAction || !pendingSecretAction.action) {
+            return
+        }
+        var action = pendingSecretAction.action
+        var params = pendingSecretAction.params || {}
+        var secretScopeInstanceId = String(action.secretScopeInstanceId || "")
+        var secretKeys = action.secretKeys || []
+        var requiredFields = action.requiredFields || []
+        for (var i = 0; i < secretKeys.length; ++i) {
+            var key = String(secretKeys[i] || "")
+            if (key === "") {
+                continue
+            }
+            if (String(actionSecretValues[key] || "").trim() === "") {
+                actionToast.show("Enter " + actionFieldLabel(i < requiredFields.length ? requiredFields[i] : key) + ".")
+                return
+            }
+        }
+        if (secretScopeInstanceId !== "") {
+            for (var idx = 0; idx < secretKeys.length; ++idx) {
+                var createKey = String(secretKeys[idx] || "")
+                if (createKey === "") {
+                    continue
+                }
+                apiClient.createInstanceSecret(
+                    secretScopeInstanceId,
+                    createKey,
+                    String(actionSecretValues[createKey] || ""))
+            }
+        }
+        pendingSecretAction = null
+        actionSecretValues = ({})
+        connectorSecretDialog.close()
+        runPreparedAction(action, params)
     }
 
     function updateField(field, value) {
@@ -874,6 +1015,79 @@ Item {
                 color: Theme.textPrimary
                 font.pixelSize: 13
                 font.family: Theme.fontBody
+            }
+        }
+    }
+
+    Dialog {
+        id: connectorSecretDialog
+        modal: true
+        standardButtons: Dialog.Cancel | Dialog.Ok
+        anchors.centerIn: parent
+
+        onAccepted: root.submitPendingSecretAction()
+        onRejected: {
+            root.pendingSecretAction = null
+            root.actionSecretValues = ({})
+        }
+
+        contentItem: ColumnLayout {
+            spacing: Theme.spacingMedium
+
+            Label {
+                Layout.preferredWidth: 360
+                wrapMode: Text.WordWrap
+                color: Theme.textPrimary
+                font.pixelSize: 13
+                font.family: Theme.fontBody
+                text: "Enter the connector credentials Elixir should store before activation."
+            }
+
+            Repeater {
+                model: root.pendingSecretAction && root.pendingSecretAction.action
+                       ? (root.pendingSecretAction.action.secretKeys || [])
+                       : []
+
+                delegate: ColumnLayout {
+                    property int fieldIndex: index
+                    property var actionData: root.pendingSecretAction ? root.pendingSecretAction.action : null
+                    property var requiredFields: actionData ? (actionData.requiredFields || []) : []
+                    property string secretKey: String(modelData || "")
+                    property string fieldLabelText: root.actionFieldLabel(
+                                                        fieldIndex < requiredFields.length
+                                                        ? requiredFields[fieldIndex]
+                                                        : secretKey)
+
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSmall
+
+                    Label {
+                        text: parent.fieldLabelText
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontDisplay
+                    }
+
+                    TextField {
+                        Layout.preferredWidth: 320
+                        placeholderText: parent.fieldLabelText
+                        echoMode: parent.secretKey.toLowerCase().indexOf("password") >= 0
+                                  || parent.secretKey.toLowerCase().indexOf("api_key") >= 0
+                                  ? TextInput.Password
+                                  : TextInput.Normal
+                        text: root.actionSecretValue(parent.secretKey)
+                        onTextChanged: root.setActionSecretValue(parent.secretKey, text)
+                        color: Theme.textPrimary
+                        placeholderTextColor: Theme.textMuted
+                        selectedTextColor: Theme.background
+                        selectionColor: Theme.accent
+                        background: Rectangle {
+                            radius: Theme.radiusMedium
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                    }
+                }
             }
         }
     }
