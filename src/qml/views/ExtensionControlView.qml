@@ -44,6 +44,43 @@ Item {
         })
     }
 
+    function openMarketplace(filters) {
+        if (!stackView) {
+            return
+        }
+        var params = filters || {}
+        stackView.push(Qt.resolvedUrl("ExtensionsRouteView.qml"), {
+            stackView: stackView,
+            marketplaceKindFilter: String(params.marketplaceKind || ""),
+            marketplaceTargetCapabilityFilter: String(params.marketplaceTargetCapability || ""),
+            marketplaceFilterLabel: String(params.marketplaceFilterLabel || ""),
+            focusMarketplace: true
+        })
+    }
+
+    function browserOpenUrl(urlString) {
+        var url = String(urlString || "")
+        if (url === "") {
+            return
+        }
+        var absolute = url
+        if (url.indexOf("http://") !== 0 && url.indexOf("https://") !== 0) {
+            var base = String(apiClient.baseUrl || "")
+            if (base !== "") {
+                absolute = base + (url.indexOf("/") === 0 ? "" : "/") + url
+            }
+        }
+        if (String(apiClient.authToken || "") !== ""
+                && absolute.indexOf(String(apiClient.baseUrl || "")) === 0
+                && absolute.indexOf("/api/v1/extensions/instances/") >= 0
+                && absolute.indexOf("/ui/start") >= 0
+                && absolute.indexOf("access_token=") < 0
+                && absolute.indexOf("token=") < 0) {
+            absolute += (absolute.indexOf("?") >= 0 ? "&" : "?") + "access_token=" + encodeURIComponent(String(apiClient.authToken || ""))
+        }
+        Qt.openUrlExternally(absolute)
+    }
+
     function openAdvanced() {
         if (!stackView || extensionId === "") {
             return
@@ -213,9 +250,14 @@ Item {
             openControl(navigateExtensionId)
             return
         }
+        var navigateView = String(action.navigateView || "")
+        if (navigateView === "extensions_marketplace") {
+            openMarketplace(action.params || {})
+            return
+        }
         var openUrl = String(action.openUrl || "")
         if (openUrl !== "") {
-            Qt.openUrlExternally(openUrl)
+            browserOpenUrl(openUrl)
             return
         }
         var params = mergeActionParams(action, extraParams)

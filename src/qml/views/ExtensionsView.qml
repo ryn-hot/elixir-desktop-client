@@ -26,6 +26,10 @@ Item {
     property string pendingOptionalAddonId: ""
     property string pendingOptionalAddonTargetInstanceId: ""
     property var pendingOptionalAddonSecretKeys: []
+    property string marketplaceKindFilter: ""
+    property string marketplaceTargetCapabilityFilter: ""
+    property string marketplaceFilterLabel: ""
+    property bool focusMarketplace: false
 
     function scheduleStatusSummaryRefresh() {
         if (apiClient.authToken === "") {
@@ -450,6 +454,65 @@ Item {
         return null
     }
 
+    function marketplaceFilterActive() {
+        return marketplaceKindFilter !== "" || marketplaceTargetCapabilityFilter !== ""
+    }
+
+    function normalizeMarketplaceHeuristicId(entry) {
+        return String(entry && entry.id ? entry.id : "").toLowerCase()
+    }
+
+    function matchesMarketplaceFilter(entry) {
+        if (!entry) {
+            return false
+        }
+        var entryId = normalizeMarketplaceHeuristicId(entry)
+        if (marketplaceKindFilter !== "") {
+            if (marketplaceKindFilter === "connector") {
+                if (entryId.indexOf(".connectors.") < 0) {
+                    return false
+                }
+            } else if (marketplaceKindFilter === "blueprint") {
+                if (!root.isBlueprintId(entryId)) {
+                    return false
+                }
+            }
+        }
+        if (marketplaceTargetCapabilityFilter !== "") {
+            if (marketplaceTargetCapabilityFilter === "indexer.registry") {
+                var looksLikeIndexerConnector =
+                        entryId === "elixir.connectors.prowlarr_public_indexers"
+                        || entryId === "elixir.connectors.prowlarr_nzbgeek"
+                        || (entryId.indexOf("prowlarr_") >= 0
+                            && entryId.indexOf("_sonarr") < 0
+                            && entryId.indexOf("_radarr") < 0)
+                        || entryId.indexOf("indexer") >= 0
+                if (!looksLikeIndexerConnector) {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    function clearMarketplaceFilter() {
+        marketplaceKindFilter = ""
+        marketplaceTargetCapabilityFilter = ""
+        marketplaceFilterLabel = ""
+        installedExpanded = true
+    }
+
+    function maybeFocusMarketplace() {
+        if (!focusMarketplace) {
+            return
+        }
+        installedExpanded = false
+        marketplaceExpanded = true
+        var targetY = Math.max(0, marketplaceSection.y - Theme.spacingLarge)
+        pageScroller.contentY = targetY
+        focusMarketplace = false
+    }
+
     function severityColor(severity) {
         if (severity === "attention") {
             return Theme.accent
@@ -743,6 +806,9 @@ Item {
             if (isInstalled(entry.id)) {
                 continue
             }
+            if (marketplaceFilterActive() && !matchesMarketplaceFilter(entry)) {
+                continue
+            }
             cards.push(entry)
         }
         cards.sort(function(left, right) {
@@ -784,7 +850,11 @@ Item {
         initialLoadTimer.restart()
     }
 
-    Component.onCompleted: scheduleInitialDataLoad()
+    Component.onCompleted: {
+        scheduleInitialDataLoad()
+        Qt.callLater(maybeFocusMarketplace)
+    }
+    onFocusMarketplaceChanged: Qt.callLater(maybeFocusMarketplace)
 
     Connections {
         target: apiClient
@@ -813,6 +883,7 @@ Item {
             maybeAdvanceOneClickBlueprintInstall()
             checkPendingBlueprintPlan()
             checkPendingOptionalAddonActivation()
+            Qt.callLater(root.maybeFocusMarketplace)
         }
 
         function onExtensionsInstancesChanged() {
@@ -886,6 +957,7 @@ Item {
     }
 
     Flickable {
+        id: pageScroller
         anchors.fill: parent
         contentWidth: width
         contentHeight: contentColumn.implicitHeight + Theme.spacingXLarge * 2
@@ -1636,6 +1708,7 @@ Item {
             }
 
             Rectangle {
+                id: marketplaceSection
                 Layout.fillWidth: true
                 radius: Theme.radiusLarge
                 color: Theme.backgroundCard
@@ -1665,7 +1738,11 @@ Item {
                             }
 
                             Label {
-                                text: "Browse new extensions and one-click stacks."
+                                text: root.marketplaceFilterActive()
+                                      ? (root.marketplaceFilterLabel !== ""
+                                         ? root.marketplaceFilterLabel
+                                         : "Filtered marketplace results.")
+                                      : "Browse new extensions and one-click stacks."
                                 color: Theme.textSecondary
                                 font.pixelSize: 12
                                 font.family: Theme.fontBody
@@ -1715,9 +1792,54 @@ Item {
                         spacing: Theme.spacingSmall
                         visible: marketplaceExpanded
 
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Theme.spacingSmall
+                            visible: root.marketplaceFilterActive()
+
+                            Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                                implicitHeight: 24
+                                implicitWidth: filterLabel.implicitWidth + 14
+
+                                Label {
+                                    id: filterLabel
+                                    anchors.centerIn: parent
+                                    text: root.marketplaceFilterLabel !== ""
+                                          ? root.marketplaceFilterLabel
+                                          : "Filtered marketplace"
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                }
+                            }
+
+                            Button {
+                                text: "Clear filter"
+                                onClicked: root.clearMarketplaceFilter()
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.backgroundCardRaised
+                                    border.color: Theme.border
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+
                         Label {
                             text: marketplaceCards().length === 0
-                                  ? "No new extensions available right now."
+                                  ? (root.marketplaceFilterActive()
+                                     ? "No extensions match this filter right now."
+                                     : "No new extensions available right now.")
                                   : ""
                             color: Theme.textMuted
                             font.pixelSize: 12
