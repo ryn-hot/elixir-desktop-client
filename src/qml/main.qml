@@ -36,6 +36,15 @@ ApplicationWindow {
         showLibrarySection("all")
     }
 
+    function enforceAuthExpiry() {
+        if (apiClient.authToken === "") {
+            return
+        }
+        if (apiClient.accessTokenExpired(0)) {
+            apiClient.expireAuth("Session expired. Please sign in again.")
+        }
+    }
+
     function acquisitionItemId(item) {
         if (!item) {
             return ""
@@ -250,6 +259,14 @@ ApplicationWindow {
         repeat: true
         running: apiClient.authToken !== "" && stackView.currentItem && stackView.currentItem.objectName !== "connectView"
         onTriggered: apiClient.fetchMediaAcquisition()
+    }
+
+    Timer {
+        id: authExpiryPoll
+        interval: 30000
+        repeat: true
+        running: apiClient.authToken !== ""
+        onTriggered: root.enforceAuthExpiry()
     }
 
     Connections {

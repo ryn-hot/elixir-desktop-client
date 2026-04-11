@@ -63,6 +63,10 @@ Item {
         if (url === "") {
             return
         }
+        if (apiClient.accessTokenExpired(30)) {
+            apiClient.expireAuth("Session expired. Please sign in again.")
+            return
+        }
         var absolute = url
         if (url.indexOf("http://") !== 0 && url.indexOf("https://") !== 0) {
             var base = String(apiClient.baseUrl || "")

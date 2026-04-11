@@ -70,6 +70,8 @@ public:
 
     QString accessTokenExpiresAt() const;
     void setAccessTokenExpiresAt(const QString &value);
+    Q_INVOKABLE bool accessTokenExpired(int skewSeconds = 0) const;
+    Q_INVOKABLE void expireAuth(const QString &message = QString());
 
     QVariantMap clientCapabilities() const;
     void setClientCapabilities(const QVariantMap &value);

@@ -7,6 +7,7 @@
 #include <QNetworkReply>
 #include <QUrlQuery>
 #include <QDebug>
+#include <QDateTime>
 #include <QLocale>
 
 namespace {
@@ -137,6 +138,29 @@ void ApiClient::setAccessTokenExpiresAt(const QString &value) {
     }
     m_accessTokenExpiresAt = value;
     emit accessTokenExpiresAtChanged();
+}
+
+bool ApiClient::accessTokenExpired(int skewSeconds) const {
+    if (m_authToken.trimmed().isEmpty()) {
+        return true;
+    }
+    if (m_accessTokenExpiresAt.trimmed().isEmpty()) {
+        return false;
+    }
+    const QDateTime expiresAt = QDateTime::fromString(m_accessTokenExpiresAt, Qt::ISODate);
+    if (!expiresAt.isValid()) {
+        return false;
+    }
+    return expiresAt <= QDateTime::currentDateTimeUtc().addSecs(skewSeconds);
+}
+
+void ApiClient::expireAuth(const QString &message) {
+    const QString detail = message.trimmed().isEmpty()
+        ? QStringLiteral("Session expired. Please sign in again.")
+        : message.trimmed();
+    setAuthToken(QString());
+    setAccessTokenExpiresAt(QString());
+    emit authExpired(detail);
 }
 
 QVariantMap ApiClient::clientCapabilities() const {
@@ -2118,9 +2142,7 @@ void ApiClient::sendRequest(
                 ? reply->errorString()
                 : QString::fromUtf8(payload);
             if (status == 401 && !path.startsWith("/api/v1/auth/")) {
-                setAuthToken(QString());
-                setAccessTokenExpiresAt(QString());
-                emit authExpired(detail.isEmpty() ? "Authentication expired." : detail);
+                expireAuth(detail.isEmpty() ? "Authentication expired." : detail);
             }
             if (onError) {
                 onError(detail);
