@@ -12,6 +12,8 @@ QtObject {
     property color accentDangerSoft: "#33d86b6b"
     property color accentSuccess: "#5fbf5a"
     property color accentSuccessSoft: "#2a5fbf5a"
+    property color accentInfo: "#58a6ff"
+    property color accentInfoSoft: "#2a58a6ff"
     property color accentMutedSoft: "#22777777"
     property color textPrimary: "#ececec"
     property color textSecondary: "#999999"

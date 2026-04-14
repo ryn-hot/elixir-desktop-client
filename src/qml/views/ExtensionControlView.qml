@@ -13,6 +13,12 @@ Item {
     property var pendingAction: null
     property var pendingSecretAction: null
     property var actionSecretValues: ({})
+    property var pendingPromptAction: null
+    property var actionPromptValues: ({})
+    property int postActionRefreshPassesRemaining: 0
+    property string activeActionId: ""
+    property string activeActionLabel: ""
+    property string activeActionDescription: ""
 
     function controlSurface() {
         var surface = apiClient.extensionControlSurface || {}
@@ -97,6 +103,9 @@ Item {
 
     function healthAccent(health) {
         var code = String(health || "")
+        if (code === "action_required" || code === "provider_setup_required") {
+            return Theme.accentInfo
+        }
         if (code === "error" || code === "connection_issue") {
             return Theme.accentDanger
         }
@@ -111,6 +120,9 @@ Item {
 
     function healthTint(health) {
         var code = String(health || "")
+        if (code === "action_required" || code === "provider_setup_required") {
+            return Theme.accentInfoSoft
+        }
         if (code === "error" || code === "connection_issue") {
             return Theme.accentDangerSoft
         }
@@ -164,6 +176,9 @@ Item {
         if (action && action.params) {
             for (var key in action.params) {
                 if (action.params.hasOwnProperty(key)) {
+                    if (key === "promptFields" || key === "promptTitle" || key === "submitLabel") {
+                        continue
+                    }
                     merged[key] = action.params[key]
                 }
             }
@@ -176,6 +191,114 @@ Item {
             }
         }
         return merged
+    }
+
+    function actionPromptFields(action) {
+        if (!action || !action.params || !action.params.promptFields) {
+            return []
+        }
+        return action.params.promptFields || []
+    }
+
+    function actionPromptTitle(action) {
+        if (!action || !action.params) {
+            return ""
+        }
+        return String(action.params.promptTitle || action.label || "Action")
+    }
+
+    function actionPromptValue(field) {
+        if (!field) {
+            return ""
+        }
+        var key = String(field.id || "")
+        if (actionPromptValues[key] !== undefined) {
+            return actionPromptValues[key]
+        }
+        return field.value
+    }
+
+    function setActionPromptValue(fieldId, value) {
+        var next = {}
+        for (var key in actionPromptValues) {
+            if (actionPromptValues.hasOwnProperty(key)) {
+                next[key] = actionPromptValues[key]
+            }
+        }
+        next[String(fieldId || "")] = value
+        actionPromptValues = next
+    }
+
+    function actionPromptOptionIndex(field) {
+        if (!field || !field.options) {
+            return -1
+        }
+        var current = actionPromptValue(field)
+        for (var i = 0; i < field.options.length; ++i) {
+            if (field.options[i].value === current) {
+                return i
+            }
+        }
+        return -1
+    }
+
+    function beginActionRequest(action) {
+        activeActionId = String(action && action.id ? action.id : "")
+        activeActionLabel = String(action && action.label ? action.label : "Action")
+        activeActionDescription = String(action && action.description ? action.description : "")
+    }
+
+    function finishActionRequest() {
+        activeActionId = ""
+        activeActionLabel = ""
+        activeActionDescription = ""
+    }
+
+    function activeActionProgressSummary() {
+        var id = String(activeActionId || "")
+        if (id === "add_server" || id === "edit_server" || id === "remove_server") {
+            return "Elixir is applying the provider change in NZBGet and waiting for the service to settle."
+        }
+        if (id === "test_server") {
+            return "Elixir is asking NZBGet to validate the provider with its live connection test."
+        }
+        var description = String(activeActionDescription || "")
+        if (description !== "") {
+            return description
+        }
+        return "Elixir is applying the requested change."
+    }
+
+    function openActionPrompt(action, params) {
+        pendingPromptAction = {
+            action: action,
+            params: params || {}
+        }
+        var next = {}
+        var fields = actionPromptFields(action)
+        for (var i = 0; i < fields.length; ++i) {
+            var field = fields[i]
+            next[String(field.id || "")] = field.value
+        }
+        actionPromptValues = next
+        actionPromptDialog.title = actionPromptTitle(action)
+        actionPromptDialog.open()
+    }
+
+    function normalizedPromptValue(field, rawValue) {
+        var type = String(field.fieldType || field.field_type || "text")
+        if (type === "number") {
+            if (typeof rawValue === "number") {
+                return rawValue
+            }
+            var text = String(rawValue || "").trim()
+            var parsed = Number(text)
+            if (!isNaN(parsed)) {
+                return parsed
+            }
+            return text
+        }
+        return rawValue
     }
 
     function actionFieldLabel(field) {
@@ -242,6 +365,7 @@ Item {
             confirmActionDialog.open()
             return
         }
+        beginActionRequest(action)
         apiClient.invokeExtensionControlAction(extensionId, String(action.id || ""), params)
     }
 
@@ -265,6 +389,10 @@ Item {
             return
         }
         var params = mergeActionParams(action, extraParams)
+        if (actionPromptFields(action).length > 0) {
+            openActionPrompt(action, params)
+            return
+        }
         var secretScopeInstanceId = String(action.secretScopeInstanceId || "")
         var secretKeys = action.secretKeys || []
         if (secretScopeInstanceId !== "" && secretKeys.length > 0) {
@@ -287,6 +415,36 @@ Item {
             }
         }
         runPreparedAction(action, params)
+    }
+
+    function submitPendingPromptAction() {
+        if (!pendingPromptAction || !pendingPromptAction.action) {
+            return true
+        }
+        var action = pendingPromptAction.action
+        var params = pendingPromptAction.params || {}
+        var fields = actionPromptFields(action)
+        var merged = mergeActionParams(action, params)
+        for (var i = 0; i < fields.length; ++i) {
+            var field = fields[i]
+            var key = String(field.id || "")
+            var value = actionPromptValue(field)
+            var type = String(field.fieldType || field.field_type || "text")
+            if (field.required === true) {
+                if (type === "toggle") {
+                    // Bool fields are always present.
+                } else if (String(value === undefined ? "" : value).trim() === "") {
+                    actionToast.show("Enter " + String(field.label || key) + ".")
+                    return false
+                }
+            }
+            merged[key] = normalizedPromptValue(field, value)
+        }
+        pendingPromptAction = null
+        actionPromptValues = ({})
+        actionPromptDialog.close()
+        runPreparedAction(action, merged)
+        return true
     }
 
     function submitPendingSecretAction() {
@@ -368,13 +526,45 @@ Item {
             if (text === "") {
                 text = "Action completed."
             }
+            root.finishActionRequest()
             actionToast.show(text)
+            root.refreshSurface()
+            apiClient.fetchExtensionStatusSummary()
+            postActionRefreshPassesRemaining = 4
+            postActionRefreshTimer.restart()
         }
 
         function onRequestFailed(endpoint, error) {
             var prefix = "/api/v1/extensions/" + root.extensionId + "/control-surface"
+            var actionPrefix = prefix + "/actions/"
+            if (root.extensionId !== "" && endpoint.indexOf(actionPrefix) === 0) {
+                root.finishActionRequest()
+                actionToast.show(error)
+                return
+            }
             if (root.extensionId !== "" && endpoint.indexOf(prefix) === 0) {
                 actionToast.show(error)
+            }
+        }
+    }
+
+    Timer {
+        id: postActionRefreshTimer
+        interval: 1200
+        repeat: false
+        onTriggered: {
+            if (root.extensionId === "" || apiClient.authToken === "") {
+                postActionRefreshPassesRemaining = 0
+                return
+            }
+            if (postActionRefreshPassesRemaining <= 0) {
+                return
+            }
+            postActionRefreshPassesRemaining -= 1
+            root.refreshSurface()
+            apiClient.fetchExtensionStatusSummary()
+            if (postActionRefreshPassesRemaining > 0) {
+                postActionRefreshTimer.restart()
             }
         }
     }
@@ -504,6 +694,52 @@ Item {
                         font.family: Theme.fontBody
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.leftMargin: Theme.spacingXLarge
+                Layout.rightMargin: Theme.spacingXLarge
+                visible: apiClient.extensionControlLoading && root.activeActionLabel !== ""
+                radius: Theme.radiusLarge
+                color: Theme.backgroundCardRaised
+                border.color: Theme.border
+                implicitHeight: actionProgressContent.implicitHeight + Theme.spacingMedium * 2
+
+                RowLayout {
+                    id: actionProgressContent
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingMedium
+                    spacing: Theme.spacingMedium
+
+                    BusyIndicator {
+                        running: parent.parent.visible
+                        visible: running
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingXSmall
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "Applying " + root.activeActionLabel + "..."
+                            color: Theme.textPrimary
+                            font.pixelSize: 13
+                            font.family: Theme.fontDisplay
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: root.activeActionProgressSummary()
+                            color: Theme.textSecondary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
             }
@@ -1035,15 +1271,154 @@ Item {
     }
 
     Dialog {
-        id: confirmActionDialog
+        id: actionPromptDialog
+        parent: Overlay.overlay
         modal: true
+        focus: true
         standardButtons: Dialog.Cancel | Dialog.Ok
-        anchors.centerIn: parent
+        x: Math.max(Theme.spacingXLarge, (parent.width - width) / 2)
+        y: Math.max(Theme.spacingXLarge, (parent.height - height) / 2)
+        width: Math.min(parent.width * 0.92, 560)
+        height: Math.min(parent.height * 0.9, 720)
+        closePolicy: Popup.CloseOnEscape
+
+        onAccepted: {
+            if (!root.submitPendingPromptAction()) {
+                actionPromptDialog.open()
+            }
+        }
+        onRejected: {
+            root.pendingPromptAction = null
+            root.actionPromptValues = ({})
+        }
+
+        background: Rectangle {
+            color: Theme.backgroundCard
+            radius: Theme.radiusLarge
+            border.color: Theme.border
+        }
+
+        contentItem: Flickable {
+            clip: true
+            contentWidth: width
+            contentHeight: promptContent.implicitHeight + Theme.spacingLarge
+            boundsBehavior: Flickable.StopAtBounds
+
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+                width: 10
+            }
+
+            ColumnLayout {
+                id: promptContent
+                width: parent.width
+                spacing: Theme.spacingMedium
+
+                Label {
+                    Layout.preferredWidth: parent.width
+                    wrapMode: Text.WordWrap
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                    text: "Elixir will apply these settings and run any validation the extension exposes."
+                    visible: root.pendingPromptAction !== null
+                }
+
+                Repeater {
+                    model: root.pendingPromptAction && root.pendingPromptAction.action
+                           ? root.actionPromptFields(root.pendingPromptAction.action)
+                           : []
+
+                    delegate: ColumnLayout {
+                        property var fieldData: modelData
+                        property string fieldType: String(fieldData.fieldType || fieldData.field_type || "text")
+                        property string fieldKey: String(fieldData.id || "")
+
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        Label {
+                            text: String(parent.fieldData.label || parent.fieldKey)
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                            font.family: Theme.fontDisplay
+                        }
+
+                        TextField {
+                            visible: parent.fieldType === "text"
+                                     || parent.fieldType === "password"
+                                     || parent.fieldType === "number"
+                            Layout.fillWidth: true
+                            placeholderText: String(parent.fieldData.label || parent.fieldKey)
+                            echoMode: parent.fieldType === "password"
+                                      ? TextInput.Password
+                                      : TextInput.Normal
+                            inputMethodHints: parent.fieldType === "number"
+                                              ? Qt.ImhDigitsOnly
+                                              : Qt.ImhNone
+                            text: {
+                                var value = root.actionPromptValue(parent.fieldData)
+                                return value === undefined || value === null ? "" : String(value)
+                            }
+                            onTextChanged: root.setActionPromptValue(parent.fieldKey, text)
+                            color: Theme.textPrimary
+                            placeholderTextColor: Theme.textMuted
+                            selectedTextColor: Theme.background
+                            selectionColor: Theme.accent
+                            background: Rectangle {
+                                radius: Theme.radiusMedium
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                            }
+                        }
+
+                        Switch {
+                            visible: parent.fieldType === "toggle"
+                            checked: Boolean(root.actionPromptValue(parent.fieldData))
+                            onClicked: root.setActionPromptValue(parent.fieldKey, checked)
+                        }
+
+                        ComboBox {
+                            visible: parent.fieldType === "select"
+                            Layout.fillWidth: true
+                            model: parent.fieldData.options || []
+                            textRole: "label"
+                            valueRole: "value"
+                            currentIndex: root.actionPromptOptionIndex(parent.fieldData)
+                            onActivated: root.setActionPromptValue(parent.fieldKey, currentValue)
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Theme.textSecondary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            text: String(parent.fieldData.description || "")
+                            visible: text !== ""
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: confirmActionDialog
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        standardButtons: Dialog.Cancel | Dialog.Ok
+        x: Math.max(Theme.spacingXLarge, (parent.width - width) / 2)
+        y: Math.max(Theme.spacingXLarge, (parent.height - height) / 2)
+        width: Math.min(parent.width * 0.8, 420)
+        closePolicy: Popup.CloseOnEscape
 
         onAccepted: {
             if (!root.pendingAction || !root.pendingAction.action) {
                 return
             }
+            root.beginActionRequest(root.pendingAction.action)
             apiClient.invokeExtensionControlAction(
                 root.extensionId,
                 String(root.pendingAction.action.id || ""),
@@ -1067,9 +1442,14 @@ Item {
 
     Dialog {
         id: connectorSecretDialog
+        parent: Overlay.overlay
         modal: true
+        focus: true
         standardButtons: Dialog.Cancel | Dialog.Ok
-        anchors.centerIn: parent
+        x: Math.max(Theme.spacingXLarge, (parent.width - width) / 2)
+        y: Math.max(Theme.spacingXLarge, (parent.height - height) / 2)
+        width: Math.min(parent.width * 0.88, 460)
+        closePolicy: Popup.CloseOnEscape
 
         onAccepted: root.submitPendingSecretAction()
         onRejected: {

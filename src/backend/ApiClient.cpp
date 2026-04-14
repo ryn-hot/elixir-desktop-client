@@ -34,6 +34,32 @@ QString formatRegistryError(const QJsonValue &errorValue) {
     return errorMessage;
 }
 
+QString formatApiErrorDetail(const QByteArray &payload, const QString &fallback) {
+    if (!payload.isEmpty()) {
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
+        if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+            const QJsonObject obj = doc.object();
+            const QString message = obj.value("message").toString().trimmed();
+            if (!message.isEmpty()) {
+                return message;
+            }
+            const QString error = obj.value("error").toString().trimmed();
+            if (!error.isEmpty()) {
+                return error;
+            }
+        }
+
+        const QString text = QString::fromUtf8(payload).trimmed();
+        if (!text.isEmpty()) {
+            return text;
+        }
+    }
+
+    const QString trimmedFallback = fallback.trimmed();
+    return trimmedFallback.isEmpty() ? QString("Request failed.") : trimmedFallback;
+}
+
 QString normalizeMediaType(const QString &value) {
     const QString mediaType = value.trimmed().toLower();
     if (mediaType == "movie" || mediaType == "movies") {
@@ -2138,9 +2164,7 @@ void ApiClient::sendRequest(
                 << "bytes" << payload.size() << "error" << reply->error();
 
         if (reply->error() != QNetworkReply::NoError || !okStatus) {
-            const QString detail = payload.isEmpty()
-                ? reply->errorString()
-                : QString::fromUtf8(payload);
+            const QString detail = formatApiErrorDetail(payload, reply->errorString());
             if (status == 401 && !path.startsWith("/api/v1/auth/")) {
                 expireAuth(detail.isEmpty() ? "Authentication expired." : detail);
             }

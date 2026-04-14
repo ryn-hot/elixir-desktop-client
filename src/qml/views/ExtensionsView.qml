@@ -528,6 +528,9 @@ Item {
             return Theme.border
         }
         var code = String(status.code || "")
+        if (code === "provider_setup_required") {
+            return Theme.accentInfo
+        }
         if (code === "connection_issue" || code === "degraded_runtime") {
             return Theme.accentDanger
         }
@@ -545,6 +548,9 @@ Item {
             return Theme.backgroundCardRaised
         }
         var code = String(status.code || "")
+        if (code === "provider_setup_required") {
+            return Theme.accentInfoSoft
+        }
         if (code === "connection_issue" || code === "degraded_runtime") {
             return Theme.accentDangerSoft
         }
