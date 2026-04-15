@@ -32,6 +32,7 @@ class ApiClient : public QObject {
     Q_PROPERTY(QVariantList extensionsDesiredBlueprints READ extensionsDesiredBlueprints NOTIFY extensionsDesiredBlueprintsChanged)
     Q_PROPERTY(QVariantList extensionsStatusItems READ extensionsStatusItems NOTIFY extensionsStatusSummaryChanged)
     Q_PROPERTY(int extensionsNeedsAttentionCount READ extensionsNeedsAttentionCount NOTIFY extensionsStatusSummaryChanged)
+    Q_PROPERTY(QVariantMap extensionsRuntimeStatus READ extensionsRuntimeStatus NOTIFY extensionsStatusSummaryChanged)
     Q_PROPERTY(QVariantMap extensionControlSurface READ extensionControlSurface NOTIFY extensionControlSurfaceChanged)
     Q_PROPERTY(bool extensionControlLoading READ extensionControlLoading NOTIFY extensionControlLoadingChanged)
     Q_PROPERTY(QString extensionsLastRefreshedAt READ extensionsLastRefreshedAt NOTIFY extensionsLastRefreshedAtChanged)
@@ -98,6 +99,7 @@ public:
     QVariantList extensionsDesiredBlueprints() const;
     QVariantList extensionsStatusItems() const;
     int extensionsNeedsAttentionCount() const;
+    QVariantMap extensionsRuntimeStatus() const;
     QVariantMap extensionControlSurface() const;
     bool extensionControlLoading() const;
     bool extensionsAutoWireEnabled() const;
@@ -163,6 +165,7 @@ public:
     Q_INVOKABLE void clearExtensionRuns();
     Q_INVOKABLE void fetchLatestReconcileRun();
     Q_INVOKABLE void reconcileNow();
+    Q_INVOKABLE void resetExtensionsRuntime();
     Q_INVOKABLE void fetchDesiredBlueprints(const QString &applied = QString());
     Q_INVOKABLE void clearDesiredBlueprints(const QString &applied = QString());
     Q_INVOKABLE void fetchExtensionStatusSummary();
@@ -221,6 +224,7 @@ signals:
     void mediaAddResultChanged();
     void mediaAddLoadingChanged();
     void mediaAcquisitionChanged();
+    void extensionsRuntimeResetCompleted(const QString &status, const QString &message);
     void extensionControlActionCompleted(
         const QString &extensionId,
         const QString &actionId,
@@ -293,6 +297,7 @@ private:
     QVariantList m_extensionsDesiredBlueprints;
     QVariantList m_extensionsStatusItems;
     int m_extensionsNeedsAttentionCount = 0;
+    QVariantMap m_extensionsRuntimeStatus;
     QVariantMap m_extensionControlSurface;
     bool m_extensionControlLoading = false;
     QString m_extensionsLastRefreshedAt;

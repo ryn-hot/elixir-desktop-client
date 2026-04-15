@@ -289,6 +289,10 @@ int ApiClient::extensionsNeedsAttentionCount() const {
     return m_extensionsNeedsAttentionCount;
 }
 
+QVariantMap ApiClient::extensionsRuntimeStatus() const {
+    return m_extensionsRuntimeStatus;
+}
+
 QVariantMap ApiClient::extensionControlSurface() const {
     return m_extensionControlSurface;
 }
@@ -1295,6 +1299,37 @@ void ApiClient::reconcileNow() {
         });
 }
 
+void ApiClient::resetExtensionsRuntime() {
+    sendRequest(
+        "POST",
+        "/api/v1/extensions/runtime/reset",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/extensions/runtime/reset", "Runtime reset response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            const QJsonObject runObj = obj.value("run").toObject();
+            const QVariantMap run = runObj.toVariantMap();
+            if (!run.isEmpty() && m_extensionsReconcileRun != run) {
+                m_extensionsReconcileRun = run;
+                emit extensionsReconcileRunChanged();
+            }
+
+            emit extensionsRuntimeResetCompleted(
+                obj.value("status").toString(),
+                obj.value("message").toString());
+
+            fetchExtensionRuns();
+            fetchExtensionInstances();
+            fetchDesiredBlueprints();
+            fetchAutoWireStatus();
+            fetchExtensionStatusSummary();
+            fetchLatestReconcileRun();
+        });
+}
+
 void ApiClient::fetchDesiredBlueprints(const QString &applied) {
     QString path = "/api/v1/extensions/desired-blueprints";
     const QString trimmed = applied.trimmed().toLower();
@@ -2074,6 +2109,7 @@ void ApiClient::updateExtensionsRun(const QJsonObject &obj) {
 void ApiClient::updateExtensionStatusSummary(const QJsonObject &obj) {
     const QVariantList items = obj.value("items").toArray().toVariantList();
     const int needsAttention = obj.value("needsAttentionCount").toInt();
+    const QVariantMap runtimeStatus = obj.value("dockerRuntime").toObject().toVariantMap();
 
     bool changed = false;
     if (m_extensionsStatusItems != items) {
@@ -2082,6 +2118,10 @@ void ApiClient::updateExtensionStatusSummary(const QJsonObject &obj) {
     }
     if (m_extensionsNeedsAttentionCount != needsAttention) {
         m_extensionsNeedsAttentionCount = needsAttention;
+        changed = true;
+    }
+    if (m_extensionsRuntimeStatus != runtimeStatus) {
+        m_extensionsRuntimeStatus = runtimeStatus;
         changed = true;
     }
     if (changed) {

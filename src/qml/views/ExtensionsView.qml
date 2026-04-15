@@ -26,6 +26,7 @@ Item {
     property string pendingOptionalAddonId: ""
     property string pendingOptionalAddonTargetInstanceId: ""
     property var pendingOptionalAddonSecretKeys: []
+    property bool runtimeResetInFlight: false
     property string marketplaceKindFilter: ""
     property string marketplaceTargetCapabilityFilter: ""
     property string marketplaceFilterLabel: ""
@@ -528,6 +529,9 @@ Item {
             return Theme.border
         }
         var code = String(status.code || "")
+        if (code === "runtime_status_stale" || code === "runtime_status_recovering") {
+            return Theme.accent
+        }
         if (code === "provider_setup_required") {
             return Theme.accentInfo
         }
@@ -548,6 +552,9 @@ Item {
             return Theme.backgroundCardRaised
         }
         var code = String(status.code || "")
+        if (code === "runtime_status_stale" || code === "runtime_status_recovering") {
+            return Theme.accentSoft
+        }
         if (code === "provider_setup_required") {
             return Theme.accentInfoSoft
         }
@@ -793,6 +800,11 @@ Item {
     }
 
     function attentionSummaryText() {
+        var runtimeStatus = apiClient.extensionsRuntimeStatus || {}
+        var runtimeLabel = String(runtimeStatus.label || "")
+        if (runtimeLabel !== "") {
+            return runtimeLabel
+        }
         if (apiClient.extensionsInstalled.length > 0 && apiClient.extensionsStatusItems.length === 0) {
             return "Checking extension status..."
         }
@@ -803,6 +815,57 @@ Item {
                    : "All extensions healthy"
         }
         return count + " extension" + (count === 1 ? "" : "s") + " need attention"
+    }
+
+    function runtimeStatusVisible() {
+        var runtimeStatus = apiClient.extensionsRuntimeStatus || {}
+        return String(runtimeStatus.label || "") !== ""
+    }
+
+    function runtimeStatusAccent() {
+        var runtimeStatus = apiClient.extensionsRuntimeStatus || {}
+        var state = String(runtimeStatus.state || "")
+        if (state === "degraded" || state === "reboot_required") {
+            return Theme.accentDanger
+        }
+        return Theme.accent
+    }
+
+    function runtimeStatusTint() {
+        var runtimeStatus = apiClient.extensionsRuntimeStatus || {}
+        var state = String(runtimeStatus.state || "")
+        if (state === "degraded" || state === "reboot_required") {
+            return Theme.accentDangerSoft
+        }
+        return Theme.accentSoft
+    }
+
+    function runtimeStatusDescription() {
+        var runtimeStatus = apiClient.extensionsRuntimeStatus || {}
+        var description = String(runtimeStatus.description || "")
+        var hostWarning = String(runtimeStatus.hostWarning || "")
+        var rebootRecommended = Boolean(runtimeStatus.rebootRecommended)
+        var autoResetAttempts = Number(runtimeStatus.autoResetAttemptsInWindow || 0)
+        var quarantined = runtimeStatus.quarantinedInstances || []
+        if (hostWarning !== "" && description.indexOf(hostWarning) < 0) {
+            description = description === "" ? hostWarning : description + " " + hostWarning
+        }
+        if (autoResetAttempts > 0) {
+            var resetSuffix = "Elixir has attempted " + autoResetAttempts + " automatic Docker runtime reset"
+                            + (autoResetAttempts === 1 ? "" : "s")
+                            + " in the current recovery window."
+            description = description === "" ? resetSuffix : description + " " + resetSuffix
+        }
+        if (quarantined.length > 0) {
+            var suffix = quarantined.length === 1
+                         ? "1 instance is quarantined while Docker stabilizes."
+                         : quarantined.length + " instances are quarantined while Docker stabilizes."
+            description = description === "" ? suffix : description + " " + suffix
+        }
+        if (rebootRecommended && description.toLowerCase().indexOf("reboot") < 0) {
+            description = description === "" ? "Reboot the computer, then relaunch Elixir." : description + " Reboot the computer, then relaunch Elixir."
+        }
+        return description
     }
 
     function marketplaceCards() {
@@ -869,6 +932,7 @@ Item {
                 scheduleInitialDataLoad()
             } else {
                 initialDataLoadScheduled = false
+                runtimeResetInFlight = false
                 clearPendingBlueprintPlan()
                 clearOneClickBlueprintFlow()
                 clearOptionalAddonPrompt()
@@ -879,9 +943,17 @@ Item {
         }
 
         function onRequestFailed(endpoint, error) {
+            if (endpoint === "/api/v1/extensions/runtime/reset") {
+                runtimeResetInFlight = false
+            }
             if (endpoint.indexOf("/api/v1/extensions/") === 0) {
                 actionToast.show(error)
             }
+        }
+
+        function onExtensionsRuntimeResetCompleted(status, message) {
+            runtimeResetInFlight = false
+            actionToast.show(message)
         }
 
         function onExtensionsCatalogChanged() {
@@ -1015,6 +1087,89 @@ Item {
                         font.family: Theme.fontBody
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                visible: root.runtimeStatusVisible()
+                radius: Theme.radiusLarge
+                color: root.runtimeStatusTint()
+                border.color: root.runtimeStatusAccent()
+                border.width: 1
+                implicitHeight: runtimeStatusColumn.implicitHeight + Theme.spacingLarge * 2
+
+                ColumnLayout {
+                    id: runtimeStatusColumn
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingLarge
+                    spacing: Theme.spacingSmall
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingMedium
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: String((apiClient.extensionsRuntimeStatus || {}).label || "")
+                            color: Theme.textPrimary
+                            font.pixelSize: 15
+                            font.family: Theme.fontDisplay
+                        }
+
+                        Button {
+                            text: runtimeResetInFlight ? "Resetting..." : "Reset runtime"
+                            enabled: !runtimeResetInFlight && apiClient.authToken !== ""
+                            onClicked: {
+                                runtimeResetInFlight = true
+                                apiClient.resetExtensionsRuntime()
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: root.runtimeStatusAccent()
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        Rectangle {
+                            radius: Theme.radiusPill
+                            color: Qt.rgba(
+                                root.runtimeStatusAccent().r,
+                                root.runtimeStatusAccent().g,
+                                root.runtimeStatusAccent().b,
+                                0.18
+                            )
+                            implicitHeight: runtimeStateChip.implicitHeight + 8
+                            implicitWidth: runtimeStateChip.implicitWidth + 16
+
+                            Label {
+                                id: runtimeStateChip
+                                anchors.centerIn: parent
+                                text: String((apiClient.extensionsRuntimeStatus || {}).state || "").replace("_", " ")
+                                color: root.runtimeStatusAccent()
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                            }
+                        }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.runtimeStatusDescription()
+                        visible: text !== ""
+                        wrapMode: Text.WordWrap
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
                     }
                 }
             }
