@@ -135,6 +135,56 @@ Item {
         return Theme.accentSuccessSoft
     }
 
+    function noticeAccent(severity) {
+        var code = String(severity || "")
+        if (code === "error" || code === "danger") {
+            return Theme.accentDanger
+        }
+        if (code === "warning" || code === "attention") {
+            return Theme.accent
+        }
+        return Theme.accentInfo
+    }
+
+    function noticeTint(severity) {
+        var code = String(severity || "")
+        if (code === "error" || code === "danger") {
+            return Theme.accentDangerSoft
+        }
+        if (code === "warning" || code === "attention") {
+            return Theme.accentSoft
+        }
+        return Theme.accentInfoSoft
+    }
+
+    function policyAccent(mode) {
+        var key = String(mode || "")
+        if (key === "managed") {
+            return Theme.accentInfo
+        }
+        if (key === "seeded") {
+            return Theme.accent
+        }
+        if (key === "observed") {
+            return Theme.textMuted
+        }
+        return Theme.border
+    }
+
+    function policyTint(mode) {
+        var key = String(mode || "")
+        if (key === "managed") {
+            return Theme.accentInfoSoft
+        }
+        if (key === "seeded") {
+            return Theme.accentSoft
+        }
+        if (key === "observed") {
+            return Theme.accentMutedSoft
+        }
+        return Theme.backgroundCard
+    }
+
     function displayFieldValue(field) {
         if (!field) {
             return ""
@@ -169,6 +219,69 @@ Item {
         }
         var text = String(value)
         return text === "" ? "Not set" : text
+    }
+
+    function editableFieldValue(field) {
+        if (!field) {
+            return ""
+        }
+        if (field.secret === true) {
+            return ""
+        }
+        var value = field.value
+        if (value === undefined || value === null) {
+            return ""
+        }
+        if (typeof value === "boolean" || typeof value === "number") {
+            return String(value)
+        }
+        return String(value)
+    }
+
+    function fieldEditPlaceholder(field) {
+        if (!field) {
+            return ""
+        }
+        if (field.secret === true) {
+            return root.displayFieldValue(field)
+        }
+        return ""
+    }
+
+    function normalizedFieldValue(field, rawValue) {
+        var type = String(field && (field.fieldType || field.field_type) || "text")
+        if (type === "number") {
+            if (typeof rawValue === "number") {
+                return rawValue
+            }
+            var text = String(rawValue || "").trim()
+            var parsed = Number(text)
+            if (!isNaN(parsed)) {
+                return parsed
+            }
+            return text
+        }
+        return rawValue
+    }
+
+    function submitFieldEdit(field, rawValue) {
+        if (!field || field.readonly === true || extensionId === "") {
+            return
+        }
+        var type = String(field.fieldType || field.field_type || "text")
+        var label = String(field.label || field.id || "field")
+        var text = String(rawValue === undefined || rawValue === null ? "" : rawValue)
+        if (field.secret === true && text.trim() === "") {
+            return
+        }
+        if (field.required === true
+                && type !== "toggle"
+                && type !== "select"
+                && text.trim() === "") {
+            actionToast.show("Enter " + label + ".")
+            return
+        }
+        root.updateField(field, normalizedFieldValue(field, rawValue))
     }
 
     function mergeActionParams(action, extraParams) {
@@ -949,6 +1062,119 @@ Item {
                                     visible: text !== ""
                                     Layout.fillWidth: true
                                 }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacingSmall
+                                    visible: !!modelData.policy
+
+                                    Rectangle {
+                                        radius: Theme.radiusSmall
+                                        color: Qt.rgba(
+                                            root.policyTint(String((modelData.policy || {}).mode || "")).r,
+                                            root.policyTint(String((modelData.policy || {}).mode || "")).g,
+                                            root.policyTint(String((modelData.policy || {}).mode || "")).b,
+                                            0.18
+                                        )
+                                        border.color: root.policyAccent(String((modelData.policy || {}).mode || ""))
+                                        implicitHeight: 24
+                                        implicitWidth: policyLabel.implicitWidth + 14
+
+                                        Label {
+                                            id: policyLabel
+                                            anchors.centerIn: parent
+                                            text: String((modelData.policy || {}).label || "")
+                                            color: parent.border.color
+                                            font.pixelSize: 10
+                                            font.family: Theme.fontBody
+                                        }
+                                    }
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: String((modelData.policy || {}).description || "")
+                                        color: Theme.textMuted
+                                        font.pixelSize: 11
+                                        font.family: Theme.fontBody
+                                        wrapMode: Text.WordWrap
+                                        visible: text !== ""
+                                    }
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+                                visible: (modelData.notices || []).length > 0
+
+                                Repeater {
+                                    model: modelData.notices || []
+                                    delegate: Rectangle {
+                                        property var noticeData: modelData
+                                        Layout.fillWidth: true
+                                        radius: Theme.radiusMedium
+                                        color: Qt.rgba(
+                                            root.noticeTint(String(noticeData.severity || "")).r,
+                                            root.noticeTint(String(noticeData.severity || "")).g,
+                                            root.noticeTint(String(noticeData.severity || "")).b,
+                                            0.16
+                                        )
+                                        border.color: root.noticeAccent(String(noticeData.severity || ""))
+                                        implicitHeight: noticeContent.implicitHeight + Theme.spacingMedium * 2
+
+                                        ColumnLayout {
+                                            id: noticeContent
+                                            anchors.fill: parent
+                                            anchors.margins: Theme.spacingMedium
+                                            spacing: Theme.spacingSmall
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: String(noticeData.title || "")
+                                                color: root.noticeAccent(String(noticeData.severity || ""))
+                                                font.pixelSize: 13
+                                                font.family: Theme.fontDisplay
+                                                wrapMode: Text.WordWrap
+                                            }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: String(noticeData.message || "")
+                                                color: Theme.textSecondary
+                                                font.pixelSize: 11
+                                                font.family: Theme.fontBody
+                                                wrapMode: Text.WordWrap
+                                                visible: text !== ""
+                                            }
+
+                                            Button {
+                                                visible: !!noticeData.action
+                                                text: String((noticeData.action || {}).label || "Run")
+                                                enabled: !apiClient.extensionControlLoading
+                                                onClicked: root.runAction(noticeData.action)
+                                                background: Rectangle {
+                                                    radius: Theme.radiusSmall
+                                                    color: String((noticeData.action || {}).kind || "") === "primary"
+                                                           ? Theme.accent
+                                                           : Theme.backgroundCard
+                                                    border.color: String((noticeData.action || {}).kind || "") === "primary"
+                                                                  ? Theme.accent
+                                                                  : Theme.border
+                                                }
+                                                contentItem: Label {
+                                                    text: parent.text
+                                                    color: String((noticeData.action || {}).kind || "") === "primary"
+                                                           ? "#141414"
+                                                           : Theme.textPrimary
+                                                    font.pixelSize: 11
+                                                    font.family: Theme.fontBody
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    verticalAlignment: Text.AlignVCenter
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             ColumnLayout {
@@ -1004,17 +1230,6 @@ Item {
                                                 }
                                             }
 
-                                            Label {
-                                                visible: String(fieldData.fieldType || fieldData.field_type || "text") !== "toggle"
-                                                         && String(fieldData.fieldType || fieldData.field_type || "text") !== "select"
-                                                Layout.fillWidth: true
-                                                text: root.displayFieldValue(fieldData)
-                                                color: Theme.textPrimary
-                                                font.pixelSize: 14
-                                                font.family: Theme.fontBody
-                                                wrapMode: Text.WordWrap
-                                            }
-
                                             Switch {
                                                 visible: String(fieldData.fieldType || fieldData.field_type || "text") === "toggle"
                                                          && fieldData.readonly !== true
@@ -1045,6 +1260,42 @@ Item {
                                                 font.pixelSize: 14
                                                 font.family: Theme.fontBody
                                                 wrapMode: Text.WordWrap
+                                            }
+
+                                            Label {
+                                                visible: String(fieldData.fieldType || fieldData.field_type || "text") !== "toggle"
+                                                         && String(fieldData.fieldType || fieldData.field_type || "text") !== "select"
+                                                         && fieldData.readonly === true
+                                                Layout.fillWidth: true
+                                                text: root.displayFieldValue(fieldData)
+                                                color: Theme.textPrimary
+                                                font.pixelSize: 14
+                                                font.family: Theme.fontBody
+                                                wrapMode: Text.WordWrap
+                                            }
+
+                                            RowLayout {
+                                                visible: String(fieldData.fieldType || fieldData.field_type || "text") !== "toggle"
+                                                         && String(fieldData.fieldType || fieldData.field_type || "text") !== "select"
+                                                         && fieldData.readonly !== true
+                                                Layout.fillWidth: true
+                                                spacing: Theme.spacingSmall
+
+                                                TextField {
+                                                    id: inlineFieldEditor
+                                                    Layout.fillWidth: true
+                                                    text: root.editableFieldValue(fieldData)
+                                                    placeholderText: root.fieldEditPlaceholder(fieldData)
+                                                    echoMode: fieldData.secret === true ? TextInput.Password : TextInput.Normal
+                                                    enabled: !apiClient.extensionControlLoading
+                                                    onAccepted: root.submitFieldEdit(fieldData, text)
+                                                }
+
+                                                Button {
+                                                    text: "Save"
+                                                    enabled: !apiClient.extensionControlLoading
+                                                    onClicked: root.submitFieldEdit(fieldData, inlineFieldEditor.text)
+                                                }
                                             }
 
                                             Label {

@@ -22,6 +22,13 @@ Item {
     property string activeSeasonId: ""
     property var activeSeasonDetail: null
     property string seasonStatusText: ""
+    property bool deleteBusy: false
+    property string deleteStatusText: ""
+    property string deleteResultText: ""
+    property string episodeActionBusyId: ""
+    property string episodeStatusText: ""
+    property string blockedEpisodesStatusText: ""
+    property var pendingEpisode: null
     property var libraryItem: {
         var idx = libraryModel.indexOfId(mediaId)
         return idx >= 0 ? libraryModel.get(idx) : null
@@ -116,6 +123,85 @@ Item {
             return details.type === "series" || details.type === "anime"
         }
         return libraryItem && (libraryItem.type === "series" || libraryItem.type === "anime")
+    }
+
+    function lifecycleInfo() {
+        return details && details.lifecycle ? details.lifecycle : {}
+    }
+
+    function canStopTracking() {
+        var lifecycle = lifecycleInfo()
+        return lifecycle && Boolean(lifecycle.can_stop_tracking || lifecycle.canStopTracking)
+    }
+
+    function managerDisplayName() {
+        var lifecycle = lifecycleInfo()
+        var implementation = lifecycle.manager_implementation || lifecycle.managerImplementation || ""
+        if (implementation !== "") {
+            return implementation.charAt(0).toUpperCase() + implementation.slice(1)
+        }
+        return lifecycle.manager_label || lifecycle.managerLabel || "manager"
+    }
+
+    function deleteTargetLabel() {
+        return isSeriesType() ? "show" : "movie"
+    }
+
+    function blockedEpisodeCount() {
+        var lifecycle = lifecycleInfo()
+        if (!lifecycle) {
+            return 0
+        }
+        return lifecycle.blocked_episode_count || lifecycle.blockedEpisodeCount || 0
+    }
+
+    function canRestoreBlockedEpisodes() {
+        var lifecycle = lifecycleInfo()
+        return lifecycle && Boolean(lifecycle.can_restore_blocked_episodes || lifecycle.canRestoreBlockedEpisodes)
+    }
+
+    function episodeLifecycleInfo(episode) {
+        return episode && episode.lifecycle ? episode.lifecycle : {}
+    }
+
+    function episodeBlocked(episode) {
+        var lifecycle = episodeLifecycleInfo(episode)
+        return lifecycle && Boolean(lifecycle.blocked_in_elixir || lifecycle.blockedInElixir)
+    }
+
+    function episodeCanDelete(episode) {
+        var lifecycle = episodeLifecycleInfo(episode)
+        return lifecycle && Boolean(lifecycle.can_delete_locally || lifecycle.canDeleteLocally)
+    }
+
+    function episodeCanBlock(episode) {
+        var lifecycle = episodeLifecycleInfo(episode)
+        return lifecycle && Boolean(lifecycle.can_block_in_elixir || lifecycle.canBlockInElixir)
+    }
+
+    function episodeCanRestore(episode) {
+        var lifecycle = episodeLifecycleInfo(episode)
+        return lifecycle && Boolean(lifecycle.can_restore || lifecycle.canRestore)
+    }
+
+    function episodeStatusLabel(episode) {
+        if (episodeBlocked(episode)) {
+            return "Blocked in Elixir"
+        }
+        return episode && episode.has_file ? "Available" : "Missing"
+    }
+
+    function openEpisodeDeleteDialog(episode) {
+        pendingEpisode = episode
+        episodeStatusText = ""
+        episodeDeleteDialog.open()
+    }
+
+    function refreshEpisodeState() {
+        apiClient.fetchMediaDetails(mediaId)
+        if (activeSeasonId !== "") {
+            apiClient.fetchEpisodes(activeSeasonId)
+        }
     }
 
     function resolveArtworkUrl(url) {
@@ -389,6 +475,49 @@ Item {
                                 }
                             }
                             Button {
+                                text: "Delete"
+                                enabled: details !== null && !deleteBusy
+                                onClicked: {
+                                    deleteStatusText = ""
+                                    deleteDialog.open()
+                                }
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: "#5a2b2b"
+                                    border.color: "#8d4a4a"
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 13
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                            Button {
+                                visible: isSeriesType() && canRestoreBlockedEpisodes()
+                                text: "Restore blocked episodes"
+                                enabled: details !== null
+                                onClicked: {
+                                    blockedEpisodesStatusText = ""
+                                    apiClient.restoreBlockedEpisodes(mediaId)
+                                }
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.backgroundCardRaised
+                                    border.color: Theme.border
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 13
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                            Button {
                                 text: "Back"
                                 onClicked: {
                                     if (root.stackView) {
@@ -417,6 +546,16 @@ Item {
                             color: Theme.textSecondary
                             font.pixelSize: 12
                             font.family: Theme.fontBody
+                        }
+
+                        InlineToast {
+                            text: blockedEpisodesStatusText
+                            autoClear: false
+                            visible: blockedEpisodesStatusText !== ""
+                            color: Theme.textSecondary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            wrapMode: Text.Wrap
                         }
                     }
                 }
@@ -700,10 +839,80 @@ Item {
                                 }
                                 
                                 Label {
-                                    text: modelData.has_file ? "Available" : "Missing" // Could add duration here
-                                    color: modelData.has_file ? Theme.textMuted : Theme.accent
+                                    text: episodeStatusLabel(modelData)
+                                    color: episodeBlocked(modelData)
+                                           ? Theme.accentInfo
+                                           : (modelData.has_file ? Theme.textMuted : Theme.accent)
                                     font.pixelSize: 11
                                     font.family: Theme.bodyFont.family
+                                }
+
+                                RowLayout {
+                                    spacing: Theme.spacingSmall
+
+                                    Button {
+                                        visible: modelData.has_file && !episodeBlocked(modelData)
+                                        text: "Play"
+                                        enabled: episodeActionBusyId === ""
+                                        onClicked: apiClient.startPlayback(mediaId, modelData.id)
+                                        background: Rectangle {
+                                            radius: Theme.radiusSmall
+                                            color: Theme.backgroundCardRaised
+                                            border.color: Theme.border
+                                        }
+                                        contentItem: Label {
+                                            text: parent.text
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 11
+                                            font.family: Theme.fontBody
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                    }
+
+                                    Button {
+                                        visible: episodeCanDelete(modelData) && !episodeBlocked(modelData)
+                                        text: episodeActionBusyId === modelData.id ? "Working..." : "Delete"
+                                        enabled: episodeActionBusyId === "" || episodeActionBusyId === modelData.id
+                                        onClicked: openEpisodeDeleteDialog(modelData)
+                                        background: Rectangle {
+                                            radius: Theme.radiusSmall
+                                            color: "#5a2b2b"
+                                            border.color: "#8d4a4a"
+                                        }
+                                        contentItem: Label {
+                                            text: parent.text
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 11
+                                            font.family: Theme.fontBody
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                    }
+
+                                    Button {
+                                        visible: episodeCanRestore(modelData)
+                                        text: episodeActionBusyId === modelData.id ? "Working..." : "Allow again"
+                                        enabled: episodeActionBusyId === "" || episodeActionBusyId === modelData.id
+                                        onClicked: {
+                                            episodeActionBusyId = modelData.id
+                                            episodeStatusText = ""
+                                            apiClient.restoreEpisode(modelData.id)
+                                        }
+                                        background: Rectangle {
+                                            radius: Theme.radiusSmall
+                                            color: Theme.backgroundCardRaised
+                                            border.color: Theme.border
+                                        }
+                                        contentItem: Label {
+                                            text: parent.text
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 11
+                                            font.family: Theme.fontBody
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -711,10 +920,13 @@ Item {
                         MouseArea {
                             id: episodeMouseArea
                             anchors.fill: parent
+                            enabled: !modelData.has_file && !episodeCanDelete(modelData) && !episodeCanRestore(modelData)
                             hoverEnabled: true
-                            cursorShape: modelData.has_file ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            cursorShape: (modelData.has_file && !episodeBlocked(modelData))
+                                         ? Qt.PointingHandCursor
+                                         : Qt.ArrowCursor
                             onClicked: {
-                                if (modelData.has_file) {
+                                if (modelData.has_file && !episodeBlocked(modelData)) {
                                     apiClient.startPlayback(mediaId, modelData.id) // Assuming episode ID is file ID or handled
                                     // Note: API might need specific file ID logic if episode maps to file
                                 }
@@ -729,6 +941,17 @@ Item {
                     font.pixelSize: 13
                     font.family: Theme.bodyFont.family
                     visible: episodes && episodes.length === 0
+                }
+
+                InlineToast {
+                    Layout.fillWidth: true
+                    text: episodeStatusText
+                    autoClear: false
+                    visible: episodeStatusText !== ""
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                    wrapMode: Text.Wrap
                 }
             }
 
@@ -821,6 +1044,305 @@ Item {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: episodeDeleteDialog
+        modal: true
+        x: (parent.width - width) / 2
+        y: Math.max(Theme.spacingLarge, (parent.height - height) / 2)
+        width: Math.min(parent.width * 0.88, 560)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: Theme.backgroundCard
+            radius: Theme.radiusLarge
+            border.color: Theme.border
+        }
+
+        contentItem: ColumnLayout {
+            spacing: Theme.spacingMedium
+
+            Label {
+                text: pendingEpisode
+                      ? ("Delete S" + String(pendingEpisode.season_number).padStart(2, "0")
+                         + "E" + String(pendingEpisode.episode_number).padStart(2, "0"))
+                      : "Delete episode"
+                color: Theme.textPrimary
+                font.pixelSize: 18
+                font.family: Theme.fontDisplay
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: Theme.textSecondary
+                font.pixelSize: 13
+                font.family: Theme.fontBody
+                text: "Delete this episode from Elixir only. You can either remove it locally and allow it to come back later, or block just this episode in Elixir without changing Sonarr."
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+
+                Button {
+                    text: "Cancel"
+                    enabled: episodeActionBusyId === ""
+                    onClicked: episodeDeleteDialog.close()
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: episodeActionBusyId !== "" ? "Working..." : "Delete locally"
+                    enabled: pendingEpisode && episodeActionBusyId === ""
+                    onClicked: {
+                        if (!pendingEpisode) {
+                            return
+                        }
+                        episodeActionBusyId = pendingEpisode.id
+                        episodeStatusText = ""
+                        apiClient.deleteEpisode(pendingEpisode.id, false)
+                    }
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: "#5a2b2b"
+                        border.color: "#8d4a4a"
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+
+                Button {
+                    visible: pendingEpisode && episodeCanBlock(pendingEpisode)
+                    text: episodeActionBusyId !== "" ? "Working..." : "Delete + Block"
+                    enabled: pendingEpisode && episodeActionBusyId === ""
+                    onClicked: {
+                        if (!pendingEpisode) {
+                            return
+                        }
+                        episodeActionBusyId = pendingEpisode.id
+                        episodeStatusText = ""
+                        apiClient.deleteEpisode(pendingEpisode.id, true)
+                    }
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.accent
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: "#111111"
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: deleteDialog
+        modal: true
+        x: (parent.width - width) / 2
+        y: Math.max(Theme.spacingLarge, (parent.height - height) / 2)
+        width: Math.min(parent.width * 0.88, 560)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: Theme.backgroundCard
+            radius: Theme.radiusLarge
+            border.color: Theme.border
+        }
+
+        contentItem: ColumnLayout {
+            spacing: Theme.spacingMedium
+
+            Label {
+                text: "Delete " + deleteTargetLabel()
+                color: Theme.textPrimary
+                font.pixelSize: 18
+                font.family: Theme.fontDisplay
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: Theme.textSecondary
+                font.pixelSize: 13
+                font.family: Theme.fontBody
+                text: canStopTracking()
+                      ? ("Delete this " + deleteTargetLabel() + " from Elixir. If you also stop tracking, "
+                         + managerDisplayName() + " will remove it from its managed list and Elixir will block future re-imports until you add it again.")
+                      : ("Delete this " + deleteTargetLabel() + " from Elixir. This removes the local library entry and its files from disk.")
+            }
+
+            InlineToast {
+                Layout.fillWidth: true
+                text: deleteStatusText
+                autoClear: false
+                visible: deleteStatusText !== ""
+                color: Theme.textSecondary
+                font.pixelSize: 12
+                font.family: Theme.fontBody
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+
+                Button {
+                    text: "Cancel"
+                    enabled: !deleteBusy
+                    onClicked: deleteDialog.close()
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: deleteBusy ? "Deleting..." : "Delete from Elixir"
+                    enabled: !deleteBusy
+                    onClicked: {
+                        deleteBusy = true
+                        deleteStatusText = ""
+                        apiClient.deleteLibraryItem(mediaId, false)
+                    }
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: "#5a2b2b"
+                        border.color: "#8d4a4a"
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+
+                Button {
+                    visible: canStopTracking()
+                    text: deleteBusy ? "Working..." : ("Delete + Stop " + managerDisplayName())
+                    enabled: !deleteBusy
+                    onClicked: {
+                        deleteBusy = true
+                        deleteStatusText = ""
+                        apiClient.deleteLibraryItem(mediaId, true)
+                    }
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.accent
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: "#111111"
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: deleteResultDialog
+        modal: true
+        x: (parent.width - width) / 2
+        y: Math.max(Theme.spacingLarge, (parent.height - height) / 2)
+        width: Math.min(parent.width * 0.72, 420)
+        closePolicy: Popup.NoAutoClose
+
+        background: Rectangle {
+            color: Theme.backgroundCard
+            radius: Theme.radiusLarge
+            border.color: Theme.border
+        }
+
+        contentItem: ColumnLayout {
+            spacing: Theme.spacingMedium
+
+            Label {
+                text: "Delete complete"
+                color: Theme.textPrimary
+                font.pixelSize: 18
+                font.family: Theme.fontDisplay
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: Theme.textSecondary
+                font.pixelSize: 13
+                font.family: Theme.fontBody
+                text: deleteResultText
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "Back to library"
+                    onClicked: {
+                        deleteResultDialog.close()
+                        if (root.stackView) {
+                            root.stackView.pop()
+                        }
+                    }
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
                     }
                 }
             }
@@ -1027,6 +1549,34 @@ Item {
                 }
             }
         }
+        function onMediaItemDeleted(deletedId, result) {
+            if (deletedId !== mediaId) {
+                return
+            }
+            deleteBusy = false
+            deleteDialog.close()
+            deleteResultText = result && result.message ? result.message : "Deleted."
+            deleteResultDialog.open()
+        }
+        function onEpisodeDeleted(episodeId, result) {
+            episodeActionBusyId = ""
+            episodeDeleteDialog.close()
+            pendingEpisode = null
+            episodeStatusText = result && result.message ? result.message : "Episode deleted."
+            refreshEpisodeState()
+        }
+        function onEpisodeRestored(episodeId, result) {
+            episodeActionBusyId = ""
+            episodeStatusText = result && result.message ? result.message : "Episode restored."
+            refreshEpisodeState()
+        }
+        function onBlockedEpisodesRestored(itemId, result) {
+            if (itemId !== mediaId) {
+                return
+            }
+            blockedEpisodesStatusText = result && result.message ? result.message : "Blocked episodes restored."
+            refreshEpisodeState()
+        }
         function onSeasonsReceived(seriesId, items) {
             if (seriesId !== mediaId) {
                 return
@@ -1060,6 +1610,20 @@ Item {
             }
         }
         function onRequestFailed(endpoint, error) {
+            if (endpoint === "/api/v1/library/items/" + mediaId && deleteBusy) {
+                deleteBusy = false
+                deleteStatusText = "Delete failed: " + error
+                return
+            }
+            if (endpoint.indexOf("/api/v1/library/episodes/") === 0) {
+                episodeActionBusyId = ""
+                episodeStatusText = "Episode action failed: " + error
+                return
+            }
+            if (endpoint === "/api/v1/library/items/" + mediaId + "/restore-blocked-episodes") {
+                blockedEpisodesStatusText = "Restore failed: " + error
+                return
+            }
             if (endpoint.indexOf("/api/v1/library/items") === 0) {
                 statusText = "Request failed: " + error
             } else if (endpoint.indexOf("/api/v1/library/series") === 0 || endpoint.indexOf("/api/v1/library/seasons") === 0) {

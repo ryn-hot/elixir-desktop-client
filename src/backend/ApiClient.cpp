@@ -508,6 +508,91 @@ void ApiClient::fetchMediaDetails(const QString &mediaItemId) {
                 });
 }
 
+void ApiClient::deleteLibraryItem(const QString &mediaItemId, bool stopTracking) {
+    const QString trimmed = mediaItemId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/library/items/:id", "Media item id is required.");
+        return;
+    }
+    QJsonObject body{
+        {"stopTracking", stopTracking}
+    };
+    sendRequest(
+        "DELETE",
+        QString("/api/v1/library/items/%1").arg(trimmed),
+        body,
+        [this, trimmed](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/library/items/:id", "Delete response was not an object.");
+                return;
+            }
+            const QVariantMap result = doc.object().toVariantMap();
+            emit mediaItemDeleted(trimmed, result);
+            fetchLibrary();
+        });
+}
+
+void ApiClient::deleteEpisode(const QString &episodeId, bool blockInElixir) {
+    const QString trimmed = episodeId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/library/episodes/:id", "Episode id is required.");
+        return;
+    }
+    QJsonObject body{{"blockInElixir", blockInElixir}};
+    sendRequest(
+        "DELETE",
+        QString("/api/v1/library/episodes/%1").arg(trimmed),
+        body,
+        [this, trimmed](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/library/episodes/:id", "Delete response was not an object.");
+                return;
+            }
+            const QVariantMap result = doc.object().toVariantMap();
+            emit episodeDeleted(trimmed, result);
+        });
+}
+
+void ApiClient::restoreEpisode(const QString &episodeId) {
+    const QString trimmed = episodeId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/library/episodes/:id/restore", "Episode id is required.");
+        return;
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/library/episodes/%1/restore").arg(trimmed),
+        QJsonObject(),
+        [this, trimmed](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/library/episodes/:id/restore", "Restore response was not an object.");
+                return;
+            }
+            const QVariantMap result = doc.object().toVariantMap();
+            emit episodeRestored(trimmed, result);
+        });
+}
+
+void ApiClient::restoreBlockedEpisodes(const QString &mediaItemId) {
+    const QString trimmed = mediaItemId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/library/items/:id/restore-blocked-episodes", "Media item id is required.");
+        return;
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/library/items/%1/restore-blocked-episodes").arg(trimmed),
+        QJsonObject(),
+        [this, trimmed](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/library/items/:id/restore-blocked-episodes", "Restore response was not an object.");
+                return;
+            }
+            const QVariantMap result = doc.object().toVariantMap();
+            emit blockedEpisodesRestored(trimmed, result);
+        });
+}
+
 void ApiClient::fetchSeasons(const QString &seriesId) {
     if (seriesId.trimmed().isEmpty()) {
         return;

@@ -130,6 +130,10 @@ public:
     Q_INVOKABLE void completePasswordReset(const QString &token, const QString &newPassword);
     Q_INVOKABLE void fetchLibrary();
     Q_INVOKABLE void fetchMediaDetails(const QString &mediaItemId);
+    Q_INVOKABLE void deleteLibraryItem(const QString &mediaItemId, bool stopTracking = false);
+    Q_INVOKABLE void deleteEpisode(const QString &episodeId, bool blockInElixir = false);
+    Q_INVOKABLE void restoreEpisode(const QString &episodeId);
+    Q_INVOKABLE void restoreBlockedEpisodes(const QString &mediaItemId);
     Q_INVOKABLE void fetchSeasons(const QString &seriesId);
     Q_INVOKABLE void fetchSeasonDetail(const QString &seasonId);
     Q_INVOKABLE void fetchEpisodes(const QString &seasonId);
@@ -241,6 +245,10 @@ signals:
     void passwordResetFailed(const QString &error);
     void libraryReceived(const QVariantList &items);
     void mediaDetailsReceived(const QVariantMap &details);
+    void mediaItemDeleted(const QString &mediaItemId, const QVariantMap &result);
+    void episodeDeleted(const QString &episodeId, const QVariantMap &result);
+    void episodeRestored(const QString &episodeId, const QVariantMap &result);
+    void blockedEpisodesRestored(const QString &mediaItemId, const QVariantMap &result);
     void seasonsReceived(const QString &seriesId, const QVariantList &seasons);
     void seasonDetailReceived(const QString &seasonId, const QVariantMap &detail);
     void episodesReceived(const QString &seasonId, const QVariantList &episodes);
