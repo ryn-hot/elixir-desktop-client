@@ -303,8 +303,9 @@ Item {
             var installed = installedExtension(extensionId)
             if (!installed) {
                 var available = marketplaceEntry(extensionId)
-                if (available && available.download_url) {
-                    apiClient.installExtension(String(available.download_url))
+                var source = marketplaceSource(available)
+                if (source.downloadUrl !== "" || source.packagePath !== "") {
+                    apiClient.installExtensionSource(source.downloadUrl, source.packagePath)
                     missing.push(extensionId)
                     continue
                 }
@@ -329,11 +330,12 @@ Item {
         pendingBlueprintDependencies = missing
     }
 
-    function startOneClickBlueprintInstall(blueprintId, downloadUrl, paramsJson) {
+    function startOneClickBlueprintInstall(blueprintId, downloadUrl, packagePath, paramsJson) {
         var targetId = String(blueprintId || "").trim()
         var sourceUrl = String(downloadUrl || "").trim()
-        if (targetId === "" || sourceUrl === "") {
-            actionToast.show("This stack is missing its package URL.")
+        var sourcePath = String(packagePath || "").trim()
+        if (targetId === "" || (sourceUrl === "" && sourcePath === "")) {
+            actionToast.show("This stack is missing its install source.")
             return
         }
 
@@ -344,7 +346,7 @@ Item {
         oneClickBlueprintConfirmSent = false
 
         if (!isInstalled(targetId)) {
-            apiClient.installExtension(sourceUrl)
+            apiClient.installExtensionSource(sourceUrl, sourcePath)
             actionToast.show("Installing " + targetId + "...")
             return
         }
@@ -453,6 +455,13 @@ Item {
             }
         }
         return null
+    }
+
+    function marketplaceSource(entry) {
+        return {
+            downloadUrl: String(entry && (entry.download_url || entry.downloadUrl) || "").trim(),
+            packagePath: String(entry && (entry.package_path || entry.packagePath) || "").trim()
+        }
     }
 
     function marketplaceFilterActive() {
@@ -636,6 +645,53 @@ Item {
         return !!present[String(key || "")]
     }
 
+    function startOptionalAddonActivation(addon) {
+        if (!addon) {
+            return
+        }
+        var extensionId = String(addon.extensionId || "")
+        if (extensionId === "") {
+            return
+        }
+        var secretScopeInstanceId = String(addon.secretScopeInstanceId || "")
+        var secretKeys = addon.secretKeys || []
+        if (String(addon.action || "") === "open") {
+            root.openControl(extensionId)
+            return
+        }
+
+        pendingOptionalAddonId = extensionId
+        pendingOptionalAddonTargetInstanceId = secretScopeInstanceId
+        pendingOptionalAddonSecretKeys = secretKeys
+
+        var installed = installedExtension(extensionId)
+        if (installed) {
+            if (installed.enabled === false) {
+                apiClient.enableExtension(extensionId)
+                actionToast.show("Activating " + String(addon.title || extensionId) + "...")
+                return
+            }
+            apiClient.reconcileNow()
+            actionToast.show("Refreshing " + String(addon.title || extensionId) + "...")
+            pendingOptionalAddonId = ""
+            pendingOptionalAddonTargetInstanceId = ""
+            pendingOptionalAddonSecretKeys = []
+            return
+        }
+
+        var available = marketplaceEntry(extensionId)
+        var source = marketplaceSource(available)
+        if (source.downloadUrl === "" && source.packagePath === "") {
+            actionToast.show("This add-on is not available in the marketplace right now.")
+            pendingOptionalAddonId = ""
+            pendingOptionalAddonTargetInstanceId = ""
+            pendingOptionalAddonSecretKeys = []
+            return
+        }
+        apiClient.installExtensionSource(source.downloadUrl, source.packagePath)
+        actionToast.show("Activating " + String(addon.title || extensionId) + "...")
+    }
+
     function activateOptionalAddon(addon) {
         if (!addon) {
             return
@@ -661,11 +717,25 @@ Item {
                 return
             }
         }
-        if (String(addon.action || "") === "open") {
-            root.openControl(extensionId)
+        startOptionalAddonActivation(addon)
+    }
+
+    function submitOptionalAddonPrompt(addon) {
+        if (!addon) {
             return
         }
-
+        var secretKeys = addon.secretKeys || []
+        var secretScopeInstanceId = String(addon.secretScopeInstanceId || "")
+        for (var i = 0; i < secretKeys.length; ++i) {
+            var key = String(secretKeys[i] || "")
+            if (key === "") {
+                continue
+            }
+            if (String(activeOptionalAddonValues[key] || "").trim() === "") {
+                actionToast.show("Enter " + addonFieldLabel((addon.requiredFields || [])[i] || key) + ".")
+                return
+            }
+        }
         if (secretScopeInstanceId !== "" && secretKeys.length > 0) {
             for (var idx = 0; idx < secretKeys.length; ++idx) {
                 var createKey = String(secretKeys[idx] || "")
@@ -678,57 +748,8 @@ Item {
                 }
             }
         }
-
         clearOptionalAddonPrompt()
-
-        pendingOptionalAddonId = extensionId
-        pendingOptionalAddonTargetInstanceId = secretScopeInstanceId
-        pendingOptionalAddonSecretKeys = secretKeys
-
-        var installed = installedExtension(extensionId)
-        if (installed) {
-            if (installed.enabled === false) {
-                apiClient.enableExtension(extensionId)
-                actionToast.show("Activating " + String(addon.title || extensionId) + "...")
-                return
-            }
-            apiClient.reconcileNow()
-            actionToast.show("Refreshing " + String(addon.title || extensionId) + "...")
-            pendingOptionalAddonId = ""
-            pendingOptionalAddonTargetInstanceId = ""
-            pendingOptionalAddonSecretKeys = []
-            return
-        }
-
-        var available = marketplaceEntry(extensionId)
-        var downloadUrl = available ? String(available.download_url || available.downloadUrl || "") : ""
-        if (downloadUrl === "") {
-            actionToast.show("This add-on is not available in the marketplace right now.")
-            pendingOptionalAddonId = ""
-            pendingOptionalAddonTargetInstanceId = ""
-            pendingOptionalAddonSecretKeys = []
-            return
-        }
-        apiClient.installExtension(downloadUrl)
-        actionToast.show("Activating " + String(addon.title || extensionId) + "...")
-    }
-
-    function submitOptionalAddonPrompt(addon) {
-        if (!addon) {
-            return
-        }
-        var secretKeys = addon.secretKeys || []
-        for (var i = 0; i < secretKeys.length; ++i) {
-            var key = String(secretKeys[i] || "")
-            if (key === "") {
-                continue
-            }
-            if (String(activeOptionalAddonValues[key] || "").trim() === "") {
-                actionToast.show("Enter " + addonFieldLabel((addon.requiredFields || [])[i] || key) + ".")
-                return
-            }
-        }
-        activateOptionalAddon(addon)
+        startOptionalAddonActivation(addon)
     }
 
     function checkPendingOptionalAddonActivation() {
@@ -898,16 +919,16 @@ Item {
             return
         }
         var extensionId = String(entry.id || "")
-        var downloadUrl = String(entry.download_url || entry.downloadUrl || "")
-        if (downloadUrl === "") {
-            actionToast.show("This extension does not have a download URL.")
+        var source = marketplaceSource(entry)
+        if (source.downloadUrl === "" && source.packagePath === "") {
+            actionToast.show("This extension does not have an install source.")
             return
         }
         if (isBlueprintId(extensionId)) {
-            startOneClickBlueprintInstall(extensionId, downloadUrl, "")
+            startOneClickBlueprintInstall(extensionId, source.downloadUrl, source.packagePath, "")
             return
         }
-        apiClient.installExtension(downloadUrl)
+        apiClient.installExtensionSource(source.downloadUrl, source.packagePath)
         actionToast.show("Installing " + String(entry.name || extensionId) + "...")
     }
 
@@ -945,6 +966,12 @@ Item {
         function onRequestFailed(endpoint, error) {
             if (endpoint === "/api/v1/extensions/runtime/reset") {
                 runtimeResetInFlight = false
+            }
+            if ((endpoint === "/api/v1/extensions/install" || endpoint === "/api/v1/extensions/secrets") &&
+                    pendingOptionalAddonId !== "") {
+                pendingOptionalAddonId = ""
+                pendingOptionalAddonTargetInstanceId = ""
+                pendingOptionalAddonSecretKeys = []
             }
             if (endpoint.indexOf("/api/v1/extensions/") === 0) {
                 actionToast.show(error)
@@ -2041,7 +2068,8 @@ Item {
                                             text: root.isBlueprintId(modelData.id) ? "Install stack" : "Install"
                                             enabled: apiClient.authToken !== "" &&
                                                      !root.isInstalled(modelData.id) &&
-                                                     String(modelData.download_url || modelData.downloadUrl || "") !== ""
+                                                     (String(modelData.download_url || modelData.downloadUrl || "") !== "" ||
+                                                      String(modelData.package_path || modelData.packagePath || "") !== "")
                                             onClicked: root.installMarketplaceEntry(modelData)
                                             background: Rectangle {
                                                 radius: Theme.radiusSmall

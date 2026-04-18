@@ -479,11 +479,18 @@ Item {
         return best
     }
 
+    function acquisitionPhaseCode(acquisition) {
+        if (!acquisition) {
+            return ""
+        }
+        return String(acquisition.phase || acquisition.stage || "")
+    }
+
     function acquisitionStageColor(stage) {
         if (stage === "needs_attention" || stage === "failed") {
             return Theme.accentDanger
         }
-        if (stage === "ready") {
+        if (stage === "completed" || stage === "ready") {
             return Theme.accentSuccess
         }
         return Theme.accent
@@ -493,7 +500,7 @@ Item {
         if (stage === "needs_attention" || stage === "failed") {
             return Theme.accentDangerSoft
         }
-        if (stage === "ready") {
+        if (stage === "completed" || stage === "ready") {
             return Theme.accentSuccessSoft
         }
         return Theme.accentSoft
@@ -1149,8 +1156,8 @@ Item {
                             Rectangle {
                                 Layout.fillWidth: true
                                 radius: Theme.radiusSmall
-                                color: root.acquisitionStageFill(resultRow.acquisition ? String(resultRow.acquisition.stage || "") : "")
-                                border.color: root.acquisitionStageColor(resultRow.acquisition ? String(resultRow.acquisition.stage || "") : "")
+                                color: root.acquisitionStageFill(root.acquisitionPhaseCode(resultRow.acquisition))
+                                border.color: root.acquisitionStageColor(root.acquisitionPhaseCode(resultRow.acquisition))
                                 visible: resultRow.acquisition !== null
                                 implicitHeight: acquisitionColumn.implicitHeight + 8
 
@@ -1168,7 +1175,7 @@ Item {
 
                                         Label {
                                             text: resultRow.acquisition
-                                                  ? String(resultRow.acquisition.stageLabel || resultRow.acquisition.stage || "")
+                                                  ? String(resultRow.acquisition.phaseLabel || resultRow.acquisition.stageLabel || resultRow.acquisition.phase || resultRow.acquisition.stage || "")
                                                   : ""
                                             color: Theme.textPrimary
                                             font.pixelSize: 10
@@ -1193,7 +1200,9 @@ Item {
 
                                     Label {
                                         Layout.fillWidth: true
-                                        text: resultRow.acquisition ? String(resultRow.acquisition.description || "") : ""
+                                        text: resultRow.acquisition
+                                              ? String(resultRow.acquisition.headline || resultRow.acquisition.detail || resultRow.acquisition.description || "")
+                                              : ""
                                         color: Theme.textSecondary
                                         font.pixelSize: 10
                                         font.family: Theme.fontBody

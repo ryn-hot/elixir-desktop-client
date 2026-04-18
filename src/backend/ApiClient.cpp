@@ -796,12 +796,23 @@ void ApiClient::refreshExtensionsCatalog() {
 }
 
 void ApiClient::installExtension(const QString &downloadUrl) {
-    const QString trimmed = downloadUrl.trimmed();
-    if (trimmed.isEmpty()) {
-        emit requestFailed("/api/v1/extensions/install", "Download URL is required.");
+    installExtensionSource(downloadUrl, QString());
+}
+
+void ApiClient::installExtensionSource(const QString &downloadUrl, const QString &packagePath) {
+    const QString trimmedUrl = downloadUrl.trimmed();
+    const QString trimmedPath = packagePath.trimmed();
+    if (trimmedUrl.isEmpty() && trimmedPath.isEmpty()) {
+        emit requestFailed("/api/v1/extensions/install", "Download URL or package path is required.");
         return;
     }
-    QJsonObject body{{"downloadUrl", trimmed}};
+    QJsonObject body;
+    if (!trimmedUrl.isEmpty()) {
+        body.insert("downloadUrl", trimmedUrl);
+    }
+    if (!trimmedPath.isEmpty()) {
+        body.insert("packagePath", trimmedPath);
+    }
     sendRequest(
         "POST",
         "/api/v1/extensions/install",
@@ -1828,6 +1839,24 @@ void ApiClient::fetchMediaAcquisition(int limit) {
                 return;
             }
             updateMediaAcquisitionState(doc.object());
+        });
+}
+
+void ApiClient::findAnotherRelease(const QString &intentId) {
+    const QString trimmedIntentId = intentId.trimmed();
+    if (trimmedIntentId.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/find/acquisition/:intent_id/find-another-release",
+            "Intent id is required.");
+        return;
+    }
+
+    sendRequest(
+        "POST",
+        QString("/api/v1/find/acquisition/%1/find-another-release").arg(trimmedIntentId),
+        QJsonObject(),
+        [this](const QJsonDocument &) {
+            fetchMediaAcquisition();
         });
 }
 

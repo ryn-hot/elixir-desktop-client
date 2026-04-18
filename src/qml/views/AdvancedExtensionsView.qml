@@ -144,14 +144,15 @@ Item {
         oneClickBlueprintConfirmSent = false
     }
 
-    function startOneClickBlueprintInstall(blueprintId, downloadUrl, paramsJson) {
+    function startOneClickBlueprintInstall(blueprintId, downloadUrl, packagePath, paramsJson) {
         var targetId = String(blueprintId || "").trim()
         if (targetId === "") {
             return
         }
         var sourceUrl = String(downloadUrl || "").trim()
-        if (sourceUrl === "") {
-            actionToast.show("Cannot install " + targetId + ": missing package URL.")
+        var sourcePath = String(packagePath || "").trim()
+        if (sourceUrl === "" && sourcePath === "") {
+            actionToast.show("Cannot install " + targetId + ": missing install source.")
             return
         }
         oneClickBlueprintActive = true
@@ -161,7 +162,7 @@ Item {
 
         if (!isInstalled(targetId)) {
             oneClickBlueprintStage = "installing_blueprint"
-            apiClient.installExtension(sourceUrl)
+            apiClient.installExtensionSource(sourceUrl, sourcePath)
             actionToast.show("Installing " + targetId + "...")
             return
         }
@@ -274,11 +275,11 @@ Item {
             var installed = installedExtension(extensionId)
             if (!installed) {
                 var available = availableExtension(extensionId)
-                if (!available || available.download_url === undefined) {
+                if (!available || ((available.download_url === undefined || String(available.download_url).trim() === "") && (available.package_path === undefined || String(available.package_path).trim() === ""))) {
                     missingRegistry.push(extensionId)
                     continue
                 }
-                apiClient.installExtension(available.download_url)
+                apiClient.installExtensionSource(String(available.download_url || ""), String(available.package_path || ""))
                 actions += 1
                 continue
             }
@@ -3349,16 +3350,19 @@ Item {
                                 Button {
                                     property bool alreadyInstalled: root.isInstalled(modelData.id)
                                     text: alreadyInstalled ? "Installed" : "Install"
-                                    enabled: apiClient.authToken !== "" && !alreadyInstalled && modelData.download_url !== undefined
+                                    enabled: apiClient.authToken !== "" && !alreadyInstalled &&
+                                             ((modelData.download_url !== undefined && String(modelData.download_url).trim() !== "") ||
+                                              (modelData.package_path !== undefined && String(modelData.package_path).trim() !== ""))
                                     onClicked: {
                                         if (root.isBlueprintId(modelData.id)) {
                                             root.startOneClickBlueprintInstall(
                                                 modelData.id,
                                                 modelData.download_url,
+                                                modelData.package_path,
                                                 "")
                                             return
                                         }
-                                        apiClient.installExtension(modelData.download_url)
+                                        apiClient.installExtensionSource(String(modelData.download_url || ""), String(modelData.package_path || ""))
                                     }
                                     background: Rectangle {
                                         radius: Theme.radiusSmall

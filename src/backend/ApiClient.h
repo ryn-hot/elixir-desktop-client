@@ -148,6 +148,7 @@ public:
     Q_INVOKABLE void fetchExtensionsCatalog();
     Q_INVOKABLE void refreshExtensionsCatalog();
     Q_INVOKABLE void installExtension(const QString &downloadUrl);
+    Q_INVOKABLE void installExtensionSource(const QString &downloadUrl, const QString &packagePath = QString());
     Q_INVOKABLE void enableExtension(const QString &extensionId);
     Q_INVOKABLE void disableExtension(const QString &extensionId);
     Q_INVOKABLE void uninstallExtension(const QString &extensionId);
@@ -199,6 +200,7 @@ public:
         const QString &seriesProviderId,
         const QString &animeProviderId);
     Q_INVOKABLE void fetchMediaAcquisition(int limit = 12);
+    Q_INVOKABLE void findAnotherRelease(const QString &intentId);
 
 signals:
     void baseUrlChanged();

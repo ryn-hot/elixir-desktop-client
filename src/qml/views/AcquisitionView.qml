@@ -10,28 +10,38 @@ Item {
     objectName: "acquisitionView"
     property StackView stackView: null
 
-    function stageBorderColor(stage) {
-        if (stage === "needs_attention" || stage === "failed") {
+    function acquisitionPhase(item) {
+        return String((item && (item.phase || item.stage)) || "")
+    }
+
+    function phaseBorderColor(phase) {
+        if (phase === "needs_attention" || phase === "failed") {
             return Theme.accentDanger
         }
-        if (stage === "downloading" || stage === "post_processing" || stage === "importing") {
+        if (phase === "downloading" || phase === "post_processing" || phase === "importing") {
             return Theme.accent
         }
-        if (stage === "ready") {
+        if (phase === "completed" || phase === "ready") {
             return Theme.accentSuccess
+        }
+        if (phase === "accepted_by_manager" || phase === "queued_in_downloader") {
+            return Theme.accent
         }
         return Theme.border
     }
 
-    function stageFillColor(stage) {
-        if (stage === "needs_attention" || stage === "failed") {
+    function phaseFillColor(phase) {
+        if (phase === "needs_attention" || phase === "failed") {
             return Theme.accentDangerSoft
         }
-        if (stage === "downloading" || stage === "post_processing" || stage === "importing") {
+        if (phase === "downloading" || phase === "post_processing" || phase === "importing") {
             return Theme.accentSoft
         }
-        if (stage === "ready") {
+        if (phase === "completed" || phase === "ready") {
             return Theme.accentSuccessSoft
+        }
+        if (phase === "accepted_by_manager" || phase === "queued_in_downloader") {
+            return Theme.accentSoft
         }
         return Theme.backgroundCardRaised
     }
@@ -48,6 +58,22 @@ Item {
             unit += 1
         }
         return amount.toFixed(amount >= 100 || unit === 0 ? 0 : 1) + " " + units[unit]
+    }
+
+    function formatEtaSeconds(value) {
+        if (value === undefined || value === null) {
+            return ""
+        }
+        var seconds = Math.max(0, Number(value))
+        if (!isFinite(seconds) || seconds <= 0) {
+            return ""
+        }
+        var hours = Math.floor(seconds / 3600)
+        var minutes = Math.floor((seconds % 3600) / 60)
+        if (hours > 0) {
+            return hours + "h " + minutes + "m"
+        }
+        return Math.max(1, minutes) + "m"
     }
 
     function progressVisible(item) {
@@ -186,12 +212,14 @@ Item {
                     model: apiClient.mediaAcquisitionItems || []
 
                     delegate: Rectangle {
+                        id: acquisitionCard
                         required property var modelData
+                        property var acquisitionItem: modelData
 
                         Layout.fillWidth: true
                         radius: Theme.radiusLarge
                         color: Theme.backgroundCard
-                        border.color: root.stageBorderColor(String(modelData.stage || ""))
+                        border.color: root.phaseBorderColor(root.acquisitionPhase(modelData))
                         implicitHeight: itemContent.implicitHeight + Theme.spacingLarge * 2
 
                         ColumnLayout {
@@ -219,7 +247,17 @@ Item {
 
                                     Label {
                                         Layout.fillWidth: true
-                                        text: String(modelData.description || "")
+                                        text: String(modelData.headline || modelData.description || "")
+                                        color: Theme.textPrimary
+                                        font.pixelSize: 13
+                                        font.family: Theme.fontBody
+                                        wrapMode: Text.WordWrap
+                                        visible: text !== ""
+                                    }
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: String(modelData.detail || "")
                                         color: Theme.textSecondary
                                         font.pixelSize: 12
                                         font.family: Theme.fontBody
@@ -230,18 +268,55 @@ Item {
 
                                 Rectangle {
                                     radius: Theme.radiusSmall
-                                    color: root.stageFillColor(String(modelData.stage || ""))
-                                    border.color: root.stageBorderColor(String(modelData.stage || ""))
+                                    color: root.phaseFillColor(root.acquisitionPhase(modelData))
+                                    border.color: root.phaseBorderColor(root.acquisitionPhase(modelData))
                                     implicitWidth: stageLabel.implicitWidth + 12
                                     implicitHeight: stageLabel.implicitHeight + 4
 
                                     Label {
                                         id: stageLabel
                                         anchors.centerIn: parent
-                                        text: String(modelData.stageLabel || modelData.stage || "")
+                                        text: String(modelData.phaseLabel || modelData.stageLabel || modelData.phase || modelData.stage || "")
                                         color: Theme.textPrimary
                                         font.pixelSize: 10
                                         font.family: Theme.fontBody
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                radius: Theme.radiusSmall
+                                color: Theme.accentDangerSoft
+                                border.color: Theme.accentDanger
+                                visible: modelData.blocker !== undefined
+                                         && modelData.blocker !== null
+                                         && String(modelData.blocker.detail || "") !== ""
+                                implicitHeight: blockerColumn.implicitHeight + 12
+
+                                ColumnLayout {
+                                    id: blockerColumn
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    spacing: 4
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: String((modelData.blocker && (modelData.blocker.title || modelData.blocker.code)) || "")
+                                        color: Theme.textPrimary
+                                        font.pixelSize: 11
+                                        font.family: Theme.fontBody
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: String((modelData.blocker && modelData.blocker.detail) || "")
+                                        color: Theme.textSecondary
+                                        font.pixelSize: 11
+                                        font.family: Theme.fontBody
+                                        wrapMode: Text.WordWrap
+                                        visible: text !== ""
                                     }
                                 }
                             }
@@ -251,28 +326,78 @@ Item {
                                 spacing: Theme.spacingSmall
 
                                 Repeater {
-                                    model: [
-                                        modelData.managerLabel ? { label: "Manager", value: modelData.managerLabel } : null,
-                                        modelData.downloaderLabel ? { label: "Downloader", value: modelData.downloaderLabel } : null,
-                                        formatRate(modelData.downloadRateBps) !== "" ? { label: "Speed", value: formatRate(modelData.downloadRateBps) } : null,
-                                        modelData.eta ? { label: "ETA", value: String(modelData.eta) } : null
-                                    ]
+                                    model: (function() {
+                                        var parts = []
+                                        if (modelData.managerLabel) {
+                                            parts.push({ label: "Manager", value: modelData.managerLabel, tone: "neutral" })
+                                        }
+                                        var evidence = modelData.evidence || []
+                                        for (var i = 0; i < evidence.length; ++i) {
+                                            parts.push(evidence[i])
+                                        }
+                                        var eta = formatEtaSeconds(modelData.etaSeconds)
+                                        if (eta !== "") {
+                                            parts.push({ label: "ETA", value: eta, tone: "neutral" })
+                                        }
+                                        return parts
+                                    })()
                                     delegate: Rectangle {
                                         required property var modelData
-                                        visible: modelData !== null
                                         radius: Theme.radiusSmall
                                         color: Theme.backgroundCardRaised
-                                        border.color: Theme.border
+                                        border.color: modelData.tone === "success"
+                                                      ? Theme.accentSuccess
+                                                      : (modelData.tone === "warning"
+                                                         ? Theme.accent
+                                                         : Theme.border)
                                         implicitHeight: 28
                                         implicitWidth: metricLabel.implicitWidth + 18
 
                                         Label {
                                             id: metricLabel
                                             anchors.centerIn: parent
-                                            text: modelData ? String(modelData.label + ": " + modelData.value) : ""
+                                            text: String(modelData.label + ": " + modelData.value)
                                             color: Theme.textSecondary
                                             font.pixelSize: 11
                                             font.family: Theme.fontBody
+                                        }
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+                                visible: (modelData.actions || []).length > 0
+
+                                Repeater {
+                                    model: modelData.actions || []
+
+                                    delegate: Button {
+                                        required property var modelData
+                                        text: String(modelData.label || "")
+                                        visible: text !== ""
+                                        onClicked: {
+                                            if (String(modelData.id || "") === "find_another_release") {
+                                                apiClient.findAnotherRelease(String(acquisitionCard.acquisitionItem.intentId || ""))
+                                            }
+                                        }
+                                        background: Rectangle {
+                                            radius: Theme.radiusSmall
+                                            color: modelData.kind === "primary"
+                                                   ? Theme.accent
+                                                   : Theme.backgroundCardRaised
+                                            border.color: modelData.kind === "primary"
+                                                          ? Theme.accent
+                                                          : Theme.border
+                                        }
+                                        contentItem: Label {
+                                            text: parent.text
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 11
+                                            font.family: Theme.fontBody
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
                                         }
                                     }
                                 }
