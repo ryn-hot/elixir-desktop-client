@@ -17,26 +17,102 @@ Item {
     property string oneClickBlueprintParams: ""
     property string oneClickBlueprintStage: ""
     property bool oneClickBlueprintConfirmSent: false
-    property bool pendingBlueprintDependencyInstall: false
-    property string pendingBlueprintPlanId: ""
-    property string pendingBlueprintPlanParams: ""
-    property var pendingBlueprintDependencies: []
     property string activeOptionalAddonId: ""
     property var activeOptionalAddonValues: ({})
     property string pendingOptionalAddonId: ""
     property string pendingOptionalAddonTargetInstanceId: ""
     property var pendingOptionalAddonSecretKeys: []
     property bool runtimeResetInFlight: false
+    property string runtimeResetCompletionMessage: ""
+    property int runtimeResetPollAttempts: 0
+    property int runtimeResetMaxPollAttempts: 45
     property string marketplaceKindFilter: ""
     property string marketplaceTargetCapabilityFilter: ""
     property string marketplaceFilterLabel: ""
     property bool focusMarketplace: false
+    property string scopedFixExtensionId: ""
+    property string scopedFixState: ""
+    property string scopedFixMessage: ""
+    property int scopedFixAnimationFrame: 0
+
+    function scopedFixMessageSummary(message) {
+        var text = String(message || "").trim()
+        if (text === "") {
+            return ""
+        }
+        var newlineIndex = text.indexOf("\n")
+        if (newlineIndex >= 0) {
+            text = text.slice(0, newlineIndex).trim()
+        }
+        if (text.length > 180) {
+            text = text.slice(0, 177).trim() + "..."
+        }
+        return text
+    }
+
+    function setScopedFixFeedback(extensionId, state, message) {
+        scopedFixExtensionId = String(extensionId || "")
+        scopedFixState = String(state || "")
+        scopedFixMessage = scopedFixMessageSummary(message)
+        scopedFixAnimationFrame = 0
+        if (scopedFixState === "running" || scopedFixState === "resetting_runtime") {
+            scopedFixAnimationTimer.restart()
+            scopedFixFeedbackTimer.stop()
+        } else if (scopedFixState === "success" &&
+                   scopedFixExtensionId !== "" &&
+                   scopedFixState !== "") {
+            scopedFixAnimationTimer.stop()
+            scopedFixFeedbackTimer.restart()
+        } else {
+            scopedFixAnimationTimer.stop()
+            scopedFixFeedbackTimer.stop()
+        }
+    }
+
+    function clearScopedFixFeedback() {
+        scopedFixAnimationTimer.stop()
+        scopedFixFeedbackTimer.stop()
+        scopedFixExtensionId = ""
+        scopedFixState = ""
+        scopedFixMessage = ""
+        scopedFixAnimationFrame = 0
+    }
 
     function scheduleStatusSummaryRefresh() {
         if (apiClient.authToken === "") {
             return
         }
         statusSummaryRefreshTimer.restart()
+    }
+
+    function finishRuntimeReset(state, message) {
+        runtimeResetInFlight = false
+        runtimeResetPollAttempts = 0
+        runtimeResetCompletionMessage = ""
+        runtimeResetPollTimer.stop()
+        var summary = scopedFixMessageSummary(message)
+        if (scopedFixExtensionId !== "") {
+            setScopedFixFeedback(scopedFixExtensionId, state, summary)
+        }
+        if (summary !== "") {
+            actionToast.show(summary)
+        }
+        apiClient.fetchExtensionStatusSummary()
+        apiClient.fetchExtensionInstances()
+    }
+
+    function statusItemForExtension(extensionId) {
+        var needle = String(extensionId || "")
+        if (needle === "") {
+            return null
+        }
+        for (var i = 0; i < apiClient.extensionsStatusItems.length; ++i) {
+            var candidate = apiClient.extensionsStatusItems[i]
+            if (root.extensionIdFor(candidate) === needle) {
+                return candidate
+            }
+        }
+        return null
     }
 
     function extensionIdFor(entry) {
@@ -209,57 +285,6 @@ Item {
         return value.indexOf(".blueprints.") >= 0 || value.indexOf("blueprint.") === 0
     }
 
-    function blueprintConnectorsFor(blueprintId) {
-        var entry = installedExtension(blueprintId)
-        if (!entry) {
-            return []
-        }
-        var manifest = manifestFor(entry)
-        if (!manifest || manifest.connectors === undefined || manifest.connectors === null) {
-            return []
-        }
-        return manifest.connectors
-    }
-
-    function blueprintPreferredModulesFor(blueprintId) {
-        var entry = installedExtension(blueprintId)
-        if (!entry) {
-            return []
-        }
-        var manifest = manifestFor(entry)
-        if (!manifest || !manifest.preferences || !manifest.preferences.providers) {
-            return []
-        }
-        var providers = manifest.preferences.providers
-        var modules = []
-        var seen = {}
-        for (var key in providers) {
-            if (!providers.hasOwnProperty(key)) {
-                continue
-            }
-            var pref = providers[key]
-            if (!pref || pref.prefer === undefined || pref.prefer === null) {
-                continue
-            }
-            for (var i = 0; i < pref.prefer.length; ++i) {
-                var extensionId = String(pref.prefer[i] || "")
-                if (extensionId === "" || extensionId === blueprintId || seen[extensionId]) {
-                    continue
-                }
-                seen[extensionId] = true
-                modules.push(extensionId)
-            }
-        }
-        return modules
-    }
-
-    function clearPendingBlueprintPlan() {
-        pendingBlueprintDependencyInstall = false
-        pendingBlueprintPlanId = ""
-        pendingBlueprintPlanParams = ""
-        pendingBlueprintDependencies = []
-    }
-
     function clearOneClickBlueprintFlow() {
         oneClickBlueprintActive = false
         oneClickBlueprintId = ""
@@ -274,60 +299,7 @@ Item {
     }
 
     function ensureBlueprintDependencies(blueprintId, paramsJson) {
-        if (blueprintId === "") {
-            apiClient.applyBlueprintPlan(blueprintId, paramsJson)
-            return
-        }
-        var connectors = blueprintConnectorsFor(blueprintId)
-        var modules = blueprintPreferredModulesFor(blueprintId)
-        var required = []
-        var seen = {}
-        for (var i = 0; i < connectors.length; ++i) {
-            var connectorId = String(connectors[i] || "")
-            if (connectorId !== "" && !seen[connectorId]) {
-                seen[connectorId] = true
-                required.push(connectorId)
-            }
-        }
-        for (var j = 0; j < modules.length; ++j) {
-            var moduleId = String(modules[j] || "")
-            if (moduleId !== "" && !seen[moduleId]) {
-                seen[moduleId] = true
-                required.push(moduleId)
-            }
-        }
-
-        var missing = []
-        for (var k = 0; k < required.length; ++k) {
-            var extensionId = required[k]
-            var installed = installedExtension(extensionId)
-            if (!installed) {
-                var available = marketplaceEntry(extensionId)
-                var source = marketplaceSource(available)
-                if (source.downloadUrl !== "" || source.packagePath !== "") {
-                    apiClient.installExtensionSource(source.downloadUrl, source.packagePath)
-                    missing.push(extensionId)
-                    continue
-                }
-                actionToast.show("Missing required extension " + extensionId + ". Open Advanced to finish setup.")
-                clearOneClickBlueprintFlow()
-                return
-            }
-            if (installed.enabled === false) {
-                apiClient.enableExtension(extensionId)
-                missing.push(extensionId)
-            }
-        }
-
-        if (missing.length === 0) {
-            apiClient.applyBlueprintPlan(blueprintId, paramsJson)
-            return
-        }
-
-        pendingBlueprintDependencyInstall = true
-        pendingBlueprintPlanId = blueprintId
-        pendingBlueprintPlanParams = paramsJson
-        pendingBlueprintDependencies = missing
+        apiClient.applyBlueprintPlan(blueprintId, paramsJson)
     }
 
     function startOneClickBlueprintInstall(blueprintId, downloadUrl, packagePath, paramsJson) {
@@ -379,22 +351,6 @@ Item {
         }
     }
 
-    function checkPendingBlueprintPlan() {
-        if (!pendingBlueprintDependencyInstall || pendingBlueprintPlanId === "") {
-            return
-        }
-        for (var i = 0; i < pendingBlueprintDependencies.length; ++i) {
-            var installed = installedExtension(pendingBlueprintDependencies[i])
-            if (!installed || installed.enabled !== true) {
-                return
-            }
-        }
-        var blueprintId = pendingBlueprintPlanId
-        var paramsJson = pendingBlueprintPlanParams
-        clearPendingBlueprintPlan()
-        apiClient.applyBlueprintPlan(blueprintId, paramsJson)
-    }
-
     function maybeAutoConfirmOneClickBlueprintPlan() {
         if (!oneClickBlueprintActive || oneClickBlueprintId === "" || apiClient.extensionsPlanId === "") {
             return
@@ -407,7 +363,10 @@ Item {
         if (apiClient.extensionsPlanConflicts.length > 0) {
             oneClickBlueprintStage = "awaiting_user"
             oneClickBlueprintConfirmSent = false
-            actionToast.show("More setup is needed for " + extensionName(installedExtension(oneClickBlueprintId)) + ". Open Advanced to finish.")
+            actionToast.show(blockedStageMessage(
+                plan,
+                "More setup is needed for " + extensionName(installedExtension(oneClickBlueprintId)) + ". Open Advanced to finish."
+            ))
             return
         }
         if (oneClickBlueprintConfirmSent) {
@@ -424,6 +383,47 @@ Item {
         }
         var status = String(apiClient.extensionsRun.status || "")
         return status === "pending" || status === "running"
+    }
+
+    function humanizeStageId(stageId) {
+        var raw = String(stageId || "").trim()
+        if (raw === "") {
+            return ""
+        }
+        return raw.replace(/[_\.]+/g, " ")
+                  .replace(/\b\w/g, function(match) { return match.toUpperCase() })
+    }
+
+    function blockedStageSummary(planOrRun) {
+        if (!planOrRun) {
+            return null
+        }
+        if (planOrRun.blockedStage) {
+            return planOrRun.blockedStage
+        }
+        if (planOrRun.stageSummary && planOrRun.stageSummary.blockedStage) {
+            return planOrRun.stageSummary.blockedStage
+        }
+        return null
+    }
+
+    function blockedStageMessage(planOrRun, fallbackMessage) {
+        var blocked = blockedStageSummary(planOrRun)
+        if (!blocked) {
+            return String(fallbackMessage || "")
+        }
+        var stageLabel = humanizeStageId(blocked.stageId || blocked.stage_id)
+        var detail = String(blocked.detail || "")
+        if (stageLabel !== "" && detail !== "") {
+            return "Blocked at " + stageLabel + ": " + detail
+        }
+        if (stageLabel !== "") {
+            return "Blocked at " + stageLabel + "."
+        }
+        if (detail !== "") {
+            return detail
+        }
+        return String(fallbackMessage || "")
     }
 
     function openAdvanced(extensionId) {
@@ -444,6 +444,130 @@ Item {
             stackView: stackView,
             extensionId: extensionId || ""
         })
+    }
+
+    function canRunScopedFix(card, actionSpec) {
+        if (!card || !card.status) {
+            return false
+        }
+        if (String(actionSpec && actionSpec.action || "") !== "fix") {
+            return false
+        }
+        var extensionId = extensionIdFor(card.entry)
+        return extensionId === "elixir.modules.sonarr" || extensionId === "elixir.modules.radarr"
+    }
+
+    function runScopedFix(card) {
+        if (!card) {
+            return
+        }
+        var extensionId = extensionIdFor(card.entry)
+        if (extensionId === "") {
+            return
+        }
+        setScopedFixFeedback(
+            extensionId,
+            "running",
+            "Recreating runtime and waiting for service health..."
+        )
+        apiClient.invokeExtensionControlAction(extensionId, "repair_connection_issue", {})
+        actionToast.show("Repairing " + extensionName(card.entry) + "...")
+        scheduleStatusSummaryRefresh()
+    }
+
+    function isScopedFixRunning(card) {
+        if (!card) {
+            return false
+        }
+        return (scopedFixState === "running" || scopedFixState === "resetting_runtime") &&
+               scopedFixExtensionId === extensionIdFor(card.entry)
+    }
+
+    function scopedFixNoticeVisible(card) {
+        if (!card) {
+            return false
+        }
+        return scopedFixExtensionId === extensionIdFor(card.entry) &&
+               scopedFixState !== "" &&
+               scopedFixMessage !== ""
+    }
+
+    function scopedFixNoticeColor(cardAccent, card) {
+        if (!scopedFixNoticeVisible(card)) {
+            return Theme.textMuted
+        }
+        if (scopedFixState === "success") {
+            return cardAccent
+        }
+        if (scopedFixState === "error") {
+            return Theme.accentDanger
+        }
+        return Theme.textPrimary
+    }
+
+    function scopedFixCardMessage(card) {
+        if (!scopedFixNoticeVisible(card)) {
+            return ""
+        }
+        if (!isScopedFixRunning(card)) {
+            return scopedFixMessage
+        }
+        var base = scopedFixMessage !== "" ? scopedFixMessage : "Working"
+        var dots = "."
+        if (scopedFixAnimationFrame % 3 === 1) {
+            dots = ".."
+        } else if (scopedFixAnimationFrame % 3 === 2) {
+            dots = "..."
+        }
+        return base + dots
+    }
+
+    function scopedFixCanResetRuntime(card) {
+        if (!card) {
+            return false
+        }
+        return scopedFixState === "error" &&
+               scopedFixExtensionId === extensionIdFor(card.entry)
+    }
+
+    function scopedFixButtonLabel(card, actionSpec) {
+        if (!isScopedFixRunning(card)) {
+            return String(actionSpec && actionSpec.label || "")
+        }
+        if (scopedFixState === "resetting_runtime") {
+            if (scopedFixAnimationFrame % 3 === 1) {
+                return "Resetting runtime.."
+            }
+            if (scopedFixAnimationFrame % 3 === 2) {
+                return "Resetting runtime..."
+            }
+            return "Resetting runtime."
+        }
+        if (scopedFixAnimationFrame % 3 === 1) {
+            return "Repairing.."
+        }
+        if (scopedFixAnimationFrame % 3 === 2) {
+            return "Repairing..."
+        }
+        return "Repairing."
+    }
+
+    function runRuntimeResetFallback(card) {
+        if (!card || runtimeResetInFlight) {
+            return
+        }
+        var extensionId = extensionIdFor(card.entry)
+        runtimeResetInFlight = true
+        runtimeResetCompletionMessage = ""
+        runtimeResetPollAttempts = 0
+        runtimeResetPollTimer.stop()
+        setScopedFixFeedback(
+            extensionId,
+            "resetting_runtime",
+            "Resetting Docker runtime"
+        )
+        apiClient.resetExtensionsRuntime()
+        actionToast.show("Resetting Docker runtime...")
     }
 
     function marketplaceEntry(extensionId) {
@@ -611,6 +735,33 @@ Item {
         return { label: label, action: action }
     }
 
+    function canCreateDefaultInstance(card, actionSpec) {
+        if (!card || !card.status) {
+            return false
+        }
+        if (String(actionSpec && actionSpec.action || "") !== "finish_setup") {
+            return false
+        }
+        if (String(card.status.code || "") !== "missing_instance") {
+            return false
+        }
+        var entry = card.entry || {}
+        return String(entry.kind || "") !== "blueprint"
+    }
+
+    function createDefaultInstance(card) {
+        if (!card) {
+            return
+        }
+        var extensionId = extensionIdFor(card.entry)
+        if (extensionId === "") {
+            return
+        }
+        apiClient.createExtensionInstance(extensionId, "default", "")
+        actionToast.show("Creating default instance for " + extensionName(card.entry) + "...")
+        scheduleStatusSummaryRefresh()
+    }
+
     function addonFieldLabel(field) {
         var key = String(field || "")
         if (key === "api_key") {
@@ -773,6 +924,14 @@ Item {
         pendingOptionalAddonSecretKeys = []
     }
 
+    function autoUpdateVisible(card) {
+        if (!card || !card.autoUpdate) {
+            return false
+        }
+        return String(card.autoUpdate.label || "") !== "" ||
+               String(card.autoUpdate.description || "") !== ""
+    }
+
     function installedCards() {
         var cards = []
         for (var i = 0; i < apiClient.extensionsStatusItems.length; ++i) {
@@ -796,6 +955,14 @@ Item {
                     action: String(item.primaryAction || "open"),
                     actionLabel: String(item.primaryActionLabel || "Open")
                 },
+                autoUpdate: item.autoUpdate ? {
+                    severity: String(item.autoUpdate.severity || "ready"),
+                    code: String(item.autoUpdate.statusCode || ""),
+                    label: String(item.autoUpdate.label || ""),
+                    description: String(item.autoUpdate.description || ""),
+                    releaseVersion: String(item.autoUpdate.releaseVersion || ""),
+                    checkedAt: String(item.autoUpdate.checkedAt || "")
+                } : null,
                 optionalAddons: item.optionalAddons || []
             })
         }
@@ -954,7 +1121,10 @@ Item {
             } else {
                 initialDataLoadScheduled = false
                 runtimeResetInFlight = false
-                clearPendingBlueprintPlan()
+                runtimeResetCompletionMessage = ""
+                runtimeResetPollAttempts = 0
+                runtimeResetPollTimer.stop()
+                clearScopedFixFeedback()
                 clearOneClickBlueprintFlow()
                 clearOptionalAddonPrompt()
                 pendingOptionalAddonId = ""
@@ -966,6 +1136,16 @@ Item {
         function onRequestFailed(endpoint, error) {
             if (endpoint === "/api/v1/extensions/runtime/reset") {
                 runtimeResetInFlight = false
+                runtimeResetCompletionMessage = ""
+                runtimeResetPollAttempts = 0
+                runtimeResetPollTimer.stop()
+                if (scopedFixExtensionId !== "") {
+                    setScopedFixFeedback(
+                        scopedFixExtensionId,
+                        "error",
+                        error || "Docker runtime reset failed."
+                    )
+                }
             }
             if ((endpoint === "/api/v1/extensions/install" || endpoint === "/api/v1/extensions/secrets") &&
                     pendingOptionalAddonId !== "") {
@@ -973,20 +1153,112 @@ Item {
                 pendingOptionalAddonTargetInstanceId = ""
                 pendingOptionalAddonSecretKeys = []
             }
+            if (endpoint.indexOf("/control-surface/actions/repair_connection_issue") >= 0 &&
+                    scopedFixExtensionId !== "") {
+                setScopedFixFeedback(
+                    scopedFixExtensionId,
+                    "error",
+                    error || "Repair failed."
+                )
+            }
             if (endpoint.indexOf("/api/v1/extensions/") === 0) {
                 actionToast.show(error)
             }
         }
 
+        function onExtensionControlActionCompleted(targetExtensionId, actionId, message) {
+            if (actionId !== "repair_connection_issue") {
+                return
+            }
+            setScopedFixFeedback(
+                targetExtensionId,
+                "success",
+                message && message !== "" ? message : "Repair completed."
+            )
+            actionToast.show(message && message !== "" ? message : "Repair completed.")
+            apiClient.fetchExtensionStatusSummary()
+            apiClient.fetchExtensionInstances()
+            scheduleStatusSummaryRefresh()
+        }
+
         function onExtensionsRuntimeResetCompleted(status, message) {
-            runtimeResetInFlight = false
-            actionToast.show(message)
+            var resetStatus = String(status || "")
+            var resetMessage = message && message !== ""
+                    ? message
+                    : "Docker runtime reset completed."
+            if (resetStatus === "reboot_recommended") {
+                finishRuntimeReset("error", resetMessage)
+                return
+            }
+            runtimeResetCompletionMessage = resetMessage
+            runtimeResetPollAttempts = 0
+            if (scopedFixExtensionId !== "") {
+                setScopedFixFeedback(
+                    scopedFixExtensionId,
+                    "resetting_runtime",
+                    resetStatus === "recovering"
+                            ? resetMessage
+                            : "Waiting for Docker runtime health to settle"
+                )
+            }
+            apiClient.fetchExtensionStatusSummary()
+            runtimeResetPollTimer.restart()
+        }
+
+        function onExtensionsStatusSummaryChanged() {
+            if (runtimeResetInFlight) {
+                var runtimeStatus = apiClient.extensionsRuntimeStatus || {}
+                var runtimeState = String(runtimeStatus.state || "")
+                var runtimeDescription = String(runtimeStatus.description || "")
+                if (runtimeState === "reboot_required") {
+                    finishRuntimeReset(
+                        "error",
+                        runtimeDescription !== ""
+                                ? runtimeDescription
+                                : "Docker runtime reset requires a host reboot."
+                    )
+                    return
+                }
+                if (runtimeState === "degraded" || runtimeState === "recovering") {
+                    runtimeResetPollTimer.restart()
+                    return
+                }
+                if (apiClient.extensionsInstalled.length > 0 &&
+                        apiClient.extensionsStatusItems.length === 0) {
+                    runtimeResetPollTimer.restart()
+                    return
+                }
+                var targetItem = statusItemForExtension(scopedFixExtensionId)
+                var targetCode = targetItem
+                        ? String((targetItem.status || {}).code || targetItem.statusCode || targetItem.status_code || "")
+                        : ""
+                if (scopedFixExtensionId !== "" && targetItem && targetCode !== "ready") {
+                    finishRuntimeReset(
+                        "error",
+                        String(targetItem.description || extensionName(targetItem) + " still needs attention after Docker runtime reset.")
+                    )
+                    return
+                }
+                finishRuntimeReset(
+                    "success",
+                    runtimeResetCompletionMessage !== ""
+                            ? runtimeResetCompletionMessage
+                            : "Docker runtime reset completed."
+                )
+                return
+            }
+
+            if (scopedFixExtensionId !== "" && scopedFixState !== "") {
+                var item = statusItemForExtension(scopedFixExtensionId)
+                if (!item || String((item.status || {}).code || item.status_code || item.statusCode || "") === "ready") {
+                    clearScopedFixFeedback()
+                }
+            }
         }
 
         function onExtensionsCatalogChanged() {
             root.scheduleStatusSummaryRefresh()
             maybeAdvanceOneClickBlueprintInstall()
-            checkPendingBlueprintPlan()
             checkPendingOptionalAddonActivation()
             Qt.callLater(root.maybeFocusMarketplace)
         }
@@ -994,7 +1266,6 @@ Item {
         function onExtensionsInstancesChanged() {
             root.scheduleStatusSummaryRefresh()
             maybeAdvanceOneClickBlueprintInstall()
-            checkPendingBlueprintPlan()
             checkPendingOptionalAddonActivation()
         }
 
@@ -1006,7 +1277,6 @@ Item {
         function onExtensionsDesiredBlueprintsChanged() {
             root.scheduleStatusSummaryRefresh()
             maybeAdvanceOneClickBlueprintInstall()
-            checkPendingBlueprintPlan()
         }
 
         function onExtensionsPlanChanged() {
@@ -1026,11 +1296,29 @@ Item {
                 apiClient.fetchInstanceSecrets()
                 apiClient.fetchDesiredBlueprints()
             } else if (status === "failed" || status === "canceled") {
-                actionToast.show("Setup for " + extensionName(installedExtension(oneClickBlueprintId)) + " needs attention. Open Advanced to finish.")
+                actionToast.show(blockedStageMessage(
+                    apiClient.extensionsRun,
+                    "Setup for " + extensionName(installedExtension(oneClickBlueprintId)) + " needs attention. Open Advanced to finish."
+                ))
                 oneClickBlueprintStage = "awaiting_user"
                 oneClickBlueprintConfirmSent = false
             }
         }
+    }
+
+    Timer {
+        id: scopedFixFeedbackTimer
+        interval: 15000
+        repeat: false
+        onTriggered: root.clearScopedFixFeedback()
+    }
+
+    Timer {
+        id: scopedFixAnimationTimer
+        interval: 450
+        repeat: true
+        running: false
+        onTriggered: scopedFixAnimationFrame = (scopedFixAnimationFrame + 1) % 3
     }
 
     Timer {
@@ -1051,6 +1339,27 @@ Item {
         interval: 120
         repeat: false
         onTriggered: apiClient.fetchExtensionStatusSummary()
+    }
+
+    Timer {
+        id: runtimeResetPollTimer
+        interval: 2000
+        repeat: false
+        onTriggered: {
+            if (!runtimeResetInFlight) {
+                return
+            }
+            runtimeResetPollAttempts += 1
+            if (runtimeResetPollAttempts > runtimeResetMaxPollAttempts) {
+                finishRuntimeReset(
+                    "error",
+                    "Docker runtime reset did not stabilize before the timeout."
+                )
+                return
+            }
+            apiClient.fetchExtensionStatusSummary()
+            apiClient.fetchLatestReconcileRun()
+        }
     }
 
     Timer {
@@ -1150,6 +1459,9 @@ Item {
                             enabled: !runtimeResetInFlight && apiClient.authToken !== ""
                             onClicked: {
                                 runtimeResetInFlight = true
+                                runtimeResetCompletionMessage = ""
+                                runtimeResetPollAttempts = 0
+                                runtimeResetPollTimer.stop()
                                 apiClient.resetExtensionsRuntime()
                             }
                             background: Rectangle {
@@ -1377,6 +1689,102 @@ Item {
                                             wrapMode: Text.WordWrap
                                         }
 
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            visible: root.autoUpdateVisible(modelData)
+                                            radius: Theme.radiusSmall
+                                            color: Theme.backgroundCard
+                                            border.color: Qt.rgba(
+                                                root.statusAccent(modelData.autoUpdate).r,
+                                                root.statusAccent(modelData.autoUpdate).g,
+                                                root.statusAccent(modelData.autoUpdate).b,
+                                                0.35
+                                            )
+                                            implicitHeight: attentionAutoUpdateContent.implicitHeight + Theme.spacingSmall * 2
+
+                                            ColumnLayout {
+                                                id: attentionAutoUpdateContent
+                                                anchors.fill: parent
+                                                anchors.margins: Theme.spacingSmall
+                                                spacing: Theme.spacingSmall
+
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: Theme.spacingSmall
+
+                                                    Label {
+                                                        Layout.fillWidth: true
+                                                        text: "Auto-update"
+                                                        color: Theme.textPrimary
+                                                        font.pixelSize: 11
+                                                        font.family: Theme.fontDisplay
+                                                    }
+
+                                                    Rectangle {
+                                                        radius: Theme.radiusSmall
+                                                        color: root.statusChipFill(modelData.autoUpdate)
+                                                        border.color: root.statusAccent(modelData.autoUpdate)
+                                                        implicitHeight: 22
+                                                        implicitWidth: attentionAutoUpdateLabel.implicitWidth + 12
+
+                                                        Label {
+                                                            id: attentionAutoUpdateLabel
+                                                            anchors.centerIn: parent
+                                                            text: String((modelData.autoUpdate || {}).label || "")
+                                                            color: root.statusAccent(modelData.autoUpdate)
+                                                            font.pixelSize: 10
+                                                            font.family: Theme.fontBody
+                                                        }
+                                                    }
+                                                }
+
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    text: String((modelData.autoUpdate || {}).description || "")
+                                                    visible: text !== ""
+                                                    color: Theme.textSecondary
+                                                    font.pixelSize: 11
+                                                    font.family: Theme.fontBody
+                                                    wrapMode: Text.WordWrap
+                                                }
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: Theme.spacingSmall
+                                            visible: root.scopedFixNoticeVisible(modelData)
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: root.scopedFixCardMessage(modelData)
+                                                color: root.scopedFixNoticeColor(attentionCard.cardAccent, modelData)
+                                                font.pixelSize: 11
+                                                font.family: Theme.fontBody
+                                                wrapMode: Text.WordWrap
+                                            }
+
+                                            Button {
+                                                text: runtimeResetInFlight ? "Resetting..." : "Reset Docker runtime"
+                                                visible: root.scopedFixCanResetRuntime(modelData)
+                                                enabled: !runtimeResetInFlight && apiClient.authToken !== ""
+                                                onClicked: root.runRuntimeResetFallback(modelData)
+                                                background: Rectangle {
+                                                    radius: Theme.radiusSmall
+                                                    color: Theme.backgroundCard
+                                                    border.color: Theme.accentDanger
+                                                }
+                                                contentItem: Label {
+                                                    text: parent.text
+                                                    color: Theme.textPrimary
+                                                    font.pixelSize: 11
+                                                    font.family: Theme.fontBody
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    verticalAlignment: Text.AlignVCenter
+                                                }
+                                            }
+                                        }
+
                                         ColumnLayout {
                                             Layout.fillWidth: true
                                             spacing: Theme.spacingSmall
@@ -1558,11 +1966,16 @@ Item {
 
                                             Button {
                                                 property var actionSpec: root.primaryActionFor(modelData)
-                                                text: actionSpec.label
+                                                text: root.scopedFixButtonLabel(modelData, actionSpec)
                                                 visible: text !== ""
+                                                enabled: !root.isScopedFixRunning(modelData)
                                                 onClicked: {
                                                     if (actionSpec.action === "enable") {
                                                         apiClient.enableExtension(root.extensionIdFor(modelData.entry))
+                                                    } else if (root.canCreateDefaultInstance(modelData, actionSpec)) {
+                                                        root.createDefaultInstance(modelData)
+                                                    } else if (root.canRunScopedFix(modelData, actionSpec)) {
+                                                        root.runScopedFix(modelData)
                                                     } else {
                                                         root.openControl(root.extensionIdFor(modelData.entry))
                                                     }
@@ -1671,6 +2084,67 @@ Item {
                                             font.pixelSize: 12
                                             font.family: Theme.fontBody
                                             wrapMode: Text.WordWrap
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            visible: root.autoUpdateVisible(modelData)
+                                            radius: Theme.radiusSmall
+                                            color: Theme.backgroundCard
+                                            border.color: Qt.rgba(
+                                                root.statusAccent(modelData.autoUpdate).r,
+                                                root.statusAccent(modelData.autoUpdate).g,
+                                                root.statusAccent(modelData.autoUpdate).b,
+                                                0.28
+                                            )
+                                            implicitHeight: readyAutoUpdateContent.implicitHeight + Theme.spacingSmall * 2
+
+                                            ColumnLayout {
+                                                id: readyAutoUpdateContent
+                                                anchors.fill: parent
+                                                anchors.margins: Theme.spacingSmall
+                                                spacing: Theme.spacingSmall
+
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: Theme.spacingSmall
+
+                                                    Label {
+                                                        Layout.fillWidth: true
+                                                        text: "Auto-update"
+                                                        color: Theme.textPrimary
+                                                        font.pixelSize: 11
+                                                        font.family: Theme.fontDisplay
+                                                    }
+
+                                                    Rectangle {
+                                                        radius: Theme.radiusSmall
+                                                        color: root.statusChipFill(modelData.autoUpdate)
+                                                        border.color: root.statusAccent(modelData.autoUpdate)
+                                                        implicitHeight: 22
+                                                        implicitWidth: readyAutoUpdateLabel.implicitWidth + 12
+
+                                                        Label {
+                                                            id: readyAutoUpdateLabel
+                                                            anchors.centerIn: parent
+                                                            text: String((modelData.autoUpdate || {}).label || "")
+                                                            color: root.statusAccent(modelData.autoUpdate)
+                                                            font.pixelSize: 10
+                                                            font.family: Theme.fontBody
+                                                        }
+                                                    }
+                                                }
+
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    text: String((modelData.autoUpdate || {}).description || "")
+                                                    visible: text !== ""
+                                                    color: Theme.textSecondary
+                                                    font.pixelSize: 11
+                                                    font.family: Theme.fontBody
+                                                    wrapMode: Text.WordWrap
+                                                }
+                                            }
                                         }
 
                                         ColumnLayout {
@@ -1869,6 +2343,10 @@ Item {
                                             onClicked: {
                                                 if (actionSpec.action === "enable") {
                                                     apiClient.enableExtension(root.extensionIdFor(modelData.entry))
+                                                } else if (root.canCreateDefaultInstance(modelData, actionSpec)) {
+                                                    root.createDefaultInstance(modelData)
+                                                } else if (root.canRunScopedFix(modelData, actionSpec)) {
+                                                    root.runScopedFix(modelData)
                                                 } else {
                                                     root.openControl(root.extensionIdFor(modelData.entry))
                                                 }

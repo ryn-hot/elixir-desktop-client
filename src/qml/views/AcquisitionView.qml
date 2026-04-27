@@ -9,14 +9,82 @@ Item {
     id: root
     objectName: "acquisitionView"
     property StackView stackView: null
+    property var batchExpansionByIntentId: ({})
 
     function acquisitionPhase(item) {
         return String((item && (item.phase || item.stage)) || "")
     }
 
+    function acquisitionChildren(item) {
+        if (!item) {
+            return []
+        }
+        var value = item.children
+        return value === undefined || value === null ? [] : value
+    }
+
+    function mediaTypeCode(item) {
+        if (!item) {
+            return ""
+        }
+        return String(item.mediaType || item.media_type || "").toLowerCase()
+    }
+
+    function batchUnitLabel(item, count) {
+        var type = mediaTypeCode(item)
+        var singular = (type === "tv" || type === "series" || type === "anime") ? "episode" : "item"
+        return count === 1 ? singular : (singular + "s")
+    }
+
+    function batchSectionTitle(item, count) {
+        return count + " " + batchUnitLabel(item, count)
+    }
+
+    function acquisitionItemKey(item) {
+        if (!item) {
+            return ""
+        }
+        return String(item.intentId || item.id || item.title || "")
+    }
+
+    function isBatchExpanded(item, childCount) {
+        var key = acquisitionItemKey(item)
+        if (key === "" || batchExpansionByIntentId[key] === undefined) {
+            return childCount <= 5
+        }
+        return !!batchExpansionByIntentId[key]
+    }
+
+    function setBatchExpanded(item, expanded) {
+        var key = acquisitionItemKey(item)
+        if (key === "") {
+            return
+        }
+        var next = {}
+        var current = batchExpansionByIntentId || {}
+        for (var existingKey in current) {
+            next[existingKey] = current[existingKey]
+        }
+        next[key] = expanded
+        batchExpansionByIntentId = next
+    }
+
+    function blockerBorderColor(blocker) {
+        var severity = String((blocker && blocker.severity) || "").toLowerCase()
+        return severity === "warning" ? Theme.accent : Theme.accentDanger
+    }
+
+    function blockerFillColor(blocker) {
+        var severity = String((blocker && blocker.severity) || "").toLowerCase()
+        return severity === "warning" ? Theme.accentSoft : Theme.accentDangerSoft
+    }
+
     function phaseBorderColor(phase) {
         if (phase === "needs_attention" || phase === "failed") {
             return Theme.accentDanger
+        }
+        if (phase === "finding_another_release") {
+            return Theme.accent
         }
         if (phase === "downloading" || phase === "post_processing" || phase === "importing") {
             return Theme.accent
@@ -33,6 +101,9 @@ Item {
     function phaseFillColor(phase) {
         if (phase === "needs_attention" || phase === "failed") {
             return Theme.accentDangerSoft
+        }
+        if (phase === "finding_another_release") {
+            return Theme.accentSoft
         }
         if (phase === "downloading" || phase === "post_processing" || phase === "importing") {
             return Theme.accentSoft
@@ -76,7 +147,18 @@ Item {
         return Math.max(1, minutes) + "m"
     }
 
+    function phaseShowsProgress(phase) {
+        return phase === "downloading" || phase === "post_processing"
+    }
+
+    function phaseShowsMetrics(phase) {
+        return phase !== "completed"
+    }
+
     function progressVisible(item) {
+        if (!item || !phaseShowsProgress(acquisitionPhase(item))) {
+            return false
+        }
         return item.progressPercent !== undefined
                && item.progressPercent !== null
                && Number(item.progressPercent) > 0
@@ -215,6 +297,10 @@ Item {
                         id: acquisitionCard
                         required property var modelData
                         property var acquisitionItem: modelData
+                        readonly property var childItems: root.acquisitionChildren(modelData)
+                        readonly property string itemKey: root.acquisitionItemKey(modelData)
+                        property bool batchExpanded: root.isBatchExpanded(modelData, childItems.length)
+                        readonly property int collapsedChildCount: Math.max(0, childItems.length - 5)
 
                         Layout.fillWidth: true
                         radius: Theme.radiusLarge
@@ -287,8 +373,8 @@ Item {
                             Rectangle {
                                 Layout.fillWidth: true
                                 radius: Theme.radiusSmall
-                                color: Theme.accentDangerSoft
-                                border.color: Theme.accentDanger
+                                color: root.blockerFillColor(modelData.blocker)
+                                border.color: root.blockerBorderColor(modelData.blocker)
                                 visible: modelData.blocker !== undefined
                                          && modelData.blocker !== null
                                          && String(modelData.blocker.detail || "") !== ""
@@ -324,6 +410,7 @@ Item {
                             Flow {
                                 Layout.fillWidth: true
                                 spacing: Theme.spacingSmall
+                                visible: root.phaseShowsMetrics(root.acquisitionPhase(modelData))
 
                                 Repeater {
                                     model: (function() {
@@ -360,6 +447,144 @@ Item {
                                             color: Theme.textSecondary
                                             font.pixelSize: 11
                                             font.family: Theme.fontBody
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                radius: Theme.radiusMedium
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                                visible: acquisitionCard.childItems.length > 0
+                                implicitHeight: batchColumn.implicitHeight + 12
+
+                                ColumnLayout {
+                                    id: batchColumn
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    spacing: 6
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingSmall
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: root.batchSectionTitle(acquisitionCard.acquisitionItem, acquisitionCard.childItems.length)
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 11
+                                            font.family: Theme.fontBody
+                                        }
+
+                                        Button {
+                                            visible: acquisitionCard.collapsedChildCount > 0
+                                            text: acquisitionCard.batchExpanded
+                                                  ? "Hide"
+                                                  : ("Show " + acquisitionCard.collapsedChildCount + " more")
+                                            onClicked: root.setBatchExpanded(
+                                                           acquisitionCard.acquisitionItem,
+                                                           !acquisitionCard.batchExpanded)
+                                            background: Rectangle {
+                                                radius: Theme.radiusSmall
+                                                color: Theme.backgroundCard
+                                                border.color: Theme.border
+                                            }
+                                            contentItem: Label {
+                                                text: parent.text
+                                                color: Theme.textSecondary
+                                                font.pixelSize: 10
+                                                font.family: Theme.fontBody
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                        }
+                                    }
+
+                                    Repeater {
+                                        model: acquisitionCard.batchExpanded
+                                               ? acquisitionCard.childItems
+                                               : acquisitionCard.childItems.slice(0, 5)
+
+                                        delegate: Rectangle {
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            radius: Theme.radiusSmall
+                                            color: Theme.backgroundCard
+                                            border.color: root.phaseBorderColor(root.acquisitionPhase(modelData))
+                                            implicitHeight: childColumn.implicitHeight + 10
+
+                                            ColumnLayout {
+                                                id: childColumn
+                                                anchors.fill: parent
+                                                anchors.margins: 5
+                                                spacing: 4
+
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 6
+
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 2
+
+                                                        Label {
+                                                            Layout.fillWidth: true
+                                                            text: String(modelData.title || "Item")
+                                                            color: Theme.textPrimary
+                                                            font.pixelSize: 11
+                                                            font.family: Theme.fontBody
+                                                            wrapMode: Text.WordWrap
+                                                        }
+
+                                                        Label {
+                                                            Layout.fillWidth: true
+                                                            text: String(modelData.subtitle || "")
+                                                            color: Theme.textSecondary
+                                                            font.pixelSize: 10
+                                                            font.family: Theme.fontBody
+                                                            wrapMode: Text.WordWrap
+                                                            visible: text !== ""
+                                                        }
+                                                    }
+
+                                                    Rectangle {
+                                                        radius: Theme.radiusSmall
+                                                        color: root.phaseFillColor(root.acquisitionPhase(modelData))
+                                                        border.color: root.phaseBorderColor(root.acquisitionPhase(modelData))
+                                                        implicitWidth: childStageLabel.implicitWidth + 10
+                                                        implicitHeight: childStageLabel.implicitHeight + 4
+
+                                                        Label {
+                                                            id: childStageLabel
+                                                            anchors.centerIn: parent
+                                                            text: String(modelData.phaseLabel || modelData.stageLabel || modelData.phase || modelData.stage || "")
+                                                            color: Theme.textPrimary
+                                                            font.pixelSize: 10
+                                                            font.family: Theme.fontBody
+                                                        }
+                                                    }
+                                                }
+
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    text: String((modelData.blocker && modelData.blocker.detail) || "")
+                                                    color: Theme.textSecondary
+                                                    font.pixelSize: 10
+                                                    font.family: Theme.fontBody
+                                                    wrapMode: Text.WordWrap
+                                                    visible: text !== ""
+                                                }
+
+                                                ProgressBar {
+                                                    Layout.fillWidth: true
+                                                    from: 0
+                                                    to: 100
+                                                    value: Number(modelData.progressPercent || 0)
+                                                    visible: root.progressVisible(modelData)
+                                                }
+                                            }
                                         }
                                     }
                                 }

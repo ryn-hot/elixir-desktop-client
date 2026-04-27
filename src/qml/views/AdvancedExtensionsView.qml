@@ -13,19 +13,12 @@ Item {
     property string rotatedSecretValue: ""
     property string rotatedSecretId: ""
     property bool rotatedSecretCopied: false
-    property var slotConflictDecisions: ({})
     property var secretDrafts: ({})
     property int planRefreshPendingCount: 0
     property var pendingSecretCreates: ({})
     property bool showStepLegend: false
     property bool pendingRunStatusScroll: false
     property string desiredFilter: "all"
-    property string lastAutoWirePromptPlanId: ""
-    property bool autoWireDesired: true
-    property bool pendingBlueprintDependencyInstall: false
-    property string pendingBlueprintPlanId: ""
-    property string pendingBlueprintPlanParams: ""
-    property var pendingBlueprintDependencies: []
     property bool oneClickBlueprintActive: false
     property string oneClickBlueprintId: ""
     property string oneClickBlueprintParams: ""
@@ -80,60 +73,6 @@ Item {
         }
         var value = String(extensionId)
         return value.indexOf(".blueprints.") >= 0 || value.indexOf("blueprint.") === 0
-    }
-
-    function blueprintConnectorsFor(blueprintId) {
-        var entry = installedExtension(blueprintId)
-        if (!entry) {
-            return []
-        }
-        var manifest = entry.manifest_json !== undefined ? entry.manifest_json : entry.manifestJson
-        if (!manifest || manifest.connectors === undefined || manifest.connectors === null) {
-            return []
-        }
-        return manifest.connectors
-    }
-
-    function blueprintPreferredModulesFor(blueprintId) {
-        var entry = installedExtension(blueprintId)
-        if (!entry) {
-            return []
-        }
-        var manifest = entry.manifest_json !== undefined ? entry.manifest_json : entry.manifestJson
-        if (!manifest || !manifest.preferences || !manifest.preferences.providers) {
-            return []
-        }
-        var providers = manifest.preferences.providers
-        var modules = []
-        var seen = {}
-        for (var key in providers) {
-            if (!providers.hasOwnProperty(key)) {
-                continue
-            }
-            var pref = providers[key]
-            if (!pref || pref.prefer === undefined || pref.prefer === null) {
-                continue
-            }
-            var list = pref.prefer
-            for (var i = 0; i < list.length; ++i) {
-                var id = list[i]
-                if (id === blueprintId) {
-                    continue
-                }
-                if (!seen[id]) {
-                    seen[id] = true
-                    modules.push(id)
-                }
-            }
-        }
-        return modules
-    }
-
-    function clearPendingBlueprintPlan() {
-        pendingBlueprintDependencyInstall = false
-        pendingBlueprintPlanId = ""
-        pendingBlueprintPlanParams = ""
-        pendingBlueprintDependencies = []
     }
 
     function clearOneClickBlueprintFlow() {
@@ -212,7 +151,7 @@ Item {
             oneClickBlueprintStage = "confirming"
             oneClickBlueprintConfirmSent = true
             actionToast.show("Applying " + oneClickBlueprintId + "...")
-            apiClient.confirmExtensionsPlan(apiClient.extensionsPlanId, buildPlanDecisions())
+            apiClient.confirmExtensionsPlan(apiClient.extensionsPlanId)
             return
         }
         oneClickBlueprintStage = "awaiting_user"
@@ -221,89 +160,12 @@ Item {
             ": resolve conflicts or secrets, then confirm.")
     }
 
-    function checkPendingBlueprintPlan() {
-        if (!pendingBlueprintDependencyInstall || pendingBlueprintPlanId === "") {
-            return
-        }
-        for (var i = 0; i < pendingBlueprintDependencies.length; ++i) {
-            var extensionId = pendingBlueprintDependencies[i]
-            var entry = installedExtension(extensionId)
-            if (!entry || entry.enabled !== true) {
-                return
-            }
-        }
-        var blueprintId = pendingBlueprintPlanId
-        var paramsJson = pendingBlueprintPlanParams
-        clearPendingBlueprintPlan()
-        apiClient.applyBlueprintPlan(blueprintId, paramsJson)
-    }
-
     function ensureBlueprintDependencies(blueprintId, paramsJson) {
         if (blueprintId === "") {
             apiClient.applyBlueprintPlan(blueprintId, paramsJson)
             return
         }
-        if (blueprintId === "auto_wire") {
-            return
-        }
-        var connectors = blueprintConnectorsFor(blueprintId)
-        var modules = blueprintPreferredModulesFor(blueprintId)
-        var required = []
-        var seen = {}
-        for (var i = 0; i < connectors.length; ++i) {
-            var id = connectors[i]
-            if (!seen[id]) {
-                seen[id] = true
-                required.push(id)
-            }
-        }
-        for (var j = 0; j < modules.length; ++j) {
-            var moduleId = modules[j]
-            if (!seen[moduleId]) {
-                seen[moduleId] = true
-                required.push(moduleId)
-            }
-        }
-        if (!required || required.length === 0) {
-            apiClient.applyBlueprintPlan(blueprintId, paramsJson)
-            return
-        }
-        var missingRegistry = []
-        var actions = 0
-        for (var k = 0; k < required.length; ++k) {
-            var extensionId = required[k]
-            var installed = installedExtension(extensionId)
-            if (!installed) {
-                var available = availableExtension(extensionId)
-                if (!available || ((available.download_url === undefined || String(available.download_url).trim() === "") && (available.package_path === undefined || String(available.package_path).trim() === ""))) {
-                    missingRegistry.push(extensionId)
-                    continue
-                }
-                apiClient.installExtensionSource(String(available.download_url || ""), String(available.package_path || ""))
-                actions += 1
-                continue
-            }
-            if (installed.enabled === false) {
-                apiClient.enableExtension(extensionId)
-                actions += 1
-            }
-        }
-        if (missingRegistry.length > 0) {
-            actionToast.show("Missing extension packages: " + missingRegistry.join(", "))
-            if (oneClickBlueprintActive && oneClickBlueprintId === blueprintId) {
-                clearOneClickBlueprintFlow()
-            }
-            return
-        }
-        if (actions === 0) {
-            apiClient.applyBlueprintPlan(blueprintId, paramsJson)
-            return
-        }
-        pendingBlueprintDependencyInstall = true
-        pendingBlueprintPlanId = blueprintId
-        pendingBlueprintPlanParams = paramsJson
-        pendingBlueprintDependencies = required
-        actionToast.show("Installing required extensions for " + blueprintId + "...")
+        apiClient.applyBlueprintPlan(blueprintId, paramsJson)
     }
 
     function instancesFor(extensionId) {
@@ -486,17 +348,6 @@ Item {
         return "No desired blueprints."
     }
 
-    function desiredDecisionCount(item) {
-        if (!item || item.decisions_json === undefined || item.decisions_json === null) {
-            return 0
-        }
-        var decisions = item.decisions_json.slotConflicts
-        if (decisions === undefined || decisions === null) {
-            return 0
-        }
-        return decisions.length || 0
-    }
-
     function desiredStatusColor(applied) {
         return applied ? "#5fbf5a" : Theme.accent
     }
@@ -657,11 +508,7 @@ Item {
 
     function finishSecretCreateBatch() {
         finalizeSecretCreates()
-        if (isAutoWirePlan()) {
-            apiClient.fetchAutoWireStatus()
-        } else {
-            refreshCurrentPlan()
-        }
+        refreshCurrentPlan()
     }
 
     function parseMissingSecretToken(token, conflict) {
@@ -860,17 +707,9 @@ Item {
         }
     }
 
-    function isAutoWirePlan() {
-        return currentPlanBlueprintId() === "auto_wire"
-    }
-
-    function autoWirePlanPending() {
-        return apiClient.extensionsAutoWirePendingPlanId !== ""
-    }
-
     function refreshCurrentPlan() {
         var blueprintId = currentPlanBlueprintId()
-        if (blueprintId === "" || blueprintId === "auto_wire") {
+        if (blueprintId === "") {
             return
         }
         ensureBlueprintDependencies(blueprintId, currentPlanParamsJson())
@@ -955,75 +794,8 @@ Item {
         return "#5A606B"
     }
 
-    function planConflictId(conflict) {
-        if (conflict.conflict_id) {
-            return conflict.conflict_id
-        }
-        if (conflict.capability && conflict.slot) {
-            return conflict.capability + "/" + conflict.slot
-        }
-        return ""
-    }
-
-    function conflictDecision(conflict) {
-        var conflictId = planConflictId(conflict)
-        if (slotConflictDecisions[conflictId] !== undefined) {
-            return slotConflictDecisions[conflictId]
-        }
-        if (conflict.decision) {
-            return conflict.decision
-        }
-        return ""
-    }
-
-    function setConflictDecision(conflict, action) {
-        var conflictId = planConflictId(conflict)
-        if (conflictId === "") {
-            return
-        }
-        var updated = {}
-        for (var key in slotConflictDecisions) {
-            updated[key] = slotConflictDecisions[key]
-        }
-        updated[conflictId] = action
-        slotConflictDecisions = updated
-    }
-
-    function decisionIndex(action) {
-        if (action === "keep_existing") {
-            return 0
-        }
-        if (action === "replace") {
-            return 1
-        }
-        if (action === "abort") {
-            return 2
-        }
-        return -1
-    }
-
-    function buildPlanDecisions() {
-        var decisions = []
-        var conflicts = apiClient.extensionsPlanConflicts
-        for (var i = 0; i < conflicts.length; ++i) {
-            var conflict = conflicts[i]
-            if (conflict.code !== "slot_conflict") {
-                continue
-            }
-            var action = conflictDecision(conflict)
-            if (action === "") {
-                continue
-            }
-            decisions.push({
-                conflictId: planConflictId(conflict),
-                action: action
-            })
-        }
-        return decisions
-    }
-
     function canConfirmPlan() {
-        if (apiClient.extensionsPlanId === "" || isAutoWirePlan()) {
+        if (apiClient.extensionsPlanId === "") {
             return false
         }
         var conflicts = apiClient.extensionsPlanConflicts
@@ -1031,19 +803,6 @@ Item {
             var conflict = conflicts[i]
             if (conflict.code === "missing_required_secrets") {
                 if (!missingSecretsResolved(conflict)) {
-                    return false
-                }
-                continue
-            }
-            if (conflict.code === "slot_conflict") {
-                if (conflict.policy === "auto_replace") {
-                    continue
-                }
-                if (conflict.policy === "deny") {
-                    return false
-                }
-                var action = conflictDecision(conflict)
-                if (action === "" || action === "abort") {
                     return false
                 }
                 continue
@@ -1093,16 +852,12 @@ Item {
         }
         function onExtensionsCatalogChanged() {
             actionToast.clear()
-            apiClient.fetchAutoWireStatus()
             maybeAdvanceOneClickBlueprintInstall()
-            checkPendingBlueprintPlan()
         }
         function onExtensionsInstancesChanged() {
             actionToast.clear()
-            apiClient.fetchAutoWireStatus()
             apiClient.fetchDownloaderProfile()
             maybeAdvanceOneClickBlueprintInstall()
-            checkPendingBlueprintPlan()
         }
         function onExtensionsSecretsChanged() {
             actionToast.clear()
@@ -1114,7 +869,6 @@ Item {
             }
         }
         function onExtensionsPlanChanged() {
-            slotConflictDecisions = ({})
             secretDrafts = ({})
             planRefreshPendingCount = 0
             pendingSecretCreates = ({})
@@ -1159,20 +913,6 @@ Item {
             pendingDownloaderProfile = ""
             downloaderToast.show(selectedLabel + " profile saved.")
         }
-        function onExtensionsAutoWireStatusChanged() {
-            autoWireDesired = apiClient.extensionsAutoWireEnabled
-            if (apiClient.extensionsAutoWirePendingPlanId === "") {
-                lastAutoWirePromptPlanId = ""
-                return
-            }
-            if (!apiClient.extensionsAutoWireEnabled) {
-                return
-            }
-            if (apiClient.extensionsAutoWirePendingPlanId !== lastAutoWirePromptPlanId) {
-                lastAutoWirePromptPlanId = apiClient.extensionsAutoWirePendingPlanId
-                autoWirePromptDialog.open()
-            }
-        }
         function onSecretRotated(secretId, value) {
             rotatedSecretId = secretId
             rotatedSecretValue = value
@@ -1215,7 +955,6 @@ Item {
         onTriggered: {
             apiClient.fetchLatestReconcileRun()
             apiClient.fetchExtensionRuns(20)
-            apiClient.fetchAutoWireStatus()
             apiClient.fetchDownloaderProfile()
         }
     }
@@ -1638,104 +1377,6 @@ Item {
                 radius: Theme.radiusLarge
                 color: Theme.backgroundCard
                 border.color: Theme.border
-                implicitHeight: autoWireContent.implicitHeight + Theme.spacingLarge * 2
-                height: implicitHeight
-
-                ColumnLayout {
-                    id: autoWireContent
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.margins: Theme.spacingLarge
-                    spacing: Theme.spacingMedium
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Theme.spacingSmall
-
-                        Label {
-                            text: "Auto-wire"
-                            color: Theme.textPrimary
-                            font.pixelSize: 16
-                            font.family: Theme.fontDisplay
-                            Layout.fillWidth: true
-                        }
-
-                        Switch {
-                            id: autoWireSwitch
-                            checked: autoWireDesired
-                            enabled: apiClient.authToken !== ""
-                            onClicked: {
-                                if (autoWireDesired) {
-                                    autoWireDisableDialog.open()
-                                } else {
-                                    apiClient.setAutoWireEnabled(true)
-                                }
-                            }
-                        }
-                    }
-
-                    Label {
-                        text: "Auto-wire keeps compatible extensions connected automatically. " +
-                              "Turning it off means installs will not be linked unless you run a plan manually."
-                        color: Theme.textSecondary
-                        font.pixelSize: 12
-                        font.family: Theme.fontBody
-                        wrapMode: Text.WordWrap
-                    }
-
-                    Label {
-                        text: "Auto-wire is disabled. New installs will not connect automatically."
-                        color: "#D95C5C"
-                        font.pixelSize: 11
-                        font.family: Theme.fontBody
-                        visible: !apiClient.extensionsAutoWireEnabled
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Theme.spacingSmall
-                        visible: apiClient.extensionsAutoWirePendingPlanId !== ""
-
-                        Label {
-                            text: "Needs attention: " +
-                                  (apiClient.extensionsAutoWirePendingReason !== ""
-                                   ? apiClient.extensionsAutoWirePendingReason
-                                   : "Review auto-wire plan")
-                            color: Theme.textSecondary
-                            font.pixelSize: 11
-                            font.family: Theme.fontBody
-                            Layout.fillWidth: true
-                            elide: Text.ElideRight
-                        }
-
-                        Button {
-                            text: "Review plan"
-                            enabled: apiClient.authToken !== ""
-                            onClicked: apiClient.fetchAutoWirePlan()
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: Theme.backgroundCardRaised
-                                border.color: Theme.border
-                            }
-                            contentItem: Label {
-                                text: parent.text
-                                color: Theme.textPrimary
-                                font.pixelSize: 11
-                                font.family: Theme.fontBody
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                radius: Theme.radiusLarge
-                color: Theme.backgroundCard
-                border.color: Theme.border
                 implicitHeight: planContent.implicitHeight + Theme.spacingLarge * 2
                 height: implicitHeight
 
@@ -1752,17 +1393,13 @@ Item {
                         spacing: Theme.spacingSmall
 
                         Label {
-                            text: isAutoWirePlan() ? "Auto-wire plan" : "Blueprint plan"
+                            text: "Blueprint plan"
                             color: Theme.textPrimary
                             font.pixelSize: 16
                             font.family: Theme.fontDisplay
                             Layout.fillWidth: true
                         }
 
-                        PillTag {
-                            text: "Installing extensions..."
-                            visible: pendingBlueprintDependencyInstall
-                        }
                     }
 
                     RowLayout {
@@ -1828,9 +1465,7 @@ Item {
                         Button {
                             text: "Confirm"
                             enabled: canConfirmPlan()
-                            onClicked: apiClient.confirmExtensionsPlan(
-                                apiClient.extensionsPlanId,
-                                buildPlanDecisions())
+                            onClicked: apiClient.confirmExtensionsPlan(apiClient.extensionsPlanId)
                             background: Rectangle {
                                 radius: Theme.radiusSmall
                                 color: Theme.backgroundCardRaised
@@ -1848,7 +1483,7 @@ Item {
 
                         Button {
                             text: "Cancel"
-                            enabled: apiClient.extensionsPlanId !== "" && !isAutoWirePlan()
+                            enabled: apiClient.extensionsPlanId !== ""
                             onClicked: {
                                 if (oneClickBlueprintActive) {
                                     clearOneClickBlueprintFlow()
@@ -1869,16 +1504,6 @@ Item {
                                 verticalAlignment: Text.AlignVCenter
                             }
                         }
-                    }
-
-                    Label {
-                        text: isAutoWirePlan()
-                              ? "Auto-wire plans apply automatically once conflicts are resolved."
-                              : ""
-                        color: Theme.textMuted
-                        font.pixelSize: 11
-                        font.family: Theme.fontBody
-                        visible: isAutoWirePlan()
                     }
 
                     Label {
@@ -1931,9 +1556,7 @@ Item {
                                     spacing: Theme.spacingSmall
 
                                     Label {
-                                        text: modelData.code === "slot_conflict"
-                                              ? "Slot conflict: " + modelData.capability + "/" + modelData.slot
-                                              : "Conflict: " + modelData.code
+                                        text: "Conflict: " + modelData.code
                                         color: Theme.textPrimary
                                         font.pixelSize: 12
                                         font.family: Theme.fontBody
@@ -1945,89 +1568,6 @@ Item {
                                         font.pixelSize: 11
                                         font.family: Theme.fontBody
                                         visible: modelData.detail !== undefined && modelData.detail !== ""
-                                    }
-
-                                    ColumnLayout {
-                                        spacing: Theme.spacingSmall
-                                        visible: modelData.code === "slot_conflict"
-
-                                        Label {
-                                            text: "Policy: " + modelData.policy
-                                            color: Theme.textSecondary
-                                            font.pixelSize: 11
-                                            font.family: Theme.fontBody
-                                        }
-
-                                        Label {
-                                            text: "Existing providers:"
-                                            color: Theme.textSecondary
-                                            font.pixelSize: 11
-                                            font.family: Theme.fontBody
-                                            visible: modelData.existing && modelData.existing.length > 0
-                                        }
-
-                                        Repeater {
-                                            model: modelData.existing || []
-                                            delegate: Label {
-                                                text: modelData.extension_id + " / " +
-                                                      (modelData.instance_name || modelData.instance_id)
-                                                color: Theme.textMuted
-                                                font.pixelSize: 11
-                                                font.family: Theme.fontBody
-                                            }
-                                        }
-
-                                        Label {
-                                            text: "Planned provider:"
-                                            color: Theme.textSecondary
-                                            font.pixelSize: 11
-                                            font.family: Theme.fontBody
-                                            visible: modelData.planned && modelData.planned.length > 0
-                                        }
-
-                                        Repeater {
-                                            model: modelData.planned || []
-                                            delegate: Label {
-                                                text: modelData.extension_id + " / " +
-                                                      (modelData.instance_name || modelData.instance_id)
-                                                color: Theme.textMuted
-                                                font.pixelSize: 11
-                                                font.family: Theme.fontBody
-                                            }
-                                        }
-
-                                        Label {
-                                            text: modelData.policy === "auto_replace"
-                                                  ? "Auto replace will remove existing providers on confirm."
-                                                  : modelData.policy === "deny"
-                                                    ? "Policy deny blocks replacement."
-                                                    : "Choose a resolution before confirming."
-                                            color: Theme.textMuted
-                                            font.pixelSize: 11
-                                            font.family: Theme.fontBody
-                                        }
-
-                                        ComboBox {
-                                            visible: modelData.policy === "prompt"
-                                            model: [
-                                                { "label": "Keep existing", "value": "keep_existing" },
-                                                { "label": "Replace", "value": "replace" },
-                                                { "label": "Abort", "value": "abort" }
-                                            ]
-                                            textRole: "label"
-                                            currentIndex: root.decisionIndex(root.conflictDecision(modelData))
-                                            displayText: {
-                                                var value = root.conflictDecision(modelData)
-                                                if (value === "keep_existing") return "Keep existing"
-                                                if (value === "replace") return "Replace"
-                                                if (value === "abort") return "Abort"
-                                                return "Select resolution..."
-                                            }
-                                            onActivated: {
-                                                var value = model[index].value
-                                                root.setConflictDecision(modelData, value)
-                                            }
-                                        }
                                     }
 
                                     ColumnLayout {
@@ -2963,12 +2503,6 @@ Item {
                                     }
                                 }
 
-                                Label {
-                                    text: "Decisions: " + desiredDecisionCount(modelData)
-                                    color: Theme.textSecondary
-                                    font.pixelSize: 10
-                                    font.family: Theme.fontBody
-                                }
                             }
                         }
                     }
@@ -2997,135 +2531,6 @@ Item {
                     }
                 }
 
-                Dialog {
-                    id: autoWireDisableDialog
-                    modal: true
-                    title: "Disable auto-wire?"
-                    standardButtons: Dialog.NoButton
-                    contentItem: ColumnLayout {
-                        spacing: Theme.spacingSmall
-                        Label {
-                            text: "Auto-wire keeps extensions connected without manual steps."
-                            color: Theme.textPrimary
-                            font.pixelSize: 13
-                            font.family: Theme.fontDisplay
-                            wrapMode: Text.WordWrap
-                        }
-                        Label {
-                            text: "If you disable it, new installs will stay disconnected until you run plans manually."
-                            color: Theme.textSecondary
-                            font.pixelSize: 11
-                            font.family: Theme.fontBody
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-                    footer: RowLayout {
-                        spacing: Theme.spacingSmall
-                        Button {
-                            text: "Keep enabled"
-                            onClicked: autoWireDisableDialog.close()
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: Theme.backgroundCardRaised
-                                border.color: Theme.border
-                            }
-                            contentItem: Label {
-                                text: parent.text
-                                color: Theme.textPrimary
-                                font.pixelSize: 11
-                                font.family: Theme.fontBody
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                        }
-                        Button {
-                            text: "Disable auto-wire"
-                            onClicked: {
-                                autoWireDisableDialog.close()
-                                apiClient.setAutoWireEnabled(false)
-                            }
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: "#3a2222"
-                                border.color: Theme.border
-                            }
-                            contentItem: Label {
-                                text: parent.text
-                                color: Theme.textPrimary
-                                font.pixelSize: 11
-                                font.family: Theme.fontBody
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                        }
-                    }
-                }
-
-                Dialog {
-                    id: autoWirePromptDialog
-                    modal: true
-                    title: "Auto-wire needs input"
-                    standardButtons: Dialog.NoButton
-                    contentItem: ColumnLayout {
-                        spacing: Theme.spacingSmall
-                        Label {
-                            text: apiClient.extensionsAutoWirePendingReason !== ""
-                                  ? apiClient.extensionsAutoWirePendingReason
-                                  : "Auto-wire could not apply the latest connections."
-                            color: Theme.textPrimary
-                            font.pixelSize: 13
-                            font.family: Theme.fontDisplay
-                            wrapMode: Text.WordWrap
-                        }
-                        Label {
-                            text: "Review the plan to add missing secrets or resolve conflicts."
-                            color: Theme.textSecondary
-                            font.pixelSize: 11
-                            font.family: Theme.fontBody
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-                    footer: RowLayout {
-                        spacing: Theme.spacingSmall
-                        Button {
-                            text: "Later"
-                            onClicked: autoWirePromptDialog.close()
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: Theme.backgroundCardRaised
-                                border.color: Theme.border
-                            }
-                            contentItem: Label {
-                                text: parent.text
-                                color: Theme.textPrimary
-                                font.pixelSize: 11
-                                font.family: Theme.fontBody
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                        }
-                        Button {
-                            text: "Review plan"
-                            onClicked: {
-                                autoWirePromptDialog.close()
-                                apiClient.fetchAutoWirePlan()
-                            }
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: Theme.backgroundCardRaised
-                                border.color: Theme.border
-                            }
-                            contentItem: Label {
-                                text: parent.text
-                                color: Theme.textPrimary
-                                font.pixelSize: 11
-                                font.family: Theme.fontBody
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                        }
-                    }
-                }
             }
 
             Rectangle {

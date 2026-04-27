@@ -510,6 +510,10 @@ Item {
         if (!acquisition) {
             return false
         }
+        var phase = acquisitionPhaseCode(acquisition)
+        if (phase !== "downloading" && phase !== "post_processing") {
+            return false
+        }
         var value = acquisition.progress_percent
         if (value === undefined || value === null) {
             value = acquisition.progressPercent
@@ -1184,11 +1188,8 @@ Item {
 
                                         Label {
                                             Layout.fillWidth: true
-                                            text: resultRow.acquisition
-                                                  && resultRow.acquisition.progressPercent !== undefined
-                                                  && resultRow.acquisition.progressPercent !== null
-                                                  && Number(resultRow.acquisition.progressPercent) > 0
-                                                  ? (Number(resultRow.acquisition.progressPercent).toFixed(0) + "%")
+                                            text: root.acquisitionProgressVisible(resultRow.acquisition)
+                                                  ? (root.acquisitionProgressValue(resultRow.acquisition).toFixed(0) + "%")
                                                   : ""
                                             color: Theme.textSecondary
                                             font.pixelSize: 10

@@ -41,6 +41,9 @@ Item {
                 imageSource: model.poster
                 progress: model.progress
                 cardType: "portrait"
+                trackedByManager: model.trackedByManager === true
+                canStopTracking: model.canStopTracking === true
+                managerLabel: model.managerLabel ? model.managerLabel : ""
                 onClicked: root.cardClicked(model.mediaId)
             }
         }

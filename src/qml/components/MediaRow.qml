@@ -50,6 +50,9 @@ Item {
                 imageSource: model.poster // Assuming model has poster, might need backdrop for landscape
                 progress: model.progress !== undefined ? model.progress : 0.0
                 cardType: root.cardType
+                trackedByManager: model.trackedByManager === true
+                canStopTracking: model.canStopTracking === true
+                managerLabel: model.managerLabel ? model.managerLabel : ""
                 onClicked: root.cardClicked(mediaId)
                 
                 // For landscape, we might prefer backdrop if available in model

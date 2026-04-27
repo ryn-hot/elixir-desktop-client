@@ -15,4 +15,7 @@ struct MediaItem {
     QString overview;
     QStringList genres;
     double progress = 0.0;
+    bool trackedByManager = false;
+    bool canStopTracking = false;
+    QString managerLabel;
 };

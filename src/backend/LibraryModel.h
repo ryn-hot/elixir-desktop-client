@@ -19,7 +19,10 @@ namespace MediaRoles {
         GenresRole,
         ProgressRole,
         RuntimeRole,
-        UpdatedAtRole
+        UpdatedAtRole,
+        TrackedByManagerRole,
+        CanStopTrackingRole,
+        ManagerLabelRole
     };
 }
 

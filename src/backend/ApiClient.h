@@ -38,10 +38,6 @@ class ApiClient : public QObject {
     Q_PROPERTY(QString extensionsLastRefreshedAt READ extensionsLastRefreshedAt NOTIFY extensionsLastRefreshedAtChanged)
     Q_PROPERTY(QString extensionsLastRefreshSuccessAt READ extensionsLastRefreshSuccessAt NOTIFY extensionsLastRefreshSuccessAtChanged)
     Q_PROPERTY(QString extensionsLastRefreshError READ extensionsLastRefreshError NOTIFY extensionsLastRefreshErrorChanged)
-    Q_PROPERTY(bool extensionsAutoWireEnabled READ extensionsAutoWireEnabled NOTIFY extensionsAutoWireStatusChanged)
-    Q_PROPERTY(QString extensionsAutoWirePendingPlanId READ extensionsAutoWirePendingPlanId NOTIFY extensionsAutoWireStatusChanged)
-    Q_PROPERTY(QString extensionsAutoWirePendingReason READ extensionsAutoWirePendingReason NOTIFY extensionsAutoWireStatusChanged)
-    Q_PROPERTY(int extensionsAutoWirePendingConflicts READ extensionsAutoWirePendingConflicts NOTIFY extensionsAutoWireStatusChanged)
     Q_PROPERTY(QString extensionsDownloaderProfile READ extensionsDownloaderProfile NOTIFY extensionsDownloaderSettingsChanged)
     Q_PROPERTY(QString extensionsDownloaderDefaultProfile READ extensionsDownloaderDefaultProfile NOTIFY extensionsDownloaderSettingsChanged)
     Q_PROPERTY(QString extensionsDownloaderProfileSource READ extensionsDownloaderProfileSource NOTIFY extensionsDownloaderSettingsChanged)
@@ -102,10 +98,6 @@ public:
     QVariantMap extensionsRuntimeStatus() const;
     QVariantMap extensionControlSurface() const;
     bool extensionControlLoading() const;
-    bool extensionsAutoWireEnabled() const;
-    QString extensionsAutoWirePendingPlanId() const;
-    QString extensionsAutoWirePendingReason() const;
-    int extensionsAutoWirePendingConflicts() const;
     QString extensionsDownloaderProfile() const;
     QString extensionsDownloaderDefaultProfile() const;
     QString extensionsDownloaderProfileSource() const;
@@ -163,7 +155,7 @@ public:
     Q_INVOKABLE void fetchInstanceSecrets(const QString &instanceId = QString());
     Q_INVOKABLE void rotateSecret(const QString &secretId, const QString &value = QString());
     Q_INVOKABLE void applyBlueprintPlan(const QString &blueprintId, const QString &paramsJson = QString());
-    Q_INVOKABLE void confirmExtensionsPlan(const QString &planId, const QVariantList &decisions = QVariantList());
+    Q_INVOKABLE void confirmExtensionsPlan(const QString &planId);
     Q_INVOKABLE void cancelExtensionsPlan(const QString &planId);
     Q_INVOKABLE void fetchExtensionRunDetail(const QString &runId);
     Q_INVOKABLE void fetchExtensionRuns(int limit = 20);
@@ -180,9 +172,6 @@ public:
         const QString &extensionId,
         const QString &actionId,
         const QVariantMap &params = QVariantMap());
-    Q_INVOKABLE void fetchAutoWireStatus();
-    Q_INVOKABLE void setAutoWireEnabled(bool enabled);
-    Q_INVOKABLE void fetchAutoWirePlan();
     Q_INVOKABLE void fetchDownloaderProfile();
     Q_INVOKABLE void updateDownloaderProfile(const QString &profile);
     Q_INVOKABLE void findMedia(
@@ -222,7 +211,6 @@ signals:
     void extensionsLastRefreshedAtChanged();
     void extensionsLastRefreshSuccessAtChanged();
     void extensionsLastRefreshErrorChanged();
-    void extensionsAutoWireStatusChanged();
     void extensionsDownloaderSettingsChanged();
     void mediaFindResultChanged();
     void mediaFindLoadingChanged();
@@ -313,10 +301,6 @@ private:
     QString m_extensionsLastRefreshedAt;
     QString m_extensionsLastRefreshSuccessAt;
     QString m_extensionsLastRefreshError;
-    bool m_extensionsAutoWireEnabled = true;
-    QString m_extensionsAutoWirePendingPlanId;
-    QString m_extensionsAutoWirePendingReason;
-    int m_extensionsAutoWirePendingConflicts = 0;
     QString m_extensionsDownloaderProfile;
     QString m_extensionsDownloaderDefaultProfile;
     QString m_extensionsDownloaderProfileSource;

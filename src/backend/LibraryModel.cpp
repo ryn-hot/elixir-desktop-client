@@ -142,6 +142,12 @@ QVariant LibraryModel::data(const QModelIndex &index, int role) const {
             return item.runtimeSeconds;
         case MediaRoles::UpdatedAtRole:
             return item.updatedAt;
+        case MediaRoles::TrackedByManagerRole:
+            return item.trackedByManager;
+        case MediaRoles::CanStopTrackingRole:
+            return item.canStopTracking;
+        case MediaRoles::ManagerLabelRole:
+            return item.managerLabel;
         default:
             return QVariant();
     }
@@ -160,6 +166,9 @@ QHash<int, QByteArray> LibraryModel::roleNames() const {
         {MediaRoles::ProgressRole, "progress"},
         {MediaRoles::RuntimeRole, "runtime"},
         {MediaRoles::UpdatedAtRole, "updatedAt"},
+        {MediaRoles::TrackedByManagerRole, "trackedByManager"},
+        {MediaRoles::CanStopTrackingRole, "canStopTracking"},
+        {MediaRoles::ManagerLabelRole, "managerLabel"},
     };
 }
 
@@ -184,6 +193,9 @@ QVariantMap LibraryModel::get(int index) const {
         {"progress", item.progress},
         {"runtime", item.runtimeSeconds},
         {"updatedAt", item.updatedAt},
+        {"trackedByManager", item.trackedByManager},
+        {"canStopTracking", item.canStopTracking},
+        {"managerLabel", item.managerLabel},
     };
 }
 
@@ -297,6 +309,19 @@ MediaItem LibraryModel::itemFromVariant(const QVariantMap &map) const {
     item.updatedAt = map.value("updated_at").toString();
     item.runtimeSeconds = map.value("runtime_seconds").toInt();
     item.progress = map.value("progress").toDouble();
+    const QVariantMap lifecycle = map.value("lifecycle").toMap();
+    item.trackedByManager = lifecycle.value(
+                                  "trackedByManager",
+                                  lifecycle.value("tracked_by_manager"))
+                                  .toBool();
+    item.canStopTracking = lifecycle.value(
+                               "canStopTracking",
+                               lifecycle.value("can_stop_tracking"))
+                               .toBool();
+    item.managerLabel = lifecycle.value(
+                            "managerLabel",
+                            lifecycle.value("manager_label"))
+                            .toString();
 
     const QVariantMap metadata = map.value("metadata").toMap();
     item.posterUrl = resolveUrl(map.value("poster_url").toString());
