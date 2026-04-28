@@ -7,138 +7,128 @@ Item {
     id: root
     property string searchQuery: ""
     property bool searchVisible: true
+    property string profileInitial: "U"
     signal searchChanged(string text)
+    signal activityRequested()
+    signal castRequested()
+    signal settingsRequested()
+    signal profileRequested()
 
     height: Theme.topBarHeight
 
     Rectangle {
         anchors.fill: parent
-        color: "transparent" // Main background handles this, or use Theme.bgMain if needed
+        color: Theme.topBarBg
+        opacity: 0.94
+    }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 1
+        color: Qt.rgba(1, 1, 1, 0.06)
     }
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 15
-        anchors.rightMargin: 15
-        spacing: 15
+        anchors.leftMargin: 24
+        anchors.rightMargin: 22
+        spacing: 18
 
-        // Search Bar (Left-Aligned)
-        Rectangle {
-            Layout.preferredWidth: root.searchVisible ? 250 : 0
-            Layout.preferredHeight: 36
-            radius: 4
-            color: Theme.bgSidebar // Slightly lighter than main bg
-            border.color: searchField.activeFocus ? Theme.accent : "transparent"
-            border.width: 1
+        SearchField {
+            id: searchBox
+            Layout.preferredWidth: root.searchVisible ? (searchBox.fieldActive ? 460 : 360) : 0
+            Layout.preferredHeight: 40
             visible: root.searchVisible
-            
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 10
-                anchors.rightMargin: 10
-                spacing: 8
-                
-                // Search Icon
-                Image {
-                    source: "qrc:/icons/search.svg" // Placeholder
-                    sourceSize.width: 16
-                    sourceSize.height: 16
-                    Layout.preferredWidth: 16
-                    Layout.preferredHeight: 16
-                    opacity: 0.5
-                }
-                
-                TextField {
-                    id: searchField
-                    Layout.fillWidth: true
-                    placeholderText: "Search"
-                    color: Theme.textPrimary
-                    placeholderTextColor: Theme.textSecondary
-                    font.family: Theme.bodyFont.family
-                    font.pixelSize: 14
-                    background: null
-                    selectByMouse: true
-                    verticalAlignment: Text.AlignVCenter
-                    onTextChanged: root.searchChanged(text)
-                }
-                
-                // Clear Button
-                Image {
-                    source: "qrc:/icons/close.svg" // Placeholder
-                    sourceSize.width: 12
-                    sourceSize.height: 12
-                    Layout.preferredWidth: 12
-                    Layout.preferredHeight: 12
-                    visible: searchField.text !== ""
-                    opacity: 0.5
-                    
-                    TapHandler {
-                        onTapped: searchField.text = ""
-                    }
-                }
-            }
+            placeholderText: "Search your library"
+            onTextEdited: root.searchChanged(text)
         }
 
-        Item { Layout.fillWidth: true } // Spacer
+        Item { Layout.fillWidth: true }
 
-        // Action Icons (Right-Aligned)
         RowLayout {
-            spacing: 20
-            
-            // Activity
-            Image {
-                source: "qrc:/icons/activity.svg" // Placeholder
-                sourceSize.width: 20
-                sourceSize.height: 20
-                Layout.preferredWidth: 20
-                Layout.preferredHeight: 20
-                opacity: 0.7
-                HoverHandler { cursorShape: Qt.PointingHandCursor }
+            spacing: 12
+
+            Button {
+                id: activityButton
+                Layout.preferredWidth: 38
+                Layout.preferredHeight: 38
+                padding: 0
+                onClicked: root.activityRequested()
+                background: Rectangle {
+                    radius: 19
+                    color: activityButton.hovered ? Theme.surfaceRaised : "transparent"
+                }
+                contentItem: Image {
+                    source: "qrc:/icons/activity.svg"
+                    sourceSize.width: 20
+                    sourceSize.height: 20
+                    opacity: 0.7
+                }
+            }
+
+            Button {
+                id: castButton
+                Layout.preferredWidth: 38
+                Layout.preferredHeight: 38
+                padding: 0
+                onClicked: root.castRequested()
+                background: Rectangle {
+                    radius: 19
+                    color: castButton.hovered ? Theme.surfaceRaised : "transparent"
+                }
+                contentItem: Image {
+                    source: "qrc:/icons/cast.svg"
+                    sourceSize.width: 20
+                    sourceSize.height: 20
+                    opacity: 0.7
+                }
+            }
+
+            Button {
+                id: settingsButton
+                Layout.preferredWidth: 38
+                Layout.preferredHeight: 38
+                padding: 0
+                onClicked: root.settingsRequested()
+                background: Rectangle {
+                    radius: 19
+                    color: settingsButton.hovered ? Theme.surfaceRaised : "transparent"
+                }
+                contentItem: Image {
+                    source: "qrc:/icons/settings.svg"
+                    sourceSize.width: 20
+                    sourceSize.height: 20
+                    opacity: 0.7
+                }
             }
             
-            // Cast
-            Image {
-                source: "qrc:/icons/cast.svg" // Placeholder
-                sourceSize.width: 20
-                sourceSize.height: 20
-                Layout.preferredWidth: 20
-                Layout.preferredHeight: 20
-                opacity: 0.7
-                HoverHandler { cursorShape: Qt.PointingHandCursor }
-            }
-            
-            // Settings
-            Image {
-                source: "qrc:/icons/settings.svg" // Placeholder
-                sourceSize.width: 20
-                sourceSize.height: 20
-                Layout.preferredWidth: 20
-                Layout.preferredHeight: 20
-                opacity: 0.7
-                HoverHandler { cursorShape: Qt.PointingHandCursor }
-            }
-            
-            // User Avatar
             Rectangle {
-                width: 32
-                height: 32
-                radius: 16
+                width: 34
+                height: 34
+                radius: 17
                 color: Theme.accent
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.profileRequested()
+                }
                 
                 Label {
                     anchors.centerIn: parent
-                    text: "U"
+                    text: root.profileInitial
                     color: "#111"
                     font.bold: true
                     font.pixelSize: 14
                 }
-                
-                // Status Badge
+
                 Rectangle {
                     width: 10
                     height: 10
                     radius: 5
-                    color: "#4CAF50" // Online green
+                    color: Theme.success
                     border.color: Theme.bgMain
                     border.width: 2
                     anchors.right: parent.right

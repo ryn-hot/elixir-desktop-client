@@ -12,10 +12,11 @@ ApplicationWindow {
     height: 720
     visible: true
     title: "Elixir"
-    color: Theme.bgMain // Spec: #282a2d
+    color: Theme.appBg
     property string authNotice: ""
     property int acquisitionUnreadCount: 0
     property var seenAcquisitionIds: ({})
+    readonly property var navigationStack: stackView
 
     Component.onCompleted: {
         if (apiClient.authToken !== "") {
@@ -101,9 +102,9 @@ ApplicationWindow {
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#0B0E14" }
-            GradientStop { position: 0.6; color: "#080A10" }
-            GradientStop { position: 1.0; color: "#050509" }
+            GradientStop { position: 0.0; color: "#181818" }
+            GradientStop { position: 0.62; color: "#121315" }
+            GradientStop { position: 1.0; color: "#090A0C" }
         }
     }
 
@@ -114,8 +115,8 @@ ApplicationWindow {
         height: parent.height * 0.35
         opacity: 0.45
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#1A2436" }
-            GradientStop { position: 1.0; color: "#050509" }
+            GradientStop { position: 0.0; color: "#2D271C" }
+            GradientStop { position: 1.0; color: "#090A0C" }
         }
     }
 
@@ -126,7 +127,7 @@ ApplicationWindow {
         Sidebar {
             id: sidebar
             Layout.fillHeight: true
-            Layout.preferredWidth: 240
+            Layout.preferredWidth: Theme.sidebarWidth
             visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
             currentView: {
                 if (!stackView.currentItem) return "home"
@@ -142,7 +143,6 @@ ApplicationWindow {
                 if (stackView.currentItem.objectName === "extensionsView" ||
                         stackView.currentItem.objectName === "advancedExtensionsView" ||
                         stackView.currentItem.objectName === "extensionControlView") return "extensions"
-                // Add logic for movies/series/anime views when they exist as separate pages
                 return "home"
             }
             acquisitionBadgeCount: root.acquisitionUnreadCount
@@ -183,8 +183,13 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
                 searchVisible: stackView.currentItem && stackView.currentItem.objectName === "homeView"
-                // Global top bar search is reserved for library views.
-                onSearchChanged: {
+                onActivityRequested: root.openAcquisition()
+                onSettingsRequested: {
+                    if (!stackView.currentItem || stackView.currentItem.objectName !== "settingsView") {
+                        stackView.push(Qt.resolvedUrl("views/SettingsView.qml"), { stackView: stackView })
+                    }
+                }
+                onSearchChanged: function(text) {
                     if (stackView.currentItem &&
                             stackView.currentItem.objectName === "homeView" &&
                             typeof stackView.currentItem.setSearchQuery === "function") {
@@ -197,7 +202,7 @@ ApplicationWindow {
                 id: stackView
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                initialItem: ConnectServerView { stackView: stackView; notice: root.authNotice }
+                initialItem: apiClient.authToken !== "" ? homeInitial : connectInitial
                 pushEnter: Transition {
                     NumberAnimation { property: "x"; from: stackView.width * 0.03; to: 0; duration: 150; easing.type: Easing.OutCubic }
                     NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 130 }
@@ -213,11 +218,26 @@ ApplicationWindow {
                     NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: 120 }
                 }
                 
-                // Add background for stackview area
                 background: Rectangle {
-                    color: Theme.backgroundDark
+                    color: Theme.appBg
                 }
             }
+        }
+    }
+
+    Component {
+        id: connectInitial
+        ConnectServerView {
+            stackView: root.navigationStack
+            notice: root.authNotice
+        }
+    }
+
+    Component {
+        id: homeInitial
+        HomeView {
+            stackView: root.navigationStack
+            sectionFilter: "all"
         }
     }
 

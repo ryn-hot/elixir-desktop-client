@@ -15,7 +15,7 @@ Item {
     signal menuClicked()
 
     width: ListView.view ? ListView.view.width : 240
-    height: 44
+    height: 46
 
     MouseArea {
         id: clickArea
@@ -25,56 +25,53 @@ Item {
         cursorShape: Qt.PointingHandCursor
     }
 
-    // Background
     Rectangle {
         anchors.fill: parent
-        anchors.leftMargin: 8
-        anchors.rightMargin: 8
-        radius: 4
+        anchors.leftMargin: 10
+        anchors.rightMargin: 12
+        radius: Theme.radius8
         color: {
-            if (root.isActive) return "#1Affffff" // Active background
-            if (clickArea.containsMouse) return "#0Dffffff" // Hover background
+            if (root.isActive) return Qt.rgba(1, 1, 1, 0.08)
+            if (clickArea.containsMouse) return Qt.rgba(1, 1, 1, 0.07)
             return "transparent"
         }
+        border.color: root.isActive ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18) : "transparent"
+        border.width: root.isActive ? 1 : 0
     }
 
-    // Selection Marker
     Rectangle {
         width: 3
         height: 24
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
-        color: Theme.accent
+        color: root.isActive ? Theme.accent : "transparent"
         visible: root.isActive
         radius: 1.5
     }
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 16 // Indent from marker
-        anchors.rightMargin: 12
+        anchors.leftMargin: 22
+        anchors.rightMargin: 16
         spacing: 12
 
-        // Icon
         Image {
             source: root.iconSource
             sourceSize.width: 20
             sourceSize.height: 20
             Layout.preferredWidth: 20
             Layout.preferredHeight: 20
-            opacity: root.isActive ? 1.0 : 0.7
+            opacity: root.isActive ? 0.95 : (clickArea.containsMouse ? 0.86 : 0.66)
             visible: root.iconSource !== ""
-            // Tinting would require ColorOverlay or icon font, assuming SVG/Image for now
         }
 
-        // Label
         Label {
             text: root.label
             Layout.fillWidth: true
-            color: root.isActive ? "#ffffff" : "#cccccc"
+            color: root.isActive ? Theme.textPrimary : Theme.textSecondary
             font.family: Theme.bodyFont.family
             font.pixelSize: 14
-            font.weight: Font.Medium
+            font.weight: root.isActive ? Font.DemiBold : Font.Medium
             elide: Text.ElideRight
         }
 
@@ -97,9 +94,8 @@ Item {
             }
         }
 
-        // Menu Icon (Three dots)
         Image {
-            source: "qrc:/icons/more_vert.svg" // Placeholder
+            source: "qrc:/icons/more_vert.svg"
             sourceSize.width: 16
             sourceSize.height: 16
             Layout.preferredWidth: 16

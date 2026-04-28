@@ -2,6 +2,7 @@
 
 #include <QJsonValue>
 #include <QMetaType>
+#include <QQmlEngine>
 #include <QUrl>
 
 MediaFilterModel::MediaFilterModel(QObject *parent)
@@ -88,6 +89,10 @@ bool MediaFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex &source
 
 LibraryModel::LibraryModel(QObject *parent)
     : QAbstractListModel(parent) {
+    for (MediaFilterModel *model : {&m_allModel, &m_moviesModel, &m_seriesModel, &m_animeModel, &m_continueModel, &m_searchModel}) {
+        QQmlEngine::setObjectOwnership(model, QQmlEngine::CppOwnership);
+    }
+
     m_allModel.setSourceModel(this);
 
     m_moviesModel.setSourceModel(this);

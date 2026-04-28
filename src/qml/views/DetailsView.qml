@@ -1,7 +1,6 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
-import Qt5Compat.GraphicalEffects
 
 import "../components"
 import Elixir 1.0
@@ -292,6 +291,69 @@ Item {
         return resolved + sep + query.join("&")
     }
 
+    function displayTitle() {
+        return details ? details.title : (libraryItem ? libraryItem.title : "Loading...")
+    }
+
+    function displayType() {
+        return details && details.type ? details.type : (libraryItem && libraryItem.type ? libraryItem.type : "")
+    }
+
+    function displayYear() {
+        var value = details && details.year ? details.year : (libraryItem && libraryItem.year ? libraryItem.year : "")
+        return value ? String(value) : ""
+    }
+
+    function displayDescription() {
+        if (details && details.description) {
+            return details.description
+        }
+        return libraryItem && libraryItem.overview ? libraryItem.overview : ""
+    }
+
+    function displayRuntime() {
+        var seconds = details && details.runtime_seconds ? details.runtime_seconds : (libraryItem && libraryItem.runtime ? libraryItem.runtime : 0)
+        if (!seconds || seconds <= 0) {
+            return ""
+        }
+        var minutes = Math.max(1, Math.round(seconds / 60))
+        return minutes + " min"
+    }
+
+    function displayGenres() {
+        var list = details && details.genres ? details.genres : (libraryItem ? libraryItem.genres : [])
+        return list || []
+    }
+
+    function seasonTitle(season) {
+        if (!season) {
+            return "Episodes"
+        }
+        return season.title || ("Season " + season.season_number)
+    }
+
+    function activeSeasonTitle() {
+        if (activeSeasonDetail) {
+            return seasonTitle(activeSeasonDetail)
+        }
+        if (seasons) {
+            for (var i = 0; i < seasons.length; ++i) {
+                if (seasons[i].id === activeSeasonId) {
+                    return seasonTitle(seasons[i])
+                }
+            }
+        }
+        return "Episodes"
+    }
+
+    function episodeTitle(episode) {
+        if (!episode) {
+            return "Episode"
+        }
+        var number = episode.episode_number ? (episode.episode_number + ". ") : ""
+        return number + (episode.title || ("Episode " + episode.episode_number))
+    }
+
     function resetSeasonState() {
         seasons = []
         episodes = []
@@ -349,236 +411,76 @@ Item {
     Flickable {
         anchors.fill: parent
         contentWidth: width
-        contentHeight: contentColumn.implicitHeight + Theme.spacingXLarge
+        contentHeight: contentColumn.implicitHeight + Theme.space56
         clip: true
 
         ColumnLayout {
             id: contentColumn
             width: parent.width
-            spacing: Theme.spacingXLarge
-            anchors.margins: Theme.spacingXLarge
+            spacing: Theme.space32
 
-            Rectangle {
+            DetailHero {
                 Layout.fillWidth: true
-                radius: Theme.radiusLarge
-                color: Theme.backgroundCard
-                border.color: Theme.border
-                clip: true
-                implicitHeight: headerRow.implicitHeight + Theme.spacingLarge * 2
-
-                Image {
-                    id: headerBanner
-                    anchors.fill: parent
-                    source: bannerSource()
-                    fillMode: Image.PreserveAspectCrop
-                    visible: source !== ""
+                title: root.displayTitle()
+                posterSource: root.artworkUrl(root.posterSource(), Theme.posterLargeWidth * 2, Theme.posterLargeHeight * 2)
+                backdropSource: root.artworkUrl(root.bannerSource(), 1600, 900)
+                description: root.displayDescription()
+                typeLabel: root.displayType()
+                yearLabel: root.displayYear()
+                runtimeLabel: root.displayRuntime()
+                genres: root.displayGenres()
+                busy: details === null || deleteBusy
+                showRestoreBlocked: root.isSeriesType() && root.canRestoreBlockedEpisodes()
+                onPlayRequested: apiClient.startPlayback(mediaId, "")
+                onDeleteRequested: {
+                    deleteStatusText = ""
+                    deleteDialog.open()
                 }
-
-                Rectangle {
-                    anchors.fill: parent
-                    color: Qt.rgba(0, 0, 0, 0.55)
-                    visible: headerBanner.visible
+                onRestoreBlockedRequested: {
+                    blockedEpisodesStatusText = ""
+                    apiClient.restoreBlockedEpisodes(mediaId)
                 }
-
-                RowLayout {
-                    id: headerRow
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacingLarge
-                    spacing: Theme.spacingLarge
-
-                    Rectangle {
-                        Layout.preferredWidth: 220
-                        Layout.preferredHeight: 320
-                        radius: Theme.radiusMedium
-                        color: Theme.backgroundCard
-                        border.color: Theme.border
-                        clip: true
-
-                        Image {
-                            id: posterImage
-                            anchors.fill: parent
-                            source: posterSource()
-                            fillMode: Image.PreserveAspectCrop
-                            visible: source !== ""
-                        }
-
-                        Rectangle {
-                            anchors.fill: parent
-                            color: Theme.backgroundCard
-                            visible: posterImage.source === ""
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: Theme.spacingSmall
-
-                        Label {
-                            text: details ? details.title : (libraryItem ? libraryItem.title : "Loading...")
-                            color: Theme.textPrimary
-                            font.pixelSize: 24
-                            font.family: Theme.fontDisplay
-                            font.weight: Font.DemiBold
-                        }
-
-                        RowLayout {
-                            spacing: Theme.spacingSmall
-                            PillTag { text: details ? details.type : (libraryItem ? libraryItem.type : "") }
-                            PillTag { text: details && details.year ? details.year : (libraryItem && libraryItem.year ? libraryItem.year : "") }
-                            PillTag { text: details && details.runtime_seconds ? details.runtime_seconds + "s" : (libraryItem && libraryItem.runtime ? libraryItem.runtime + "s" : "") }
-                        }
-
-                        Flow {
-                            Layout.fillWidth: true
-                            spacing: Theme.spacingSmall
-                            visible: {
-                                var list = details && details.genres ? details.genres : (libraryItem ? libraryItem.genres : [])
-                                return list && list.length > 0
-                            }
-
-                            Repeater {
-                                model: details && details.genres ? details.genres : (libraryItem ? libraryItem.genres : [])
-                                delegate: PillTag { text: modelData }
-                            }
-                        }
-
-                        Label {
-                            text: details && details.description
-                                  ? details.description
-                                  : (libraryItem && libraryItem.overview ? libraryItem.overview : "No description available yet.")
-                            color: Theme.textSecondary
-                            font.pixelSize: 13
-                            font.family: Theme.fontBody
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true
-                            maximumLineCount: 4
-                            elide: Text.ElideRight
-                        }
-
-                        RowLayout {
-                            spacing: Theme.spacingMedium
-                            Button {
-                                text: "Play"
-                                enabled: details !== null
-                                onClicked: apiClient.startPlayback(mediaId, "")
-                                background: Rectangle {
-                                    radius: Theme.radiusSmall
-                                    color: Theme.accent
-                                }
-                                contentItem: Label {
-                                    text: parent.text
-                                    color: "#111111"
-                                    font.pixelSize: 13
-                                    font.family: Theme.fontBody
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                            }
-                            Button {
-                                text: "Delete"
-                                enabled: details !== null && !deleteBusy
-                                onClicked: {
-                                    deleteStatusText = ""
-                                    deleteDialog.open()
-                                }
-                                background: Rectangle {
-                                    radius: Theme.radiusSmall
-                                    color: "#5a2b2b"
-                                    border.color: "#8d4a4a"
-                                }
-                                contentItem: Label {
-                                    text: parent.text
-                                    color: Theme.textPrimary
-                                    font.pixelSize: 13
-                                    font.family: Theme.fontBody
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                            }
-                            Button {
-                                visible: isSeriesType() && canRestoreBlockedEpisodes()
-                                text: "Restore blocked episodes"
-                                enabled: details !== null
-                                onClicked: {
-                                    blockedEpisodesStatusText = ""
-                                    apiClient.restoreBlockedEpisodes(mediaId)
-                                }
-                                background: Rectangle {
-                                    radius: Theme.radiusSmall
-                                    color: Theme.backgroundCardRaised
-                                    border.color: Theme.border
-                                }
-                                contentItem: Label {
-                                    text: parent.text
-                                    color: Theme.textPrimary
-                                    font.pixelSize: 13
-                                    font.family: Theme.fontBody
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                            }
-                            Button {
-                                text: "Back"
-                                onClicked: {
-                                    if (root.stackView) {
-                                        root.stackView.pop()
-                                    }
-                                }
-                                background: Rectangle {
-                                    radius: Theme.radiusSmall
-                                    color: Theme.backgroundCardRaised
-                                    border.color: Theme.border
-                                }
-                                contentItem: Label {
-                                    text: parent.text
-                                    color: Theme.textPrimary
-                                    font.pixelSize: 13
-                                    font.family: Theme.fontBody
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                            }
-                        }
-
-                        InlineToast {
-                            text: details !== null ? statusText : ""
-                            autoClear: false
-                            color: Theme.textSecondary
-                            font.pixelSize: 12
-                            font.family: Theme.fontBody
-                        }
-
-                        InlineToast {
-                            text: blockedEpisodesStatusText
-                            autoClear: false
-                            visible: blockedEpisodesStatusText !== ""
-                            color: Theme.textSecondary
-                            font.pixelSize: 12
-                            font.family: Theme.fontBody
-                            wrapMode: Text.Wrap
-                        }
+                onBackRequested: {
+                    if (root.stackView) {
+                        root.stackView.pop()
                     }
                 }
             }
 
+            InlineToast {
+                Layout.fillWidth: true
+                Layout.leftMargin: Theme.space32
+                Layout.rightMargin: Theme.space32
+                text: blockedEpisodesStatusText
+                autoClear: false
+                visible: blockedEpisodesStatusText !== ""
+                color: Theme.textSecondary
+                font.pixelSize: 12
+                font.family: Theme.fontBody
+                wrapMode: Text.Wrap
+            }
+
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 120
-                radius: Theme.radiusLarge
-                color: Theme.backgroundCard
-                border.color: Theme.border
+                Layout.leftMargin: Theme.space32
+                Layout.rightMargin: Theme.space32
+                Layout.preferredHeight: 132
+                radius: Theme.radius8
+                color: Theme.surface
+                border.color: Theme.borderSubtle
                 visible: statusText !== "" && details === null
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: Theme.spacingLarge
-                    spacing: Theme.spacingSmall
+                    anchors.margins: Theme.space20
+                    spacing: Theme.space12
 
                     Label {
                         text: "Unable to load details"
                         color: Theme.textPrimary
                         font.pixelSize: 16
                         font.family: Theme.fontDisplay
+                        font.weight: Font.DemiBold
                     }
 
                     InlineToast {
@@ -591,356 +493,64 @@ Item {
                         Layout.fillWidth: true
                     }
 
-                    Button {
+                    ActionButton {
                         text: "Retry"
+                        compact: true
                         onClicked: apiClient.fetchMediaDetails(mediaId)
-                        background: Rectangle {
-                            radius: Theme.radiusSmall
-                            color: Theme.backgroundCardRaised
-                            border.color: Theme.border
-                        }
-                        contentItem: Label {
-                            text: parent.text
-                            color: Theme.textPrimary
-                            font.pixelSize: 12
-                            font.family: Theme.fontBody
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
                     }
                 }
             }
 
-            // Season Selector (Dropdown)
-            Item {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 50
-                Layout.leftMargin: Theme.spacingLarge
-                visible: isSeriesType() && details !== null && seasons && seasons.length > 0
-                z: 100 // Ensure dropdown appears on top
-
-                property bool isOpen: false
-                property var currentSeason: {
-                    if (!seasons) return null
-                    for (var i = 0; i < seasons.length; i++) {
-                        if (seasons[i].id === activeSeasonId) return seasons[i]
-                    }
-                    return null
-                }
-
-                // Dropdown Header
-                RowLayout {
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 10
-
-                    TapHandler {
-                        onTapped: parent.parent.isOpen = !parent.parent.isOpen
-                    }
-
-                    // Arrow Icon
-                    Text {
-                        text: "▼"
-                        color: "white"
-                        font.pixelSize: 14
-                        rotation: parent.parent.isOpen ? 180 : 0
-                        Behavior on rotation { NumberAnimation { duration: 200 } }
-                    }
-
-                    // Selected Season Text
-                    Label {
-                        text: parent.parent.currentSeason 
-                              ? (parent.parent.currentSeason.title || "Season " + parent.parent.currentSeason.season_number)
-                              : "Select Season"
-                        color: "white"
-                        font.pixelSize: 24
-                        font.family: Theme.headerFont.family
-                        font.weight: Font.Bold
-                    }
-                }
-
-                // Dropdown List Overlay
-                Rectangle {
-                    id: dropdownList
-                    width: 400
-                    height: Math.min(seasonListView.contentHeight + 20, 400)
-                    color: "#1f2124" // Theme.bgSidebar or similar dark
-                    radius: 8
-                    border.color: Theme.border
-                    border.width: 1
-                    visible: parent.isOpen
-                    y: 40 // Below header
-                    x: 0
-                    
-                    // Shadow
-                    layer.enabled: true
-                    layer.effect: DropShadow {
-                        transparentBorder: true
-                        horizontalOffset: 0
-                        verticalOffset: 4
-                        radius: 12
-                        samples: 25
-                        color: "#80000000"
-                    }
-
-                    ListView {
-                        id: seasonListView
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        clip: true
-                        model: seasons ? seasons : []
-                        
-                        delegate: Rectangle {
-                            width: ListView.view.width
-                            height: 40
-                            color: hoverHandler.hovered ? "#33ffffff" : "transparent"
-                            radius: 4
-
-                            HoverHandler { id: hoverHandler }
-
-                            TapHandler {
-                                onTapped: {
-                                    selectSeason(modelData.id)
-                                    dropdownList.parent.isOpen = false
-                                }
-                            }
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 10
-                                
-                                Label {
-                                    text: modelData.title || ("Season " + modelData.season_number)
-                                    color: modelData.id === activeSeasonId ? Theme.accent : "white"
-                                    font.pixelSize: 16
-                                    font.weight: modelData.id === activeSeasonId ? Font.Bold : Font.Normal
-                                    Layout.fillWidth: true
-                                }
-
-                                Label {
-                                    text: (modelData.episode_count || 0) + " Episodes"
-                                    color: "#80ffffff"
-                                    font.pixelSize: 14
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Episodes List
             ColumnLayout {
                 Layout.fillWidth: true
-                Layout.leftMargin: Theme.spacingLarge
-                spacing: 15
-                visible: isSeriesType() && details !== null
+                Layout.leftMargin: Theme.space32
+                Layout.rightMargin: Theme.space32
+                spacing: Theme.space16
+                visible: root.isSeriesType() && details !== null
 
-                Label {
-                    text: "Episodes"
-                    color: Theme.textPrimary
-                    font.pixelSize: 18
-                    font.family: Theme.headerFont.family
-                    font.weight: Font.Bold
-                    visible: episodes && episodes.length > 0
+                SectionHeader {
+                    Layout.fillWidth: true
+                    title: root.activeSeasonTitle()
+                    subtitle: seasonStatusText
+                }
+
+                SeasonTabs {
+                    Layout.fillWidth: true
+                    visible: seasons && seasons.length > 0
+                    seasons: root.seasons
+                    activeSeasonId: root.activeSeasonId
+                    onSeasonSelected: root.selectSeason(seasonId)
+                }
+
+                EmptyState {
+                    Layout.fillWidth: true
+                    implicitHeight: 132
+                    visible: (!episodes || episodes.length === 0) && seasonStatusText === ""
+                    title: seasons && seasons.length > 0 ? "No episodes in this season" : "No seasons found"
+                    message: seasons && seasons.length > 0 ? "Episodes will appear here when metadata is available." : ""
                 }
 
                 Repeater {
                     model: episodes ? episodes : []
-                    delegate: Rectangle {
+                    delegate: EpisodeCard {
                         Layout.fillWidth: true
-                        height: 100
-                        color: "transparent" // Transparent background for list items
-                        
-                        RowLayout {
-                            anchors.fill: parent
-                            spacing: 15
-
-                            // Thumbnail
-                            Rectangle {
-                                Layout.preferredWidth: 178 // 16:9 roughly
-                                Layout.preferredHeight: 100
-                                radius: 4
-                                color: Theme.bgCard
-                                clip: true
-                                
-                                Image {
-                                    anchors.fill: parent
-                                    source: artworkUrl(modelData.thumbnail_url, 356, 200)
-                                    fillMode: Image.PreserveAspectCrop
-                                    visible: source !== ""
-                                }
-                                
-                                // Play Overlay
-                                Rectangle {
-                                    anchors.fill: parent
-                                    color: "#66000000"
-                                    visible: episodeMouseArea.containsMouse
-                                    
-                                    Image {
-                                        source: "qrc:/icons/play.svg" // Ensure this icon exists or use a shape
-                                        width: 32
-                                        height: 32
-                                        anchors.centerIn: parent
-                                        visible: false // Hiding for now if icon missing, or use rectangle
-                                    }
-                                    
-                                    // Fallback Play Icon
-                                    Rectangle {
-                                        width: 30
-                                        height: 30
-                                        radius: 15
-                                        color: Theme.accent
-                                        anchors.centerIn: parent
-                                        
-                                        Canvas {
-                                            anchors.fill: parent
-                                            onPaint: {
-                                                var ctx = getContext("2d");
-                                                ctx.fillStyle = "#111";
-                                                ctx.beginPath();
-                                                ctx.moveTo(11, 8);
-                                                ctx.lineTo(21, 15);
-                                                ctx.lineTo(11, 22);
-                                                ctx.closePath();
-                                                ctx.fill();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Info
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                spacing: 4
-                                
-                                Label {
-                                    text: (modelData.episode_number ? (modelData.episode_number + ". ") : "") + (modelData.title || "Episode " + modelData.episode_number)
-                                    color: modelData.has_file ? Theme.textPrimary : Theme.textMuted
-                                    font.pixelSize: 15
-                                    font.family: Theme.bodyFont.family
-                                    font.weight: Font.Bold
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                }
-                                
-                                Label {
-                                    text: modelData.description || "No description available."
-                                    color: Theme.textSecondary
-                                    font.pixelSize: 13
-                                    font.family: Theme.bodyFont.family
-                                    elide: Text.ElideRight
-                                    maximumLineCount: 3
-                                    wrapMode: Text.Wrap
-                                    Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                }
-                                
-                                Label {
-                                    text: episodeStatusLabel(modelData)
-                                    color: episodeBlocked(modelData)
-                                           ? Theme.accentInfo
-                                           : (modelData.has_file ? Theme.textMuted : Theme.accent)
-                                    font.pixelSize: 11
-                                    font.family: Theme.bodyFont.family
-                                }
-
-                                RowLayout {
-                                    spacing: Theme.spacingSmall
-
-                                    Button {
-                                        visible: modelData.has_file && !episodeBlocked(modelData)
-                                        text: "Play"
-                                        enabled: episodeActionBusyId === ""
-                                        onClicked: apiClient.startPlayback(mediaId, modelData.id)
-                                        background: Rectangle {
-                                            radius: Theme.radiusSmall
-                                            color: Theme.backgroundCardRaised
-                                            border.color: Theme.border
-                                        }
-                                        contentItem: Label {
-                                            text: parent.text
-                                            color: Theme.textPrimary
-                                            font.pixelSize: 11
-                                            font.family: Theme.fontBody
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                        }
-                                    }
-
-                                    Button {
-                                        visible: episodeCanDelete(modelData) && !episodeBlocked(modelData)
-                                        text: episodeActionBusyId === modelData.id ? "Working..." : "Delete"
-                                        enabled: episodeActionBusyId === "" || episodeActionBusyId === modelData.id
-                                        onClicked: openEpisodeDeleteDialog(modelData)
-                                        background: Rectangle {
-                                            radius: Theme.radiusSmall
-                                            color: "#5a2b2b"
-                                            border.color: "#8d4a4a"
-                                        }
-                                        contentItem: Label {
-                                            text: parent.text
-                                            color: Theme.textPrimary
-                                            font.pixelSize: 11
-                                            font.family: Theme.fontBody
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                        }
-                                    }
-
-                                    Button {
-                                        visible: episodeCanRestore(modelData)
-                                        text: episodeActionBusyId === modelData.id ? "Working..." : "Allow again"
-                                        enabled: episodeActionBusyId === "" || episodeActionBusyId === modelData.id
-                                        onClicked: {
-                                            episodeActionBusyId = modelData.id
-                                            episodeStatusText = ""
-                                            apiClient.restoreEpisode(modelData.id)
-                                        }
-                                        background: Rectangle {
-                                            radius: Theme.radiusSmall
-                                            color: Theme.backgroundCardRaised
-                                            border.color: Theme.border
-                                        }
-                                        contentItem: Label {
-                                            text: parent.text
-                                            color: Theme.textPrimary
-                                            font.pixelSize: 11
-                                            font.family: Theme.fontBody
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        MouseArea {
-                            id: episodeMouseArea
-                            anchors.fill: parent
-                            enabled: !modelData.has_file && !episodeCanDelete(modelData) && !episodeCanRestore(modelData)
-                            hoverEnabled: true
-                            cursorShape: (modelData.has_file && !episodeBlocked(modelData))
-                                         ? Qt.PointingHandCursor
-                                         : Qt.ArrowCursor
-                            onClicked: {
-                                if (modelData.has_file && !episodeBlocked(modelData)) {
-                                    apiClient.startPlayback(mediaId, modelData.id) // Assuming episode ID is file ID or handled
-                                    // Note: API might need specific file ID logic if episode maps to file
-                                }
-                            }
+                        title: root.episodeTitle(modelData)
+                        description: modelData.description || ""
+                        thumbnail: root.artworkUrl(modelData.thumbnail_url || modelData.thumbnailUrl || "", Theme.episodeThumbWidth * 2, Theme.episodeThumbHeight * 2)
+                        statusText: root.episodeStatusLabel(modelData)
+                        available: modelData.has_file === true
+                        blocked: root.episodeBlocked(modelData)
+                        canDelete: root.episodeCanDelete(modelData)
+                        canRestore: root.episodeCanRestore(modelData)
+                        busy: root.episodeActionBusyId === modelData.id
+                        onPlayRequested: apiClient.startPlayback(mediaId, modelData.id)
+                        onDeleteRequested: root.openEpisodeDeleteDialog(modelData)
+                        onRestoreRequested: {
+                            episodeActionBusyId = modelData.id
+                            episodeStatusText = ""
+                            apiClient.restoreEpisode(modelData.id)
                         }
                     }
-                }
-
-                Label {
-                    text: "No episodes found."
-                    color: Theme.textMuted
-                    font.pixelSize: 13
-                    font.family: Theme.bodyFont.family
-                    visible: episodes && episodes.length === 0
                 }
 
                 InlineToast {
@@ -955,93 +565,65 @@ Item {
                 }
             }
 
-            Rectangle {
+            ColumnLayout {
                 Layout.fillWidth: true
-                radius: Theme.radiusLarge
-                color: Theme.backgroundCard
-                border.color: Theme.border
+                Layout.leftMargin: Theme.space32
+                Layout.rightMargin: Theme.space32
+                visible: details && details.files && details.files.length > 0
+                spacing: Theme.space12
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacingLarge
-                    spacing: Theme.spacingMedium
+                SectionHeader {
+                    Layout.fillWidth: true
+                    title: "Files"
+                }
 
-                    Label {
-                        text: "Files"
-                        color: Theme.textPrimary
-                        font.pixelSize: 18
-                        font.family: Theme.fontDisplay
-                    }
+                Repeater {
+                    model: details && details.files ? details.files : []
+                    delegate: Rectangle {
+                        Layout.fillWidth: true
+                        height: 72
+                        radius: Theme.radius6
+                        color: Qt.rgba(1, 1, 1, 0.045)
+                        border.color: Qt.rgba(1, 1, 1, 0.08)
 
-                    Repeater {
-                        model: details && details.files ? details.files : []
-                        delegate: Rectangle {
-                            Layout.fillWidth: true
-                            height: 72
-                            radius: Theme.radiusSmall
-                            color: Theme.backgroundCardRaised
-                            border.color: Theme.border
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: Theme.space12
+                            spacing: Theme.space12
 
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.margins: Theme.spacingMedium
-                                spacing: Theme.spacingMedium
-
-                                ColumnLayout {
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Label {
+                                    text: modelData.path
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 12
+                                    font.family: Theme.fontBody
+                                    elide: Text.ElideMiddle
                                     Layout.fillWidth: true
-                                    Label {
-                                        text: modelData.path
-                                        color: Theme.textPrimary
-                                        font.pixelSize: 12
-                                        font.family: Theme.fontBody
-                                        elide: Text.ElideRight
-                                    }
-                                    Label {
-                                        text: (modelData.container || "") + " / " + (modelData.video_codec || "?") + " / " + (modelData.audio_codec || "?")
-                                        color: Theme.textSecondary
-                                        font.pixelSize: 11
-                                        font.family: Theme.fontBody
-                                        elide: Text.ElideRight
-                                    }
                                 }
+                                Label {
+                                    text: (modelData.container || "") + " / " + (modelData.video_codec || "?") + " / " + (modelData.audio_codec || "?")
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
 
-                                Button {
-                                    text: "Play file"
-                                    enabled: modelData.scan_state !== "missing"
-                                    onClicked: apiClient.startPlayback(mediaId, modelData.id)
-                                    background: Rectangle {
-                                        radius: Theme.radiusSmall
-                                        color: Theme.backgroundCard
-                                        border.color: Theme.border
-                                    }
-                                    contentItem: Label {
-                                        text: parent.text
-                                        color: Theme.textPrimary
-                                        font.pixelSize: 12
-                                        font.family: Theme.fontBody
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                    }
-                                }
+                            ActionButton {
+                                text: "Play file"
+                                compact: true
+                                enabled: modelData.scan_state !== "missing"
+                                onClicked: apiClient.startPlayback(mediaId, modelData.id)
+                            }
 
-                                Button {
-                                    text: "Fix Match"
-                                    visible: reviewEntryForFile(modelData.id) !== null
-                                    onClicked: openReviewForFile(modelData.id)
-                                    background: Rectangle {
-                                        radius: Theme.radiusSmall
-                                        color: Theme.backgroundCardRaised
-                                        border.color: Theme.border
-                                    }
-                                    contentItem: Label {
-                                        text: parent.text
-                                        color: Theme.textPrimary
-                                        font.pixelSize: 12
-                                        font.family: Theme.fontBody
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                    }
-                                }
+                            ActionButton {
+                                text: "Fix Match"
+                                compact: true
+                                visible: root.reviewEntryForFile(modelData.id) !== null
+                                onClicked: root.openReviewForFile(modelData.id)
                             }
                         }
                     }

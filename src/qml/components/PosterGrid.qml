@@ -7,20 +7,19 @@ Item {
     id: root
     property alias model: grid.model
     property string title: ""
+    property string subtitle: ""
     signal cardClicked(string mediaId)
 
-    implicitHeight: titleLabel.implicitHeight + grid.contentHeight + Theme.sectionSpacing
+    implicitHeight: header.implicitHeight + grid.contentHeight + Theme.space24
 
     ColumnLayout {
         width: parent.width
-        spacing: Theme.cardSpacing
+        spacing: Theme.space16
 
-        Label {
-            id: titleLabel
-            text: root.title
-            color: Theme.textPrimary
-            font.pixelSize: 18
-            font.family: Theme.fontDisplay
+        SectionHeader {
+            id: header
+            title: root.title
+            subtitle: root.subtitle
             Layout.fillWidth: true
             visible: root.title !== ""
         }
@@ -29,22 +28,34 @@ Item {
             id: grid
             Layout.fillWidth: true
             width: parent.width
-            height: contentHeight
+            Layout.preferredHeight: contentHeight
             cellWidth: Theme.posterWidth + Theme.cardSpacing
-            cellHeight: Theme.posterHeight + 60 // + metadata + spacing
+            cellHeight: Theme.posterHeight + 68
             interactive: false
             clip: true
 
-            delegate: MediaCard {
-                mediaId: model.mediaId
-                title: model.title
-                imageSource: model.poster
-                progress: model.progress
-                cardType: "portrait"
-                trackedByManager: model.trackedByManager === true
-                canStopTracking: model.canStopTracking === true
-                managerLabel: model.managerLabel ? model.managerLabel : ""
-                onClicked: root.cardClicked(model.mediaId)
+            delegate: Item {
+                id: cardDelegate
+                required property string mediaId
+                required property string title
+                required property var year
+                required property string poster
+                required property var progress
+                required property bool trackedByManager
+
+                width: Theme.posterWidth
+                height: Theme.posterHeight + 58
+
+                MediaPosterCard {
+                    anchors.fill: parent
+                    mediaId: cardDelegate.mediaId
+                    title: cardDelegate.title
+                    subtitle: cardDelegate.year ? String(cardDelegate.year) : ""
+                    imageSource: cardDelegate.poster
+                    progress: cardDelegate.progress !== undefined ? cardDelegate.progress : 0
+                    trackedByManager: cardDelegate.trackedByManager === true
+                    onClicked: root.cardClicked(mediaId)
+                }
             }
         }
     }
