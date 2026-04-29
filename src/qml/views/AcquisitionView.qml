@@ -23,21 +23,12 @@ Item {
         return value === undefined || value === null ? [] : value
     }
 
-    function mediaTypeCode(item) {
-        if (!item) {
-            return ""
-        }
-        return String(item.mediaType || item.media_type || "").toLowerCase()
-    }
-
     function batchUnitLabel(item, count) {
-        var type = mediaTypeCode(item)
-        var singular = (type === "tv" || type === "series" || type === "anime") ? "episode" : "item"
-        return count === 1 ? singular : (singular + "s")
+        return count === 1 ? "download" : "downloads"
     }
 
     function batchSectionTitle(item, count) {
-        return count + " " + batchUnitLabel(item, count)
+        return count + " active " + batchUnitLabel(item, count)
     }
 
     function acquisitionItemKey(item) {
@@ -131,6 +122,20 @@ Item {
         return amount.toFixed(amount >= 100 || unit === 0 ? 0 : 1) + " " + units[unit]
     }
 
+    function formatBytes(value) {
+        if (value === undefined || value === null || Number(value) <= 0) {
+            return ""
+        }
+        var units = ["B", "KiB", "MiB", "GiB", "TiB"]
+        var amount = Number(value)
+        var unit = 0
+        while (amount >= 1024 && unit < units.length - 1) {
+            amount /= 1024
+            unit += 1
+        }
+        return amount.toFixed(amount >= 100 || unit === 0 ? 0 : 1) + " " + units[unit]
+    }
+
     function formatEtaSeconds(value) {
         if (value === undefined || value === null) {
             return ""
@@ -145,6 +150,62 @@ Item {
             return hours + "h " + minutes + "m"
         }
         return Math.max(1, minutes) + "m"
+    }
+
+    function formatAvailability(value) {
+        if (value === undefined || value === null || !isFinite(Number(value)) || Number(value) < 0) {
+            return ""
+        }
+        return Number(value).toFixed(Number(value) >= 10 ? 1 : 2) + "x"
+    }
+
+    function transferMetricParts(item) {
+        var parts = []
+        if (!item) {
+            return parts
+        }
+        var size = formatBytes(item.sizeBytes)
+        if (size !== "") {
+            parts.push({ label: "Size", value: size, tone: "neutral" })
+        }
+        var downloaded = formatBytes(item.downloadedBytes)
+        if (downloaded !== "") {
+            parts.push({ label: "Done", value: downloaded, tone: "neutral" })
+        }
+        var down = formatRate(item.downloadRateBps)
+        if (down !== "") {
+            parts.push({ label: "Down", value: down, tone: "success" })
+        }
+        var up = formatRate(item.uploadRateBps)
+        if (up !== "") {
+            parts.push({ label: "Up", value: up, tone: "neutral" })
+        }
+        var eta = formatEtaSeconds(item.etaSeconds)
+        if (eta !== "") {
+            parts.push({ label: "ETA", value: eta, tone: "neutral" })
+        }
+        if (item.connectedSeeds !== undefined && item.connectedSeeds !== null) {
+            var seedValue = String(item.connectedSeeds)
+            if (item.knownSeeds !== undefined && item.knownSeeds !== null) {
+                seedValue += " (" + item.knownSeeds + ")"
+            }
+            parts.push({ label: "Seeds", value: seedValue, tone: Number(item.connectedSeeds) > 0 ? "success" : "warning" })
+        }
+        if (item.connectedPeers !== undefined && item.connectedPeers !== null) {
+            var peerValue = String(item.connectedPeers)
+            if (item.knownPeers !== undefined && item.knownPeers !== null) {
+                peerValue += " (" + item.knownPeers + ")"
+            }
+            parts.push({ label: "Peers", value: peerValue, tone: "neutral" })
+        }
+        var availability = formatAvailability(item.availability)
+        if (availability !== "") {
+            parts.push({ label: "Availability", value: availability, tone: Number(item.availability) >= 1 ? "success" : "warning" })
+        }
+        if (item.category !== undefined && item.category !== null && String(item.category).trim() !== "") {
+            parts.push({ label: "Category", value: String(item.category), tone: "neutral" })
+        }
+        return parts
     }
 
     function phaseShowsProgress(phase) {
@@ -533,7 +594,7 @@ Item {
                                                             Layout.fillWidth: true
                                                             text: String(modelData.title || "Item")
                                                             color: Theme.textPrimary
-                                                            font.pixelSize: 11
+                                                            font.pixelSize: 12
                                                             font.family: Theme.fontBody
                                                             wrapMode: Text.WordWrap
                                                         }
@@ -575,6 +636,38 @@ Item {
                                                     font.family: Theme.fontBody
                                                     wrapMode: Text.WordWrap
                                                     visible: text !== ""
+                                                }
+
+                                                Flow {
+                                                    Layout.fillWidth: true
+                                                    spacing: 5
+                                                    visible: root.transferMetricParts(modelData).length > 0
+
+                                                    Repeater {
+                                                        model: root.transferMetricParts(modelData)
+
+                                                        delegate: Rectangle {
+                                                            required property var modelData
+                                                            radius: Theme.radiusSmall
+                                                            color: Theme.backgroundCardRaised
+                                                            border.color: modelData.tone === "success"
+                                                                          ? Theme.accentSuccess
+                                                                          : (modelData.tone === "warning"
+                                                                             ? Theme.accent
+                                                                             : Theme.border)
+                                                            implicitHeight: 24
+                                                            implicitWidth: transferMetricLabel.implicitWidth + 14
+
+                                                            Label {
+                                                                id: transferMetricLabel
+                                                                anchors.centerIn: parent
+                                                                text: String(modelData.label + ": " + modelData.value)
+                                                                color: Theme.textSecondary
+                                                                font.pixelSize: 10
+                                                                font.family: Theme.fontBody
+                                                            }
+                                                        }
+                                                    }
                                                 }
 
                                                 ProgressBar {
