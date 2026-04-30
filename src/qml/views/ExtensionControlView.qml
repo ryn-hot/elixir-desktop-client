@@ -157,6 +157,42 @@ Item {
         return Theme.accentInfoSoft
     }
 
+    function actionBackground(kind, fallbackColor) {
+        var code = String(kind || "")
+        if (code === "primary") {
+            return Theme.accent
+        }
+        if (code === "info") {
+            return Theme.accentInfo
+        }
+        if (code === "danger") {
+            return Theme.accentDangerSoft
+        }
+        return fallbackColor
+    }
+
+    function actionBorder(kind) {
+        var code = String(kind || "")
+        if (code === "primary") {
+            return Theme.accent
+        }
+        if (code === "info") {
+            return Theme.accentInfo
+        }
+        if (code === "danger") {
+            return Theme.accentDanger
+        }
+        return Theme.border
+    }
+
+    function actionTextColor(kind) {
+        var code = String(kind || "")
+        if (code === "primary" || code === "info") {
+            return "#141414"
+        }
+        return Theme.textPrimary
+    }
+
     function policyAccent(mode) {
         var key = String(mode || "")
         if (key === "managed") {
@@ -997,18 +1033,12 @@ Item {
                                 onClicked: root.runAction(modelData)
                                 background: Rectangle {
                                     radius: Theme.radiusSmall
-                                    color: String(modelData.kind || "") === "primary"
-                                           ? Theme.accent
-                                           : Theme.backgroundCardRaised
-                                    border.color: String(modelData.kind || "") === "primary"
-                                                  ? Theme.accent
-                                                  : Theme.border
+                                    color: root.actionBackground(modelData.kind, Theme.backgroundCardRaised)
+                                    border.color: root.actionBorder(modelData.kind)
                                 }
                                 contentItem: Label {
                                     text: parent.text
-                                    color: String(modelData.kind || "") === "primary"
-                                           ? "#141414"
-                                           : Theme.textPrimary
+                                    color: root.actionTextColor(modelData.kind)
                                     font.pixelSize: 11
                                     font.family: Theme.fontBody
                                     horizontalAlignment: Text.AlignHCenter
@@ -1154,18 +1184,12 @@ Item {
                                                 onClicked: root.runAction(noticeData.action)
                                                 background: Rectangle {
                                                     radius: Theme.radiusSmall
-                                                    color: String((noticeData.action || {}).kind || "") === "primary"
-                                                           ? Theme.accent
-                                                           : Theme.backgroundCard
-                                                    border.color: String((noticeData.action || {}).kind || "") === "primary"
-                                                                  ? Theme.accent
-                                                                  : Theme.border
+                                                    color: root.actionBackground((noticeData.action || {}).kind, Theme.backgroundCard)
+                                                    border.color: root.actionBorder((noticeData.action || {}).kind)
                                                 }
                                                 contentItem: Label {
                                                     text: parent.text
-                                                    color: String((noticeData.action || {}).kind || "") === "primary"
-                                                           ? "#141414"
-                                                           : Theme.textPrimary
+                                                    color: root.actionTextColor((noticeData.action || {}).kind)
                                                     font.pixelSize: 11
                                                     font.family: Theme.fontBody
                                                     horizontalAlignment: Text.AlignHCenter
@@ -1383,22 +1407,12 @@ Item {
                                                         onClicked: root.runAction(modelData)
                                                         background: Rectangle {
                                                             radius: Theme.radiusSmall
-                                                            color: String(modelData.kind || "") === "primary"
-                                                                   ? Theme.accent
-                                                                   : String(modelData.kind || "") === "danger"
-                                                                     ? Theme.accentDangerSoft
-                                                                     : Theme.backgroundCard
-                                                            border.color: String(modelData.kind || "") === "primary"
-                                                                          ? Theme.accent
-                                                                          : String(modelData.kind || "") === "danger"
-                                                                            ? Theme.accentDanger
-                                                                            : Theme.border
+                                                            color: root.actionBackground(modelData.kind, Theme.backgroundCard)
+                                                            border.color: root.actionBorder(modelData.kind)
                                                         }
                                                         contentItem: Label {
                                                             text: parent.text
-                                                            color: String(modelData.kind || "") === "primary"
-                                                                   ? "#141414"
-                                                                   : Theme.textPrimary
+                                                            color: root.actionTextColor(modelData.kind)
                                                             font.pixelSize: 11
                                                             font.family: Theme.fontBody
                                                             horizontalAlignment: Text.AlignHCenter
@@ -1425,18 +1439,12 @@ Item {
                                         onClicked: root.runAction(modelData)
                                         background: Rectangle {
                                             radius: Theme.radiusSmall
-                                            color: String(modelData.kind || "") === "primary"
-                                                   ? Theme.accent
-                                                   : Theme.backgroundCardRaised
-                                            border.color: String(modelData.kind || "") === "primary"
-                                                          ? Theme.accent
-                                                          : Theme.border
+                                            color: root.actionBackground(modelData.kind, Theme.backgroundCardRaised)
+                                            border.color: root.actionBorder(modelData.kind)
                                         }
                                         contentItem: Label {
                                             text: parent.text
-                                            color: String(modelData.kind || "") === "primary"
-                                                   ? "#141414"
-                                                   : Theme.textPrimary
+                                            color: root.actionTextColor(modelData.kind)
                                             font.pixelSize: 11
                                             font.family: Theme.fontBody
                                             horizontalAlignment: Text.AlignHCenter

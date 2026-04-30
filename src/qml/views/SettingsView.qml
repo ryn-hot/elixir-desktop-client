@@ -9,6 +9,13 @@ Item {
     id: root
     objectName: "settingsView"
     property StackView stackView: null
+    property bool warpDisclosureAccepted: false
+    property string networkProtectionNotice: ""
+    property string selectedProtectionProfileId: ""
+    property int importProviderIndex: 0
+    property int importProviderPresetIndex: 0
+    property int importForwardedPortProtocolIndex: 0
+    property int importForwardedPortSourceIndex: 0
 
     function parseList(text) {
         return text.split(/\\s*,\\s*/).filter(function(item) { return item.length > 0 })
@@ -59,6 +66,362 @@ Item {
         return String(pref.anime_provider_id || pref.animeProviderId || "")
     }
 
+    function valueOrDash(value) {
+        if (value === undefined || value === null || String(value).trim() === "") {
+            return "-"
+        }
+        return String(value)
+    }
+
+    function titleLabel(value) {
+        var text = String(value || "").replace(/_/g, " ").replace(/-/g, " ")
+        if (text === "") {
+            return "Unknown"
+        }
+        return text.charAt(0).toUpperCase() + text.slice(1)
+    }
+
+    function portForwardingLabel(value) {
+        var mode = String(value || "")
+        if (mode === "unsupported") {
+            return "No forwarded port"
+        }
+        if (mode === "provider_api") {
+            return "Provider API"
+        }
+        return root.titleLabel(mode)
+    }
+
+    function activeProtectionProfile() {
+        var status = apiClient.networkProtectionStatus || {}
+        return status.activeProfile || status.active_profile || {}
+    }
+
+    function protectionBlocker() {
+        var status = apiClient.networkProtectionStatus || {}
+        return status.blocker || {}
+    }
+
+    function protectionChecks() {
+        var status = apiClient.networkProtectionStatus || {}
+        return status.checks || []
+    }
+
+    function protectedAppsLabel() {
+        var status = apiClient.networkProtectionStatus || {}
+        var apps = status.protectedApps || status.protected_apps || []
+        if (!apps || apps.length === 0) {
+            return "None"
+        }
+        return apps.join(", ")
+    }
+
+    function torrentReachability() {
+        var status = apiClient.networkProtectionStatus || {}
+        return status.torrentReachability || status.torrent_reachability || {}
+    }
+
+    function torrentReachabilityDetail() {
+        var reachability = root.torrentReachability()
+        var port = reachability.forwardedPort || reachability.forwarded_port || null
+        if (port && port.port !== undefined && port.port !== null) {
+            var protocol = root.valueOrDash(port.protocol || "tcp").toUpperCase()
+            return "Forwarded " + protocol + " port " + port.port + " is observed for torrent reachability."
+        }
+        return reachability.detail || ""
+    }
+
+    function listenPortSyncDetail() {
+        var plan = apiClient.networkProtectionListenPortSyncPlan || {}
+        if (plan.targetPort !== undefined && plan.targetPort !== null) {
+            return "qBittorrent listen-port sync target: " + plan.targetPort + ". " + (plan.detail || "")
+        }
+        return plan.detail || ""
+    }
+
+    function listenPortSyncReady() {
+        var plan = apiClient.networkProtectionListenPortSyncPlan || {}
+        return String(plan.status || "") === "ready" && plan.targetPort !== undefined && plan.targetPort !== null
+    }
+
+    function providerPresets() {
+        var catalog = apiClient.networkProtectionProviderPresets || {}
+        return catalog.presets || []
+    }
+
+    function presetMethods(preset) {
+        return root.listValue(preset || {}, "import_methods", "importMethods")
+    }
+
+    function presetHasMethod(preset, method) {
+        var methods = root.presetMethods(preset)
+        for (var i = 0; i < methods.length; ++i) {
+            if (String(methods[i]) === method) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function presetSupportsWireGuard(preset) {
+        return root.presetHasMethod(preset, "wireguard_conf") ||
+               root.presetHasMethod(preset, "paste_conf") ||
+               root.presetHasMethod(preset, "upload_conf")
+    }
+
+    function presetSupportsOpenVpn(preset) {
+        return root.presetHasMethod(preset, "openvpn_conf") ||
+               root.presetHasMethod(preset, "upload_ovpn")
+    }
+
+    function importPresetOptions() {
+        var presets = root.providerPresets()
+        var options = []
+        for (var i = 0; i < presets.length; ++i) {
+            var preset = presets[i]
+            if (!root.presetSupportsWireGuard(preset) && !root.presetSupportsOpenVpn(preset)) {
+                continue
+            }
+            var forwarding = preset.portForwarding || preset.port_forwarding || "unknown"
+            options.push({
+                label: root.valueOrDash(preset.name) + " (" + root.portForwardingLabel(forwarding) + ")",
+                value: String(preset.id || ""),
+                preset: preset
+            })
+        }
+        if (options.length === 0) {
+            options.push({
+                label: "Custom WireGuard (Manual)",
+                value: "custom-wireguard",
+                preset: {
+                    id: "custom-wireguard",
+                    name: "Custom WireGuard",
+                    provider: "custom",
+                    importMethods: ["paste_conf"],
+                    portForwarding: "manual",
+                    notes: []
+                }
+            })
+            options.push({
+                label: "Custom OpenVPN (Manual)",
+                value: "custom-openvpn",
+                preset: {
+                    id: "custom-openvpn",
+                    name: "Custom OpenVPN",
+                    provider: "custom",
+                    importMethods: ["upload_ovpn"],
+                    portForwarding: "manual",
+                    notes: []
+                }
+            })
+        }
+        return options
+    }
+
+    function selectedImportPreset() {
+        var options = root.importPresetOptions()
+        if (root.importProviderPresetIndex >= 0 && root.importProviderPresetIndex < options.length) {
+            return options[root.importProviderPresetIndex].preset || {}
+        }
+        return {}
+    }
+
+    function selectedImportProvider() {
+        var preset = root.selectedImportPreset()
+        return String(preset.provider || "")
+    }
+
+    function selectedImportForwardingMode() {
+        var preset = root.selectedImportPreset()
+        return String(preset.portForwarding || preset.port_forwarding || "")
+    }
+
+    function importForwardedPortEnabled() {
+        var mode = root.selectedImportForwardingMode()
+        return mode === "manual" || mode === "provider_api"
+    }
+
+    function importForwardedPortValue() {
+        if (!root.importForwardedPortEnabled()) {
+            return 0
+        }
+        var raw = parseInt(importForwardedPort.text, 10)
+        if (isNaN(raw) || raw <= 0 || raw > 65535) {
+            return 0
+        }
+        return raw
+    }
+
+    function selectedForwardedPortProtocol() {
+        return root.importForwardedPortProtocolIndex === 1 ? "udp" : "tcp"
+    }
+
+    function selectedForwardedPortSource() {
+        return root.importForwardedPortSourceIndex === 1 ? "provider_api" : "manual"
+    }
+
+    function importKindSupported(index) {
+        var preset = root.selectedImportPreset()
+        if (Object.keys(preset).length === 0) {
+            return true
+        }
+        return index === 0 ? root.presetSupportsWireGuard(preset) : root.presetSupportsOpenVpn(preset)
+    }
+
+    function applyImportPresetSelection() {
+        var preset = root.selectedImportPreset()
+        if (Object.keys(preset).length === 0) {
+            return
+        }
+        if (!root.importKindSupported(root.importProviderIndex)) {
+            root.importProviderIndex = root.presetSupportsWireGuard(preset) ? 0 : 1
+        }
+        root.importForwardedPortSourceIndex = root.selectedImportForwardingMode() === "provider_api" ? 1 : 0
+    }
+
+    function importPresetDetail() {
+        var preset = root.selectedImportPreset()
+        if (Object.keys(preset).length === 0) {
+            return ""
+        }
+        var notes = preset.notes || []
+        var text = root.valueOrDash(preset.name) + ": " + root.portForwardingLabel(root.selectedImportForwardingMode())
+        if (notes.length > 0) {
+            text += ". " + notes[0]
+        }
+        return text
+    }
+
+    function protectionProfiles() {
+        var catalog = apiClient.networkProtectionProfiles || {}
+        return catalog.profiles || []
+    }
+
+    function protectionProfileOptions() {
+        var profiles = root.protectionProfiles()
+        var options = []
+        for (var i = 0; i < profiles.length; ++i) {
+            var profile = profiles[i]
+            options.push({
+                label: root.valueOrDash(profile.name) + " (" + root.titleLabel(profile.kind) + ")",
+                value: String(profile.id || "")
+            })
+        }
+        if (options.length === 0) {
+            var active = root.activeProtectionProfile()
+            if (active.id !== undefined && String(active.id) !== "") {
+                options.push({
+                    label: root.valueOrDash(active.name) + " (" + root.titleLabel(active.kind) + ")",
+                    value: String(active.id)
+                })
+            }
+        }
+        return options
+    }
+
+    function selectedProtectionTargetId() {
+        if (providerSwitchCombo.currentValue !== undefined && String(providerSwitchCombo.currentValue) !== "") {
+            return String(providerSwitchCombo.currentValue)
+        }
+        return root.selectedProtectionProfileId
+    }
+
+    function warpDiagnosticChecks() {
+        var diagnostics = apiClient.networkProtectionWarpDiagnostics || {}
+        return diagnostics.checks || []
+    }
+
+    function networkEvents() {
+        var diagnostics = apiClient.networkProtectionWarpDiagnostics || {}
+        return diagnostics.recentEvents || diagnostics.recent_events || []
+    }
+
+    function importChecks() {
+        var result = apiClient.networkProtectionImportResult || {}
+        return result.checks || []
+    }
+
+    function routeRecords() {
+        var routes = apiClient.downloadBrokerRoutes || {}
+        return routes.routes || []
+    }
+
+    function routeLabel(route) {
+        var owner = root.routeOwnerLabel(route)
+        var role = root.titleLabel(route.role)
+        var binding = root.titleLabel(route.bindingKind || route.binding_kind)
+        var selected = route.selectedProviderId || route.selected_provider_id || ""
+        var suffix = route.inherited ? " inherited" : ""
+        if (selected !== "") {
+            return owner + " " + role + ": " + binding + suffix + " selected"
+        }
+        return owner + " " + role + ": " + binding + suffix
+    }
+
+    function routeOwnerId(route) {
+        return String(route.ownerId || route.owner_id || "default")
+    }
+
+    function routeOwnerLabel(route) {
+        var ownerId = root.routeOwnerId(route)
+        if (ownerId === "default") {
+            return "Default"
+        }
+        return root.valueOrDash(route.ownerLabel || route.owner_label || ownerId)
+    }
+
+    function routeProviderLabel(route) {
+        var providerKind = route.selectedProviderKind || route.selected_provider_kind || ""
+        var extensionId = route.selectedExtensionId || route.selected_extension_id || ""
+        if (extensionId !== "") {
+            return root.titleLabel(providerKind) + " via " + extensionId
+        }
+        return root.titleLabel(providerKind)
+    }
+
+    function routeChecks(route) {
+        return route.checks || []
+    }
+
+    function routeCanUseManaged(route) {
+        var role = String(route.role || "")
+        return role === "torrent" || role === "usenet"
+    }
+
+    function routeCanUseDebrid(route) {
+        return String(route.role || "") === "debrid_resolver"
+    }
+
+    function reachabilityToneColor(state) {
+        if (state === "forwarded_port") {
+            return Theme.accent
+        }
+        if (state === "no_forwarded_port" || state === "unknown") {
+            return "#E6B85C"
+        }
+        return Theme.textPrimary
+    }
+
+    function protectionToneColor(state) {
+        if (state === "blocked") {
+            return "#D96B6B"
+        }
+        if (state === "direct" || state === "externally_managed") {
+            return "#E6B85C"
+        }
+        return Theme.accent
+    }
+
+    function refreshNetworkProtection() {
+        apiClient.fetchNetworkProtectionStatus()
+        apiClient.fetchNetworkProtectionProfiles()
+        apiClient.fetchNetworkProtectionWarpDisclosure()
+        apiClient.fetchNetworkProtectionWarpDiagnostics()
+        apiClient.fetchNetworkProtectionProviderPresets()
+        apiClient.fetchNetworkProtectionListenPortSyncPlan()
+        apiClient.fetchDownloadBrokerRoutes()
+    }
+
     function optionIndexForValue(options, value) {
         var needle = String(value || "")
         for (var i = 0; i < options.length; ++i) {
@@ -80,6 +443,7 @@ Item {
         if (apiClient.authToken !== "") {
             apiClient.fetchExtensionsCatalog()
             apiClient.fetchManagerPreferences()
+            root.refreshNetworkProtection()
         }
     }
 
@@ -89,6 +453,35 @@ Item {
             if (apiClient.authToken !== "") {
                 apiClient.fetchExtensionsCatalog()
                 apiClient.fetchManagerPreferences()
+                root.refreshNetworkProtection()
+            }
+        }
+
+        function onNetworkProtectionChanged() {
+            var warp = apiClient.networkProtectionWarpProfile || {}
+            var blocker = warp.blocker || {}
+            if (blocker.code !== undefined && blocker.code !== "") {
+                root.networkProtectionNotice = blocker.detail || blocker.title || ""
+            }
+            var result = apiClient.networkProtectionSwitchResult || {}
+            var resultBlocker = result.blocker || {}
+            if (resultBlocker.code !== undefined && resultBlocker.code !== "") {
+                root.networkProtectionNotice = resultBlocker.detail || resultBlocker.title || ""
+            }
+            var imported = apiClient.networkProtectionImportResult || {}
+            var importBlocker = imported.blocker || {}
+            if (importBlocker.code !== undefined && importBlocker.code !== "") {
+                root.networkProtectionNotice = importBlocker.detail || importBlocker.title || ""
+            } else if (imported.profile !== undefined && imported.profile.id !== undefined) {
+                root.networkProtectionNotice = "Imported " + root.valueOrDash(imported.profile.name) + "."
+                root.selectedProtectionProfileId = String(imported.profile.id || "")
+            }
+        }
+
+        function onRequestFailed(endpoint, error) {
+            if (endpoint.indexOf("/api/v1/network/protection") === 0 ||
+                    endpoint.indexOf("/api/v1/download-broker/routes") === 0) {
+                root.networkProtectionNotice = error
             }
         }
     }
@@ -359,6 +752,971 @@ Item {
                     color: Theme.textMuted
                     font.pixelSize: 10
                     font.family: Theme.fontBody
+                }
+
+                Rectangle {
+                    height: 1
+                    color: Theme.border
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: "Network Protection"
+                    color: Theme.textPrimary
+                    font.pixelSize: 16
+                    font.family: Theme.fontDisplay
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: Theme.spacingLarge
+                    rowSpacing: Theme.spacingSmall
+
+                    Label {
+                        text: "Download protection"
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                    }
+
+                    Label {
+                        text: root.titleLabel(apiClient.networkProtectionStatus.state)
+                        color: root.protectionToneColor(apiClient.networkProtectionStatus.state)
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        font.weight: Font.DemiBold
+                    }
+
+                    Label {
+                        text: "Profile"
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                    }
+
+                    Label {
+                        text: root.valueOrDash(root.activeProtectionProfile().name)
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                    }
+
+                    Label {
+                        text: "Mode"
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                    }
+
+                    Label {
+                        text: root.titleLabel(apiClient.networkProtectionStatus.mode)
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                    }
+
+                    Label {
+                        text: "Protected apps"
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                    }
+
+                    Label {
+                        text: root.protectedAppsLabel()
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+
+                    Label {
+                        text: "Torrent reachability"
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                    }
+
+                    Label {
+                        text: root.titleLabel(root.torrentReachability().state)
+                        color: root.reachabilityToneColor(root.torrentReachability().state)
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        font.weight: Font.DemiBold
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+
+                Label {
+                    text: root.torrentReachabilityDetail()
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                    visible: text !== ""
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: root.listenPortSyncDetail()
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                    visible: text !== ""
+                    Layout.fillWidth: true
+                }
+
+                Button {
+                    text: "Sync qB listen port"
+                    visible: root.listenPortSyncReady()
+                    enabled: apiClient.authToken !== "" && root.listenPortSyncReady() && !apiClient.networkProtectionLoading
+                    onClicked: apiClient.applyNetworkProtectionListenPortSync()
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: parent.enabled ? Theme.accent : Theme.backgroundCardRaised
+                        border.color: parent.enabled ? "transparent" : Theme.border
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: parent.enabled ? "#17120A" : Theme.textMuted
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+
+                Label {
+                    text: root.protectionBlocker().detail || ""
+                    color: "#D96B6B"
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                    visible: text !== ""
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: root.networkProtectionNotice
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                    visible: text !== ""
+                    Layout.fillWidth: true
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSmall
+
+                    Button {
+                        text: "Refresh status"
+                        enabled: apiClient.authToken !== "" && !apiClient.networkProtectionLoading
+                        onClicked: root.refreshNetworkProtection()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    BusyIndicator {
+                        running: apiClient.networkProtectionLoading
+                        visible: running
+                        Layout.preferredWidth: 28
+                        Layout.preferredHeight: 28
+                    }
+                }
+
+                Label {
+                    text: "First-run choice"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: Theme.spacingSmall
+                    rowSpacing: Theme.spacingSmall
+
+                    Button {
+                        text: "Protected downloads"
+                        enabled: apiClient.authToken !== "" && root.warpDisclosureAccepted && !apiClient.networkProtectionLoading
+                        Layout.fillWidth: true
+                        onClicked: {
+                            root.networkProtectionNotice = ""
+                            apiClient.applyFirstRunDownloadSetup("protected_downloads", true)
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: parent.enabled ? Theme.accent : Theme.backgroundCardRaised
+                            border.color: parent.enabled ? "transparent" : Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: parent.enabled ? "#17120A" : Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "Existing stack"
+                        enabled: apiClient.authToken !== "" && !apiClient.networkProtectionLoading
+                        Layout.fillWidth: true
+                        onClicked: {
+                            root.networkProtectionNotice = "Elixir will use external download clients and will not manage downloader VPN for this stack."
+                            apiClient.applyFirstRunDownloadSetup("existing_stack", false)
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "Custom VPN"
+                        enabled: apiClient.authToken !== "" && !apiClient.networkProtectionLoading
+                        Layout.fillWidth: true
+                        onClicked: {
+                            root.networkProtectionNotice = "Paste a WireGuard or OpenVPN profile below, then switch provider."
+                            apiClient.applyFirstRunDownloadSetup("custom_vpn", false)
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: parent.enabled ? Theme.textPrimary : Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "Skip downloads"
+                        enabled: apiClient.authToken !== "" && !apiClient.networkProtectionLoading
+                        Layout.fillWidth: true
+                        onClicked: {
+                            root.networkProtectionNotice = "Elixir will leave downloads unconfigured for now and keep playback/direct streaming separate."
+                            apiClient.applyFirstRunDownloadSetup("skip_downloads", false)
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: parent.enabled ? Theme.textPrimary : Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                CheckBox {
+                    id: warpDisclosureCheck
+                    text: (apiClient.networkProtectionWarpDisclosure.requiredAcceptance || "I understand that WARP is a Cloudflare-powered best-effort downloader protection mode.")
+                    checked: root.warpDisclosureAccepted
+                    onToggled: root.warpDisclosureAccepted = checked
+                    contentItem: Label {
+                        text: parent.text
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                        leftPadding: warpDisclosureCheck.indicator.width + warpDisclosureCheck.spacing
+                    }
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: "WARP protects privacy for managed downloader egress, but it does not provide torrent port forwarding or guarantee swarm reachability."
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: "Acquisition routing"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                Repeater {
+                    model: root.routeRecords()
+                    delegate: ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Label {
+                            text: root.routeLabel(modelData)
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+
+                        Label {
+                            text: root.routeProviderLabel(modelData)
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                            visible: (modelData.selectedProviderId || modelData.selected_provider_id || "") !== ""
+                            Layout.fillWidth: true
+                        }
+
+                        Label {
+                            text: {
+                                var category = modelData.category || modelData.downloadCategory || ""
+                                var path = modelData.downloadPath || modelData.download_path || ""
+                                if (category !== "" && path !== "") {
+                                    return "Category " + category + " -> " + path
+                                }
+                                if (category !== "") {
+                                    return "Category " + category
+                                }
+                                return path
+                            }
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                            visible: text !== ""
+                            Layout.fillWidth: true
+                        }
+
+                        Label {
+                            text: modelData.blocker || ""
+                            color: "#D96B6B"
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                            visible: text !== ""
+                            Layout.fillWidth: true
+                        }
+
+                        Repeater {
+                            model: root.routeChecks(modelData)
+                            delegate: Label {
+                                text: modelData.detail || modelData.code || ""
+                                color: modelData.status === "fail" ? "#D96B6B"
+                                       : modelData.status === "warn" ? "#E6B85C"
+                                       : Theme.textMuted
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                wrapMode: Text.WordWrap
+                                visible: modelData.status === "fail" || modelData.status === "warn"
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Theme.spacingSmall
+
+                            Button {
+                                text: "Protected local"
+                                visible: root.routeCanUseManaged(modelData)
+                                enabled: apiClient.authToken !== ""
+                                onClicked: apiClient.updateDownloadBrokerRouteForOwner(modelData.logicalId || modelData.logical_id, "managed_protected", root.routeOwnerId(modelData))
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.backgroundCardRaised
+                                    border.color: Theme.border
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+
+                            Button {
+                                text: "External"
+                                visible: root.routeCanUseManaged(modelData)
+                                enabled: apiClient.authToken !== ""
+                                onClicked: apiClient.updateDownloadBrokerRouteForOwner(modelData.logicalId || modelData.logical_id, "external", root.routeOwnerId(modelData))
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.backgroundCardRaised
+                                    border.color: Theme.border
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+
+                            Button {
+                                text: "Debrid"
+                                visible: root.routeCanUseDebrid(modelData)
+                                enabled: apiClient.authToken !== ""
+                                onClicked: apiClient.updateDownloadBrokerRouteForOwner(modelData.logicalId || modelData.logical_id, "debrid", root.routeOwnerId(modelData))
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.backgroundCardRaised
+                                    border.color: Theme.border
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSmall
+
+                    Button {
+                        text: "Protected local"
+                        enabled: apiClient.authToken !== ""
+                        onClicked: apiClient.updateDownloadBrokerRoute("downloaders.torrent.default", "managed_protected")
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "External stack"
+                        enabled: apiClient.authToken !== ""
+                        onClicked: {
+                            apiClient.updateDownloadBrokerRoute("downloaders.torrent.default", "external")
+                            apiClient.updateDownloadBrokerRoute("downloaders.usenet.default", "external")
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "Debrid"
+                        enabled: apiClient.authToken !== ""
+                        onClicked: apiClient.updateDownloadBrokerRoute("acquisition.debrid.default", "debrid")
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Label {
+                    text: "Change provider"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSmall
+
+                    ComboBox {
+                        id: providerSwitchCombo
+                        Layout.preferredWidth: 360
+                        model: root.protectionProfileOptions()
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.optionIndexForValue(root.protectionProfileOptions(), root.selectedProtectionProfileId)
+                        enabled: apiClient.authToken !== "" && root.protectionProfileOptions().length > 0
+                        onActivated: root.selectedProtectionProfileId = String(currentValue || "")
+                    }
+
+                    Button {
+                        text: "Switch provider"
+                        enabled: apiClient.authToken !== "" &&
+                                 root.selectedProtectionTargetId() !== "" &&
+                                 !apiClient.networkProtectionLoading
+                        onClicked: apiClient.switchNetworkProtectionProfile(root.selectedProtectionTargetId(), true)
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: parent.enabled ? Theme.textPrimary : Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Label {
+                    text: "Import provider"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: Theme.spacingLarge
+                    rowSpacing: Theme.spacingSmall
+
+                    Label {
+                        text: "Preset"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    ComboBox {
+                        id: importProviderPresetCombo
+                        Layout.fillWidth: true
+                        model: root.importPresetOptions()
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: Math.min(root.importProviderPresetIndex, Math.max(0, root.importPresetOptions().length - 1))
+                        onActivated: {
+                            root.importProviderPresetIndex = index
+                            root.applyImportPresetSelection()
+                        }
+                    }
+
+                    Label {
+                        text: root.importPresetDetail()
+                        color: Theme.textMuted
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                        visible: text !== ""
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                    }
+
+                    Label {
+                        text: "Type"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    ComboBox {
+                        id: importProviderCombo
+                        Layout.fillWidth: true
+                        model: [
+                            { label: "WireGuard", value: "wireguard" },
+                            { label: "OpenVPN", value: "openvpn" }
+                        ]
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.importProviderIndex
+                        onActivated: {
+                            if (root.importKindSupported(index)) {
+                                root.importProviderIndex = index
+                            } else {
+                                root.networkProtectionNotice = "Selected preset does not support " + model[index].label + " import."
+                                root.applyImportPresetSelection()
+                            }
+                        }
+                    }
+
+                    Label {
+                        text: "Name"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    TextField {
+                        id: importProfileName
+                        Layout.fillWidth: true
+                        placeholderText: root.importProviderIndex === 0 ? "Imported WireGuard" : "Imported OpenVPN"
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                    }
+
+                    Label {
+                        text: "Username"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.importProviderIndex === 1
+                    }
+
+                    TextField {
+                        id: importOpenVpnUsername
+                        Layout.fillWidth: true
+                        visible: root.importProviderIndex === 1
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                    }
+
+                    Label {
+                        text: "Password"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.importProviderIndex === 1
+                    }
+
+                    TextField {
+                        id: importOpenVpnPassword
+                        Layout.fillWidth: true
+                        visible: root.importProviderIndex === 1
+                        echoMode: TextInput.Password
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                    }
+
+                    Label {
+                        text: "Forwarded port"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    TextField {
+                        id: importForwardedPort
+                        Layout.fillWidth: true
+                        enabled: root.importForwardedPortEnabled()
+                        placeholderText: root.importForwardedPortEnabled() ? "Optional" : "No forwarded port"
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        validator: IntValidator {
+                            bottom: 1
+                            top: 65535
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                    }
+
+                    Label {
+                        text: "Port protocol"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.importForwardedPortEnabled()
+                    }
+
+                    ComboBox {
+                        id: importForwardedPortProtocolCombo
+                        Layout.fillWidth: true
+                        visible: root.importForwardedPortEnabled()
+                        model: [
+                            { label: "TCP", value: "tcp" },
+                            { label: "UDP", value: "udp" }
+                        ]
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.importForwardedPortProtocolIndex
+                        onActivated: root.importForwardedPortProtocolIndex = index
+                    }
+
+                    Label {
+                        text: "Port source"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.importForwardedPortEnabled()
+                    }
+
+                    ComboBox {
+                        id: importForwardedPortSourceCombo
+                        Layout.fillWidth: true
+                        visible: root.importForwardedPortEnabled()
+                        model: [
+                            { label: "Manual", value: "manual" },
+                            { label: "Provider API", value: "provider_api" }
+                        ]
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.importForwardedPortSourceIndex
+                        onActivated: root.importForwardedPortSourceIndex = index
+                    }
+                }
+
+                TextArea {
+                    id: importConfigText
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 150
+                    placeholderText: root.importProviderIndex === 0 ? "Paste wg0.conf" : "Paste .ovpn"
+                    wrapMode: TextEdit.NoWrap
+                    color: Theme.textPrimary
+                    selectedTextColor: "#17120A"
+                    selectionColor: Theme.accent
+                    font.family: "Menlo"
+                    font.pixelSize: 11
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSmall
+
+                    Button {
+                        text: "Import profile"
+                        enabled: apiClient.authToken !== "" &&
+                                 importConfigText.text.trim() !== "" &&
+                                 root.importKindSupported(root.importProviderIndex) &&
+                                 !apiClient.networkProtectionLoading
+                        onClicked: {
+                            var provider = root.selectedImportProvider()
+                            var forwardedPort = root.importForwardedPortValue()
+                            var forwardedProtocol = root.selectedForwardedPortProtocol()
+                            var forwardedSource = root.selectedForwardedPortSource()
+                            if (root.importProviderIndex === 0) {
+                                apiClient.importWireGuardProfileWithOptions(importProfileName.text, importConfigText.text, provider, forwardedPort, forwardedProtocol, forwardedSource)
+                            } else {
+                                apiClient.importOpenVpnProfileWithOptions(importProfileName.text, importConfigText.text, importOpenVpnUsername.text, importOpenVpnPassword.text, provider, forwardedPort, forwardedProtocol, forwardedSource)
+                            }
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: parent.enabled ? Theme.accent : Theme.backgroundCardRaised
+                            border.color: parent.enabled ? "transparent" : Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: parent.enabled ? "#17120A" : Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "Reset WARP"
+                        enabled: apiClient.authToken !== "" && !apiClient.networkProtectionLoading
+                        onClicked: apiClient.resetCloudflareWarpProfile(true)
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: parent.text
+                            color: parent.enabled ? Theme.textPrimary : Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: root.importChecks()
+                    delegate: RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        Label {
+                            text: root.titleLabel(modelData.status)
+                            color: modelData.status === "fail" ? "#D96B6B"
+                                   : modelData.status === "warn" ? "#E6B85C"
+                                   : Theme.accent
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            Layout.preferredWidth: 112
+                        }
+
+                        Label {
+                            text: modelData.detail || modelData.code || ""
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+
+                Label {
+                    text: "Provider presets"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                    visible: root.providerPresets().length > 0
+                }
+
+                Repeater {
+                    model: root.providerPresets()
+                    delegate: Label {
+                        text: root.valueOrDash(modelData.name) + ": " + root.portForwardingLabel(modelData.portForwarding || modelData.port_forwarding)
+                        color: Theme.textMuted
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                        visible: index < 5
+                        Layout.fillWidth: true
+                    }
+                }
+
+                Label {
+                    text: "Diagnostics"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                    visible: root.protectionChecks().length > 0
+                }
+
+                Repeater {
+                    model: root.protectionChecks()
+                    delegate: RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        Label {
+                            text: root.titleLabel(modelData.status)
+                            color: modelData.status === "fail" ? "#D96B6B"
+                                   : modelData.status === "warn" ? "#E6B85C"
+                                   : Theme.accent
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            Layout.preferredWidth: 84
+                        }
+
+                        Label {
+                            text: modelData.detail || modelData.code || ""
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: root.warpDiagnosticChecks()
+                    delegate: RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        Label {
+                            text: "WARP " + root.titleLabel(modelData.status)
+                            color: modelData.status === "fail" ? "#D96B6B"
+                                   : modelData.status === "warn" ? "#E6B85C"
+                                   : Theme.accent
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            Layout.preferredWidth: 112
+                        }
+
+                        Label {
+                            text: modelData.detail || modelData.code || ""
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: root.networkEvents()
+                    delegate: Label {
+                        text: root.titleLabel(modelData.operation) + ": " + root.titleLabel(modelData.status)
+                        color: Theme.textMuted
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                        visible: index < 6
+                        Layout.fillWidth: true
+                    }
                 }
 
                 Rectangle {

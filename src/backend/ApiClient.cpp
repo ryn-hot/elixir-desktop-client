@@ -124,6 +124,23 @@ QVariantMap normalizeFindMediaPreferencesPayload(const QVariantMap &payload) {
                 payload.value("animeProviders", payload.value("anime_providers")))));
     return normalized;
 }
+
+void insertForwardedPort(QJsonObject &body, int port, const QString &protocol, const QString &source) {
+    if (port <= 0 || port > 65535) {
+        return;
+    }
+    const QString normalizedProtocol = protocol.trimmed().isEmpty()
+        ? QStringLiteral("tcp")
+        : protocol.trimmed().toLower();
+    const QString normalizedSource = source.trimmed().isEmpty()
+        ? QStringLiteral("profile_config")
+        : source.trimmed().toLower();
+    body.insert("forwardedPort", QJsonObject{
+        {"port", port},
+        {"protocol", normalizedProtocol},
+        {"source", normalizedSource}
+    });
+}
 } // namespace
 
 ApiClient::ApiClient(QObject *parent)
@@ -327,6 +344,50 @@ QVariantList ApiClient::extensionsDownloaderProfileOptions() const {
 
 QVariantList ApiClient::extensionsDownloaderTelemetry() const {
     return m_extensionsDownloaderTelemetry;
+}
+
+QVariantMap ApiClient::networkProtectionStatus() const {
+    return m_networkProtectionStatus;
+}
+
+QVariantMap ApiClient::networkProtectionWarpDisclosure() const {
+    return m_networkProtectionWarpDisclosure;
+}
+
+QVariantMap ApiClient::networkProtectionWarpProfile() const {
+    return m_networkProtectionWarpProfile;
+}
+
+QVariantMap ApiClient::networkProtectionWarpDiagnostics() const {
+    return m_networkProtectionWarpDiagnostics;
+}
+
+QVariantMap ApiClient::networkProtectionProfiles() const {
+    return m_networkProtectionProfiles;
+}
+
+QVariantMap ApiClient::networkProtectionImportResult() const {
+    return m_networkProtectionImportResult;
+}
+
+QVariantMap ApiClient::networkProtectionSwitchResult() const {
+    return m_networkProtectionSwitchResult;
+}
+
+QVariantMap ApiClient::networkProtectionProviderPresets() const {
+    return m_networkProtectionProviderPresets;
+}
+
+QVariantMap ApiClient::networkProtectionListenPortSyncPlan() const {
+    return m_networkProtectionListenPortSyncPlan;
+}
+
+QVariantMap ApiClient::downloadBrokerRoutes() const {
+    return m_downloadBrokerRoutes;
+}
+
+bool ApiClient::networkProtectionLoading() const {
+    return m_networkProtectionLoading;
 }
 
 QVariantMap ApiClient::mediaFindResult() const {
@@ -1658,6 +1719,507 @@ void ApiClient::updateDownloaderProfileState(const QJsonObject &obj) {
     if (changed) {
         emit extensionsDownloaderSettingsChanged();
     }
+}
+
+void ApiClient::fetchNetworkProtectionStatus() {
+    setNetworkProtectionLoading(true);
+    sendRequest(
+        "GET",
+        "/api/v1/network/protection/status",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setNetworkProtectionLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/status", "Network protection status response was not an object.");
+                return;
+            }
+            updateNetworkProtectionStatus(doc.object());
+        },
+        [this](const QString &) {
+            setNetworkProtectionLoading(false);
+        });
+}
+
+void ApiClient::fetchNetworkProtectionProfiles() {
+    sendRequest(
+        "GET",
+        "/api/v1/network/protection/profiles",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/profiles", "Network protection profiles response was not an object.");
+                return;
+            }
+            updateNetworkProtectionProfiles(doc.object());
+        });
+}
+
+void ApiClient::fetchNetworkProtectionWarpDisclosure() {
+    sendRequest(
+        "GET",
+        "/api/v1/network/protection/warp/disclosure",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/warp/disclosure", "WARP disclosure response was not an object.");
+                return;
+            }
+            updateNetworkProtectionWarpDisclosure(doc.object());
+        });
+}
+
+void ApiClient::fetchNetworkProtectionWarpDiagnostics() {
+    sendRequest(
+        "GET",
+        "/api/v1/network/protection/warp/diagnostics",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/warp/diagnostics", "WARP diagnostics response was not an object.");
+                return;
+            }
+            updateNetworkProtectionWarpDiagnostics(doc.object());
+        });
+}
+
+void ApiClient::fetchNetworkProtectionProviderPresets() {
+    sendRequest(
+        "GET",
+        "/api/v1/network/protection/provider-presets",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/provider-presets", "Provider presets response was not an object.");
+                return;
+            }
+            updateNetworkProtectionProviderPresets(doc.object());
+        });
+}
+
+void ApiClient::fetchNetworkProtectionListenPortSyncPlan() {
+    sendRequest(
+        "GET",
+        "/api/v1/network/protection/qbittorrent/listen-port-sync",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/qbittorrent/listen-port-sync", "qBittorrent listen-port sync response was not an object.");
+                return;
+            }
+            updateNetworkProtectionListenPortSyncPlan(doc.object());
+        });
+}
+
+void ApiClient::applyNetworkProtectionListenPortSync() {
+    setNetworkProtectionLoading(true);
+    sendRequest(
+        "POST",
+        "/api/v1/network/protection/qbittorrent/listen-port-sync/apply",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setNetworkProtectionLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/qbittorrent/listen-port-sync/apply", "qBittorrent listen-port sync response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            const QJsonObject plan = obj.value("plan").toObject();
+            updateNetworkProtectionListenPortSyncPlan(plan.isEmpty() ? obj : plan);
+            fetchNetworkProtectionStatus();
+            fetchNetworkProtectionListenPortSyncPlan();
+        },
+        [this](const QString &) {
+            setNetworkProtectionLoading(false);
+        });
+}
+
+void ApiClient::applyFirstRunDownloadSetup(const QString &choice, bool acceptedWarpDisclosure) {
+    const QString trimmedChoice = choice.trimmed();
+    if (trimmedChoice.isEmpty()) {
+        emit requestFailed("/api/v1/network/protection/first-run", "First-run download setup choice is required.");
+        return;
+    }
+
+    setNetworkProtectionLoading(true);
+    QJsonObject body{
+        {"choice", trimmedChoice},
+        {"acceptedWarpDisclosure", acceptedWarpDisclosure},
+        {"apply", true}
+    };
+    sendRequest(
+        "POST",
+        "/api/v1/network/protection/first-run",
+        body,
+        [this](const QJsonDocument &doc) {
+            setNetworkProtectionLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/first-run", "First-run download setup response was not an object.");
+                return;
+            }
+            const QJsonObject obj = doc.object();
+            const QJsonObject switchResult = obj.value("switchResult").toObject();
+            if (!switchResult.isEmpty()) {
+                updateNetworkProtectionSwitchResult(switchResult);
+            }
+            const QJsonObject routes = obj.value("routes").toObject();
+            if (!routes.isEmpty()) {
+                updateDownloadBrokerRoutes(routes);
+            }
+            fetchNetworkProtectionProfiles();
+            fetchNetworkProtectionWarpDiagnostics();
+            fetchNetworkProtectionStatus();
+            fetchNetworkProtectionListenPortSyncPlan();
+            fetchDownloadBrokerRoutes();
+        },
+        [this](const QString &) {
+            setNetworkProtectionLoading(false);
+        });
+}
+
+void ApiClient::createCloudflareWarpProfile(bool acceptedDisclosure) {
+    setNetworkProtectionLoading(true);
+    QJsonObject body{{"acceptedDisclosure", acceptedDisclosure}};
+    sendRequest(
+        "POST",
+        "/api/v1/network/protection/warp/profile",
+        body,
+        [this](const QJsonDocument &doc) {
+            setNetworkProtectionLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/warp/profile", "WARP profile response was not an object.");
+                return;
+            }
+            updateNetworkProtectionWarpProfile(doc.object());
+            const QJsonObject obj = doc.object();
+            const QJsonObject profile = obj.value("profile").toObject();
+            if (!profile.isEmpty()) {
+                fetchNetworkProtectionProfiles();
+                updateNetworkProtectionStatus(QJsonObject{
+                    {"mode", "unknown"},
+                    {"state", profile.value("status").toString("blocked")},
+                    {"strict", profile.value("strict").toBool(true)},
+                    {"protectedApps", QJsonArray()},
+                    {"torrentReachability", QJsonObject()},
+                    {"managedDownloaders", QJsonObject()},
+                    {"activeProfile", profile},
+                    {"checks", obj.value("checks").toArray()},
+                    {"blocker", obj.value("blocker")}
+                });
+                const QString profileId = profile.value("id").toString();
+                if (!profileId.isEmpty() && obj.value("blocker").isNull()) {
+                    switchNetworkProtectionProfile(profileId, true);
+                }
+            }
+        },
+        [this](const QString &) {
+            setNetworkProtectionLoading(false);
+        });
+}
+
+void ApiClient::resetCloudflareWarpProfile(bool recreate) {
+    setNetworkProtectionLoading(true);
+    QJsonObject body{
+        {"confirmReset", true},
+        {"recreate", recreate}
+    };
+    sendRequest(
+        "POST",
+        "/api/v1/network/protection/warp/reset",
+        body,
+        [this](const QJsonDocument &doc) {
+            setNetworkProtectionLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/warp/reset", "WARP reset response was not an object.");
+                return;
+            }
+            updateNetworkProtectionWarpProfile(doc.object());
+            fetchNetworkProtectionProfiles();
+            fetchNetworkProtectionWarpDiagnostics();
+            fetchNetworkProtectionStatus();
+        },
+        [this](const QString &) {
+            setNetworkProtectionLoading(false);
+        });
+}
+
+void ApiClient::importWireGuardProfile(const QString &name, const QString &config) {
+    importWireGuardProfileWithOptions(name, config, QString(), 0, QString(), QString());
+}
+
+void ApiClient::importWireGuardProfileWithOptions(
+    const QString &name,
+    const QString &config,
+    const QString &provider,
+    int forwardedPort,
+    const QString &forwardedPortProtocol,
+    const QString &forwardedPortSource) {
+    const QString trimmedConfig = config.trimmed();
+    if (trimmedConfig.isEmpty()) {
+        emit requestFailed("/api/v1/network/protection/import/wireguard", "WireGuard config is required.");
+        return;
+    }
+    setNetworkProtectionLoading(true);
+    QJsonObject body{
+        {"name", name.trimmed().isEmpty() ? QString("Imported WireGuard") : name.trimmed()},
+        {"config", trimmedConfig}
+    };
+    const QString trimmedProvider = provider.trimmed();
+    if (!trimmedProvider.isEmpty()) {
+        body.insert("provider", trimmedProvider);
+    }
+    insertForwardedPort(body, forwardedPort, forwardedPortProtocol, forwardedPortSource);
+    sendRequest(
+        "POST",
+        "/api/v1/network/protection/import/wireguard",
+        body,
+        [this](const QJsonDocument &doc) {
+            setNetworkProtectionLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/import/wireguard", "WireGuard import response was not an object.");
+                return;
+            }
+            updateNetworkProtectionImportResult(doc.object());
+            fetchNetworkProtectionProfiles();
+            fetchNetworkProtectionStatus();
+            fetchNetworkProtectionListenPortSyncPlan();
+        },
+        [this](const QString &) {
+            setNetworkProtectionLoading(false);
+        });
+}
+
+void ApiClient::importOpenVpnProfile(
+    const QString &name,
+    const QString &config,
+    const QString &username,
+    const QString &password) {
+    importOpenVpnProfileWithOptions(name, config, username, password, QString(), 0, QString(), QString());
+}
+
+void ApiClient::importOpenVpnProfileWithOptions(
+    const QString &name,
+    const QString &config,
+    const QString &username,
+    const QString &password,
+    const QString &provider,
+    int forwardedPort,
+    const QString &forwardedPortProtocol,
+    const QString &forwardedPortSource) {
+    const QString trimmedConfig = config.trimmed();
+    if (trimmedConfig.isEmpty()) {
+        emit requestFailed("/api/v1/network/protection/import/openvpn", "OpenVPN config is required.");
+        return;
+    }
+    QJsonObject body{
+        {"name", name.trimmed().isEmpty() ? QString("Imported OpenVPN") : name.trimmed()},
+        {"config", trimmedConfig}
+    };
+    if (!username.trimmed().isEmpty()) {
+        body.insert("username", username.trimmed());
+    }
+    if (!password.trimmed().isEmpty()) {
+        body.insert("password", password.trimmed());
+    }
+    const QString trimmedProvider = provider.trimmed();
+    if (!trimmedProvider.isEmpty()) {
+        body.insert("provider", trimmedProvider);
+    }
+    insertForwardedPort(body, forwardedPort, forwardedPortProtocol, forwardedPortSource);
+    setNetworkProtectionLoading(true);
+    sendRequest(
+        "POST",
+        "/api/v1/network/protection/import/openvpn",
+        body,
+        [this](const QJsonDocument &doc) {
+            setNetworkProtectionLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/import/openvpn", "OpenVPN import response was not an object.");
+                return;
+            }
+            updateNetworkProtectionImportResult(doc.object());
+            fetchNetworkProtectionProfiles();
+            fetchNetworkProtectionStatus();
+            fetchNetworkProtectionListenPortSyncPlan();
+        },
+        [this](const QString &) {
+            setNetworkProtectionLoading(false);
+        });
+}
+
+void ApiClient::switchNetworkProtectionProfile(const QString &targetProfileId, bool apply) {
+    const QString trimmed = targetProfileId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/network/protection/switch", "Target profile is required.");
+        return;
+    }
+    setNetworkProtectionLoading(true);
+    QJsonObject body{
+        {"targetProfileId", trimmed},
+        {"apply", apply}
+    };
+    sendRequest(
+        "POST",
+        "/api/v1/network/protection/switch",
+        body,
+        [this](const QJsonDocument &doc) {
+            setNetworkProtectionLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/network/protection/switch", "Network protection switch response was not an object.");
+                return;
+            }
+            updateNetworkProtectionSwitchResult(doc.object());
+            fetchNetworkProtectionProfiles();
+            fetchNetworkProtectionWarpDiagnostics();
+            fetchNetworkProtectionStatus();
+            fetchNetworkProtectionListenPortSyncPlan();
+        },
+        [this](const QString &) {
+            setNetworkProtectionLoading(false);
+        });
+}
+
+void ApiClient::fetchDownloadBrokerRoutes() {
+    sendRequest(
+        "GET",
+        "/api/v1/download-broker/routes",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/download-broker/routes", "Download broker routes response was not an object.");
+                return;
+            }
+            updateDownloadBrokerRoutes(doc.object());
+        });
+}
+
+void ApiClient::updateDownloadBrokerRoute(const QString &logicalId, const QString &bindingKind) {
+    updateDownloadBrokerRouteForOwner(logicalId, bindingKind, QString());
+}
+
+void ApiClient::updateDownloadBrokerRouteForOwner(
+    const QString &logicalId,
+    const QString &bindingKind,
+    const QString &ownerId) {
+    const QString trimmedLogicalId = logicalId.trimmed();
+    const QString trimmedBindingKind = bindingKind.trimmed();
+    if (trimmedLogicalId.isEmpty() || trimmedBindingKind.isEmpty()) {
+        emit requestFailed("/api/v1/download-broker/routes", "Route and binding kind are required.");
+        return;
+    }
+    QJsonObject body{{"bindingKind", trimmedBindingKind}};
+    const QString trimmedOwnerId = ownerId.trimmed();
+    if (!trimmedOwnerId.isEmpty() && trimmedOwnerId != QStringLiteral("default")) {
+        body.insert("ownerId", trimmedOwnerId);
+    }
+    sendRequest(
+        "PUT",
+        "/api/v1/download-broker/routes/" + trimmedLogicalId,
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/download-broker/routes", "Download broker route response was not an object.");
+                return;
+            }
+            fetchDownloadBrokerRoutes();
+        });
+}
+
+void ApiClient::setNetworkProtectionLoading(bool loading) {
+    if (m_networkProtectionLoading == loading) {
+        return;
+    }
+    m_networkProtectionLoading = loading;
+    emit networkProtectionLoadingChanged();
+}
+
+void ApiClient::updateNetworkProtectionStatus(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_networkProtectionStatus == value) {
+        return;
+    }
+    m_networkProtectionStatus = value;
+    emit networkProtectionChanged();
+}
+
+void ApiClient::updateNetworkProtectionWarpDisclosure(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_networkProtectionWarpDisclosure == value) {
+        return;
+    }
+    m_networkProtectionWarpDisclosure = value;
+    emit networkProtectionChanged();
+}
+
+void ApiClient::updateNetworkProtectionWarpProfile(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_networkProtectionWarpProfile == value) {
+        return;
+    }
+    m_networkProtectionWarpProfile = value;
+    emit networkProtectionChanged();
+}
+
+void ApiClient::updateNetworkProtectionWarpDiagnostics(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_networkProtectionWarpDiagnostics == value) {
+        return;
+    }
+    m_networkProtectionWarpDiagnostics = value;
+    emit networkProtectionChanged();
+}
+
+void ApiClient::updateNetworkProtectionProfiles(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_networkProtectionProfiles == value) {
+        return;
+    }
+    m_networkProtectionProfiles = value;
+    emit networkProtectionChanged();
+}
+
+void ApiClient::updateNetworkProtectionImportResult(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_networkProtectionImportResult == value) {
+        return;
+    }
+    m_networkProtectionImportResult = value;
+    emit networkProtectionChanged();
+}
+
+void ApiClient::updateNetworkProtectionSwitchResult(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_networkProtectionSwitchResult == value) {
+        return;
+    }
+    m_networkProtectionSwitchResult = value;
+    emit networkProtectionChanged();
+}
+
+void ApiClient::updateNetworkProtectionProviderPresets(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_networkProtectionProviderPresets == value) {
+        return;
+    }
+    m_networkProtectionProviderPresets = value;
+    emit networkProtectionChanged();
+}
+
+void ApiClient::updateNetworkProtectionListenPortSyncPlan(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_networkProtectionListenPortSyncPlan == value) {
+        return;
+    }
+    m_networkProtectionListenPortSyncPlan = value;
+    emit networkProtectionChanged();
+}
+
+void ApiClient::updateDownloadBrokerRoutes(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_downloadBrokerRoutes == value) {
+        return;
+    }
+    m_downloadBrokerRoutes = value;
+    emit networkProtectionChanged();
 }
 
 void ApiClient::updateMediaAcquisitionState(const QJsonObject &obj) {

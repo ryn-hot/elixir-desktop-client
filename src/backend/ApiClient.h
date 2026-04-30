@@ -45,6 +45,17 @@ class ApiClient : public QObject {
     Q_PROPERTY(int extensionsDownloaderPendingUpdateCount READ extensionsDownloaderPendingUpdateCount NOTIFY extensionsDownloaderSettingsChanged)
     Q_PROPERTY(QVariantList extensionsDownloaderProfileOptions READ extensionsDownloaderProfileOptions NOTIFY extensionsDownloaderSettingsChanged)
     Q_PROPERTY(QVariantList extensionsDownloaderTelemetry READ extensionsDownloaderTelemetry NOTIFY extensionsDownloaderSettingsChanged)
+    Q_PROPERTY(QVariantMap networkProtectionStatus READ networkProtectionStatus NOTIFY networkProtectionChanged)
+    Q_PROPERTY(QVariantMap networkProtectionWarpDisclosure READ networkProtectionWarpDisclosure NOTIFY networkProtectionChanged)
+    Q_PROPERTY(QVariantMap networkProtectionWarpProfile READ networkProtectionWarpProfile NOTIFY networkProtectionChanged)
+    Q_PROPERTY(QVariantMap networkProtectionWarpDiagnostics READ networkProtectionWarpDiagnostics NOTIFY networkProtectionChanged)
+    Q_PROPERTY(QVariantMap networkProtectionProfiles READ networkProtectionProfiles NOTIFY networkProtectionChanged)
+    Q_PROPERTY(QVariantMap networkProtectionImportResult READ networkProtectionImportResult NOTIFY networkProtectionChanged)
+    Q_PROPERTY(QVariantMap networkProtectionSwitchResult READ networkProtectionSwitchResult NOTIFY networkProtectionChanged)
+    Q_PROPERTY(QVariantMap networkProtectionProviderPresets READ networkProtectionProviderPresets NOTIFY networkProtectionChanged)
+    Q_PROPERTY(QVariantMap networkProtectionListenPortSyncPlan READ networkProtectionListenPortSyncPlan NOTIFY networkProtectionChanged)
+    Q_PROPERTY(QVariantMap downloadBrokerRoutes READ downloadBrokerRoutes NOTIFY networkProtectionChanged)
+    Q_PROPERTY(bool networkProtectionLoading READ networkProtectionLoading NOTIFY networkProtectionLoadingChanged)
     Q_PROPERTY(QVariantMap mediaFindResult READ mediaFindResult NOTIFY mediaFindResultChanged)
     Q_PROPERTY(bool mediaFindLoading READ mediaFindLoading NOTIFY mediaFindLoadingChanged)
     Q_PROPERTY(QVariantMap mediaManagerPreferences READ mediaManagerPreferences NOTIFY mediaManagerPreferencesChanged)
@@ -105,6 +116,17 @@ public:
     int extensionsDownloaderPendingUpdateCount() const;
     QVariantList extensionsDownloaderProfileOptions() const;
     QVariantList extensionsDownloaderTelemetry() const;
+    QVariantMap networkProtectionStatus() const;
+    QVariantMap networkProtectionWarpDisclosure() const;
+    QVariantMap networkProtectionWarpProfile() const;
+    QVariantMap networkProtectionWarpDiagnostics() const;
+    QVariantMap networkProtectionProfiles() const;
+    QVariantMap networkProtectionImportResult() const;
+    QVariantMap networkProtectionSwitchResult() const;
+    QVariantMap networkProtectionProviderPresets() const;
+    QVariantMap networkProtectionListenPortSyncPlan() const;
+    QVariantMap downloadBrokerRoutes() const;
+    bool networkProtectionLoading() const;
     QVariantMap mediaFindResult() const;
     bool mediaFindLoading() const;
     QVariantMap mediaManagerPreferences() const;
@@ -174,6 +196,45 @@ public:
         const QVariantMap &params = QVariantMap());
     Q_INVOKABLE void fetchDownloaderProfile();
     Q_INVOKABLE void updateDownloaderProfile(const QString &profile);
+    Q_INVOKABLE void fetchNetworkProtectionStatus();
+    Q_INVOKABLE void fetchNetworkProtectionProfiles();
+    Q_INVOKABLE void fetchNetworkProtectionWarpDisclosure();
+    Q_INVOKABLE void fetchNetworkProtectionWarpDiagnostics();
+    Q_INVOKABLE void fetchNetworkProtectionProviderPresets();
+    Q_INVOKABLE void fetchNetworkProtectionListenPortSyncPlan();
+    Q_INVOKABLE void applyNetworkProtectionListenPortSync();
+    Q_INVOKABLE void applyFirstRunDownloadSetup(const QString &choice, bool acceptedWarpDisclosure = false);
+    Q_INVOKABLE void createCloudflareWarpProfile(bool acceptedDisclosure);
+    Q_INVOKABLE void resetCloudflareWarpProfile(bool recreate = true);
+    Q_INVOKABLE void importWireGuardProfile(const QString &name, const QString &config);
+    Q_INVOKABLE void importWireGuardProfileWithOptions(
+        const QString &name,
+        const QString &config,
+        const QString &provider,
+        int forwardedPort = 0,
+        const QString &forwardedPortProtocol = QString(),
+        const QString &forwardedPortSource = QString());
+    Q_INVOKABLE void importOpenVpnProfile(
+        const QString &name,
+        const QString &config,
+        const QString &username = QString(),
+        const QString &password = QString());
+    Q_INVOKABLE void importOpenVpnProfileWithOptions(
+        const QString &name,
+        const QString &config,
+        const QString &username = QString(),
+        const QString &password = QString(),
+        const QString &provider = QString(),
+        int forwardedPort = 0,
+        const QString &forwardedPortProtocol = QString(),
+        const QString &forwardedPortSource = QString());
+    Q_INVOKABLE void switchNetworkProtectionProfile(const QString &targetProfileId, bool apply = true);
+    Q_INVOKABLE void fetchDownloadBrokerRoutes();
+    Q_INVOKABLE void updateDownloadBrokerRoute(const QString &logicalId, const QString &bindingKind);
+    Q_INVOKABLE void updateDownloadBrokerRouteForOwner(
+        const QString &logicalId,
+        const QString &bindingKind,
+        const QString &ownerId);
     Q_INVOKABLE void findMedia(
         const QString &query,
         const QString &mediaType,
@@ -212,6 +273,8 @@ signals:
     void extensionsLastRefreshSuccessAtChanged();
     void extensionsLastRefreshErrorChanged();
     void extensionsDownloaderSettingsChanged();
+    void networkProtectionChanged();
+    void networkProtectionLoadingChanged();
     void mediaFindResultChanged();
     void mediaFindLoadingChanged();
     void mediaManagerPreferencesChanged();
@@ -264,6 +327,17 @@ private:
     void updateExtensionStatusSummary(const QJsonObject &obj);
     void updateExtensionControlSurfaceState(const QJsonObject &obj);
     void updateDownloaderProfileState(const QJsonObject &obj);
+    void setNetworkProtectionLoading(bool loading);
+    void updateNetworkProtectionStatus(const QJsonObject &obj);
+    void updateNetworkProtectionWarpDisclosure(const QJsonObject &obj);
+    void updateNetworkProtectionWarpProfile(const QJsonObject &obj);
+    void updateNetworkProtectionWarpDiagnostics(const QJsonObject &obj);
+    void updateNetworkProtectionProfiles(const QJsonObject &obj);
+    void updateNetworkProtectionImportResult(const QJsonObject &obj);
+    void updateNetworkProtectionSwitchResult(const QJsonObject &obj);
+    void updateNetworkProtectionProviderPresets(const QJsonObject &obj);
+    void updateNetworkProtectionListenPortSyncPlan(const QJsonObject &obj);
+    void updateDownloadBrokerRoutes(const QJsonObject &obj);
     void updateMediaAcquisitionState(const QJsonObject &obj);
     void sendRequest(
         const QString &method,
@@ -308,6 +382,17 @@ private:
     int m_extensionsDownloaderPendingUpdateCount = 0;
     QVariantList m_extensionsDownloaderProfileOptions;
     QVariantList m_extensionsDownloaderTelemetry;
+    QVariantMap m_networkProtectionStatus;
+    QVariantMap m_networkProtectionWarpDisclosure;
+    QVariantMap m_networkProtectionWarpProfile;
+    QVariantMap m_networkProtectionWarpDiagnostics;
+    QVariantMap m_networkProtectionProfiles;
+    QVariantMap m_networkProtectionImportResult;
+    QVariantMap m_networkProtectionSwitchResult;
+    QVariantMap m_networkProtectionProviderPresets;
+    QVariantMap m_networkProtectionListenPortSyncPlan;
+    QVariantMap m_downloadBrokerRoutes;
+    bool m_networkProtectionLoading = false;
     QVariantMap m_mediaFindResult;
     bool m_mediaFindLoading = false;
     quint64 m_mediaFindRequestId = 0;
