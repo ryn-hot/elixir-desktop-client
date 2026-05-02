@@ -14,6 +14,7 @@ Rectangle {
     property bool canDelete: false
     property bool canRestore: false
     property bool busy: false
+    readonly property int verticalPadding: Theme.space10
     signal playRequested()
     signal deleteRequested()
     signal restoreRequested()
@@ -21,7 +22,7 @@ Rectangle {
     radius: Theme.radius4
     color: hover.hovered ? Qt.rgba(1, 1, 1, 0.055) : "transparent"
     border.color: "transparent"
-    implicitHeight: 138
+    implicitHeight: Math.max(Theme.episodeThumbHeight, detailsColumn.implicitHeight) + verticalPadding * 2
 
     HoverHandler { id: hover }
 
@@ -29,8 +30,8 @@ Rectangle {
         anchors.fill: parent
         anchors.leftMargin: 0
         anchors.rightMargin: 0
-        anchors.topMargin: Theme.space10
-        anchors.bottomMargin: Theme.space10
+        anchors.topMargin: root.verticalPadding
+        anchors.bottomMargin: root.verticalPadding
         spacing: Theme.space16
 
         Rectangle {
@@ -70,6 +71,7 @@ Rectangle {
         }
 
         ColumnLayout {
+            id: detailsColumn
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: Theme.space8

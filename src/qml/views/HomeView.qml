@@ -21,6 +21,7 @@ Item {
         if (sectionFilter === "anime") return "Anime"
         return "Home"
     }
+    readonly property real heroVerticalCropBias: 0.18
     property int activeCount: {
         if (root.searchActive) return libraryModel.searchModel.count
         if (sectionFilter === "movies") return libraryModel.moviesModel().count
@@ -62,6 +63,10 @@ Item {
         return "Your media, acquisition, and automation in one place."
     }
 
+    function heroBackdropSource() {
+        return !root.filterActive && root.heroItem && root.heroItem.backdrop ? root.heroItem.backdrop : ""
+    }
+
     function heroMeta() {
         var item = root.heroItem || {}
         var parts = []
@@ -101,13 +106,22 @@ Item {
             Item {
                 id: hero
                 Layout.fillWidth: true
-                Layout.preferredHeight: root.searchActive || root.filterActive ? 164 : (libraryModel.count > 0 ? 388 : 210)
+                Layout.preferredHeight: root.searchActive || root.filterActive ? 164 : (libraryModel.count > 0 ? 420 : 210)
                 visible: !root.searchActive
+                clip: true
 
                 Image {
-                    anchors.fill: parent
-                    source: !root.filterActive && root.heroItem && root.heroItem.backdrop ? root.heroItem.backdrop : ""
-                    fillMode: Image.PreserveAspectCrop
+                    id: heroBackdrop
+                    readonly property real sourceAspect: implicitWidth > 0 && implicitHeight > 0 ? implicitWidth / implicitHeight : 16 / 9
+                    readonly property real targetAspect: parent.width > 0 && parent.height > 0 ? parent.width / parent.height : 16 / 9
+                    readonly property bool cropsVertically: sourceAspect < targetAspect
+
+                    width: cropsVertically ? parent.width : parent.height * sourceAspect
+                    height: cropsVertically ? parent.width / sourceAspect : parent.height
+                    x: cropsVertically ? 0 : parent.width - width
+                    y: cropsVertically ? -(height - parent.height) * root.heroVerticalCropBias : 0
+                    source: root.heroBackdropSource()
+                    fillMode: Image.Stretch
                     asynchronous: true
                     visible: status === Image.Ready && source !== ""
                 }

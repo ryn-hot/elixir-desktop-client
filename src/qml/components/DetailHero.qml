@@ -15,12 +15,13 @@ Item {
     property var genres: []
     property bool busy: false
     property bool showRestoreBlocked: false
+    readonly property real backdropVerticalCropBias: 0.35
     signal playRequested()
     signal deleteRequested()
     signal restoreBlockedRequested()
     signal backRequested()
 
-    implicitHeight: Math.max(430, Math.min(560, width * 0.38))
+    implicitHeight: Math.max(460, Math.min(680, width * 0.44))
 
     Rectangle {
         anchors.fill: parent
@@ -29,9 +30,16 @@ Item {
 
         Image {
             id: backdrop
-            anchors.fill: parent
+            readonly property real sourceAspect: implicitWidth > 0 && implicitHeight > 0 ? implicitWidth / implicitHeight : 16 / 9
+            readonly property real targetAspect: parent.width > 0 && parent.height > 0 ? parent.width / parent.height : 16 / 9
+            readonly property bool cropsVertically: sourceAspect < targetAspect
+
+            width: cropsVertically ? parent.width : parent.height * sourceAspect
+            height: cropsVertically ? parent.width / sourceAspect : parent.height
+            x: cropsVertically ? 0 : (parent.width - width) / 2
+            y: cropsVertically ? -(height - parent.height) * root.backdropVerticalCropBias : 0
             source: root.backdropSource
-            fillMode: Image.PreserveAspectCrop
+            fillMode: Image.Stretch
             asynchronous: true
             visible: status === Image.Ready && source !== ""
         }

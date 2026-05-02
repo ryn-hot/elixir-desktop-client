@@ -243,7 +243,7 @@ Item {
         if (!meta) {
             return ""
         }
-        return meta.bannerImage || meta.banner || meta.backdrop || meta.background || ""
+        return meta.backdrop || meta.background || meta.fanart || meta.bannerImage || meta.banner || ""
     }
 
     function posterSource() {
@@ -260,7 +260,7 @@ Item {
     }
 
     function bannerSource() {
-        var value = detailValue(details, ["banner_url", "backdrop_url", "bannerUrl", "backdropUrl"])
+        var value = detailValue(details, ["backdrop_url", "banner_url", "backdropUrl", "bannerUrl"])
         if (value !== "") {
             return resolveArtworkUrl(value)
         }
@@ -423,7 +423,7 @@ Item {
                 Layout.fillWidth: true
                 title: root.displayTitle()
                 posterSource: root.artworkUrl(root.posterSource(), Theme.posterLargeWidth * 2, Theme.posterLargeHeight * 2)
-                backdropSource: root.artworkUrl(root.bannerSource(), 1600, 900)
+                backdropSource: root.artworkUrl(root.bannerSource(), 2560, 1440)
                 description: root.displayDescription()
                 typeLabel: root.displayType()
                 yearLabel: root.displayYear()
