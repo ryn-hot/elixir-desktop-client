@@ -127,7 +127,7 @@ ApplicationWindow {
         Sidebar {
             id: sidebar
             Layout.fillHeight: true
-            Layout.preferredWidth: Theme.sidebarWidth
+            Layout.preferredWidth: collapsed ? collapsedWidth : Theme.sidebarWidth
             visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
             currentView: {
                 if (!stackView.currentItem) return "home"

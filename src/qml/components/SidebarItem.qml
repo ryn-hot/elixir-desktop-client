@@ -9,6 +9,7 @@ Item {
     property string label: ""
     property bool isActive: false
     property bool hasActionMenu: false
+    property bool collapsed: false
     property int badgeCount: 0
     
     signal clicked()
@@ -16,6 +17,9 @@ Item {
 
     width: ListView.view ? ListView.view.width : 240
     height: 46
+    ToolTip.text: root.label
+    ToolTip.visible: root.collapsed && clickArea.containsMouse && root.label !== ""
+    ToolTip.delay: 500
 
     MouseArea {
         id: clickArea
@@ -27,8 +31,8 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        anchors.leftMargin: 10
-        anchors.rightMargin: 12
+        anchors.leftMargin: root.collapsed ? 8 : 10
+        anchors.rightMargin: root.collapsed ? 8 : 12
         radius: Theme.radius8
         color: {
             if (root.isActive) return Qt.rgba(1, 1, 1, 0.08)
@@ -51,9 +55,9 @@ Item {
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 22
-        anchors.rightMargin: 16
-        spacing: 12
+        anchors.leftMargin: root.collapsed ? 0 : 22
+        anchors.rightMargin: root.collapsed ? 0 : 16
+        spacing: root.collapsed ? 0 : 12
 
         Image {
             source: root.iconSource
@@ -61,12 +65,14 @@ Item {
             sourceSize.height: 20
             Layout.preferredWidth: 20
             Layout.preferredHeight: 20
+            Layout.alignment: root.collapsed ? Qt.AlignHCenter | Qt.AlignVCenter : Qt.AlignVCenter
             opacity: root.isActive ? 0.95 : (clickArea.containsMouse ? 0.86 : 0.66)
             visible: root.iconSource !== ""
         }
 
         Label {
             text: root.label
+            visible: !root.collapsed
             Layout.fillWidth: true
             color: root.isActive ? Theme.textPrimary : Theme.textSecondary
             font.family: Theme.bodyFont.family
@@ -76,7 +82,7 @@ Item {
         }
 
         Rectangle {
-            visible: root.badgeCount > 0
+            visible: root.badgeCount > 0 && !root.collapsed
             radius: 9
             color: Theme.accent
             border.color: Theme.accent
@@ -100,7 +106,7 @@ Item {
             sourceSize.height: 16
             Layout.preferredWidth: 16
             Layout.preferredHeight: 16
-            visible: root.hasActionMenu && clickArea.containsMouse
+            visible: root.hasActionMenu && clickArea.containsMouse && !root.collapsed
             opacity: 0.7
             
             MouseArea {
@@ -111,5 +117,17 @@ Item {
                 cursorShape: Qt.PointingHandCursor
             }
         }
+    }
+
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.horizontalCenterOffset: 10
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: -10
+        width: root.badgeCount > 0 ? 8 : 0
+        height: width
+        radius: width / 2
+        color: Theme.accent
+        visible: root.collapsed && root.badgeCount > 0
     }
 }

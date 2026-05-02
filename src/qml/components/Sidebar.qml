@@ -5,7 +5,9 @@ import Elixir 1.0
 
 Rectangle {
     id: root
-    width: Theme.sidebarWidth
+    readonly property int collapsedWidth: 72
+    property bool collapsed: false
+    width: collapsed ? collapsedWidth : Theme.sidebarWidth
     color: Theme.sidebarBg
     
     signal homeRequested()
@@ -30,17 +32,21 @@ Rectangle {
             
             RowLayout {
                 anchors.left: parent.left
-                anchors.leftMargin: 22
+                anchors.leftMargin: root.collapsed ? 0 : 22
                 anchors.right: parent.right
-                anchors.rightMargin: 16
+                anchors.rightMargin: root.collapsed ? 0 : 16
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 12
+                spacing: root.collapsed ? 0 : 12
                 
                 Rectangle {
-                    width: 34
-                    height: 34
+                    Layout.preferredWidth: 34
+                    Layout.preferredHeight: 34
                     radius: Theme.radius8
                     color: Theme.accent
+                    Layout.alignment: root.collapsed ? Qt.AlignHCenter | Qt.AlignVCenter : Qt.AlignVCenter
+                    ToolTip.text: root.collapsed ? "Expand sidebar" : "Collapse sidebar"
+                    ToolTip.visible: logoMouse.containsMouse
+                    ToolTip.delay: 500
                     
                     Label {
                         anchors.centerIn: parent
@@ -50,9 +56,18 @@ Rectangle {
                         font.bold: true
                         color: "#111"
                     }
+
+                    MouseArea {
+                        id: logoMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.collapsed = !root.collapsed
+                    }
                 }
                 
                 ColumnLayout {
+                    visible: !root.collapsed
                     Layout.fillWidth: true
                     spacing: 0
 
@@ -95,7 +110,7 @@ Rectangle {
 
             delegate: Item {
                 width: ListView.view ? ListView.view.width : Theme.sidebarWidth
-                height: model.type === "section" ? 38 : 46
+                height: model.type === "section" ? (root.collapsed ? 18 : 38) : 46
 
                 Label {
                     anchors.left: parent.left
@@ -109,7 +124,7 @@ Rectangle {
                     font.weight: Font.Bold
                     font.capitalization: Font.AllUppercase
                     font.letterSpacing: 0
-                    visible: model.type === "section"
+                    visible: model.type === "section" && !root.collapsed
                 }
 
                 SidebarItem {
@@ -117,6 +132,7 @@ Rectangle {
                     visible: model.type !== "section"
                     label: model.label
                     iconSource: model.icon
+                    collapsed: root.collapsed
                     isActive: {
                         if (model.action === "home" && root.currentView === "home") return true
                         if (model.action === "movies" && root.currentView === "movies") return true
@@ -147,8 +163,10 @@ Rectangle {
             spacing: 0
             
             SidebarItem {
+                Layout.fillWidth: true
                 label: "Settings"
                 iconSource: "qrc:/icons/settings.svg"
+                collapsed: root.collapsed
                 isActive: root.currentView === "settings"
                 onClicked: root.settingsRequested()
             }
