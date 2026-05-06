@@ -18,6 +18,13 @@ Item {
     property string addStatusText: ""
     property string pendingAddKey: ""
     property string lastAddedIntentId: ""
+    property string torrentioOwnerId: "elixir.extensions.torrentio"
+    property string activeCandidateKey: ""
+    property string pendingCandidateKey: ""
+    property string pendingSubmitCandidateId: ""
+    property string sourceStatusText: ""
+    property var candidateResultsByKey: ({})
+    property var candidateRouteSelections: ({})
 
     function setSearchQuery(query) {
         updateSearchQuery(query, false)
@@ -30,6 +37,9 @@ Item {
             selectedProviderIds = []
             requestPending = false
             statusText = ""
+            activeCandidateKey = ""
+            pendingCandidateKey = ""
+            sourceStatusText = ""
             apiClient.findMedia("", selectedType, [])
             return
         }
@@ -191,7 +201,14 @@ Item {
     function optionIndexForValue(options, value) {
         var needle = String(value || "")
         for (var i = 0; i < options.length; ++i) {
-            if (String(options[i].value || "") === needle) {
+            var optionValue = options[i].value
+            if (optionValue === undefined || optionValue === null) {
+                optionValue = options[i].logicalId
+            }
+            if (optionValue === undefined || optionValue === null) {
+                optionValue = options[i].logical_id
+            }
+            if (String(optionValue || "") === needle) {
                 return i
             }
         }
@@ -532,6 +549,33 @@ Item {
         return Number(value || 0)
     }
 
+    function acquisitionSourceLine(acquisition) {
+        if (!acquisition) {
+            return ""
+        }
+        var label = String(acquisition.source_label || acquisition.sourceLabel || "")
+        var children = acquisition.children || []
+        var child = children.length > 0 ? children[0] : null
+        if (label === "" && child) {
+            label = String(child.source_label || child.sourceLabel || "")
+        }
+        var details = []
+        if (child) {
+            var size = formatBytes(child.candidate_size_bytes || child.candidateSizeBytes || child.size_bytes || child.sizeBytes)
+            if (size !== "") {
+                details.push(size)
+            }
+            var language = String(child.candidate_language || child.candidateLanguage || "")
+            if (language !== "") {
+                details.push(language)
+            }
+        }
+        if (label === "") {
+            return details.join(" · ")
+        }
+        return details.length > 0 ? (label + " · " + details.join(" · ")) : label
+    }
+
     function addTargetLabel() {
         var managerId = resolvedManagerProviderIdForAdd()
         if (managerId === "") {
@@ -553,8 +597,266 @@ Item {
         apiClient.addMediaToManager(selectedType, item, managerProviderId, {})
     }
 
+    function sourceDisabledReason(item) {
+        if (!item) {
+            return "Select a media result first."
+        }
+        var type = lower(item.type || selectedType)
+        var ids = externalIdsFor(item)
+        if (type === "series" || type === "tv") {
+            return "Episode source search requires season and episode selection."
+        }
+        if (type === "anime") {
+            if (stringValue(ids.imdb).trim() === "" && stringValue(ids.kitsu).trim() === "") {
+                return "Anime source search requires an IMDb or Kitsu id."
+            }
+            return ""
+        }
+        if (stringValue(ids.imdb).trim() === "") {
+            return "Movie source search requires an IMDb id."
+        }
+        return ""
+    }
+
+    function candidateResultForKey(key) {
+        var value = candidateResultsByKey[String(key || "")]
+        return value === undefined || value === null ? null : value
+    }
+
+    function candidateList(result) {
+        if (!result) {
+            return []
+        }
+        var value = result.candidates
+        return value === undefined || value === null ? [] : value
+    }
+
+    function routeOptionsForResult(result) {
+        if (!result) {
+            return []
+        }
+        var value = result.route_options
+        if (value === undefined || value === null) {
+            value = result.routeOptions
+        }
+        return value === undefined || value === null ? [] : value
+    }
+
+    function candidateRouteIds(candidate) {
+        if (!candidate) {
+            return []
+        }
+        var value = candidate.route_logical_ids
+        if (value === undefined || value === null) {
+            value = candidate.routeLogicalIds
+        }
+        return value === undefined || value === null ? [] : value
+    }
+
+    function routeSupportsCandidate(route, candidate) {
+        var routeId = String(route.logical_id || route.logicalId || "")
+        var ids = candidateRouteIds(candidate)
+        for (var i = 0; i < ids.length; ++i) {
+            if (String(ids[i] || "") === routeId) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function candidateRouteOptions(candidate, result) {
+        var routes = routeOptionsForResult(result)
+        var options = []
+        for (var i = 0; i < routes.length; ++i) {
+            var route = routes[i]
+            if (routeSupportsCandidate(route, candidate)) {
+                options.push(route)
+            }
+        }
+        return options
+    }
+
+    function defaultRouteId(candidate) {
+        var value = candidate ? candidate.default_route_logical_id : ""
+        if (value === undefined || value === null || String(value) === "") {
+            value = candidate ? candidate.defaultRouteLogicalId : ""
+        }
+        return String(value || "")
+    }
+
+    function selectedRouteIdForCandidate(candidate, result) {
+        var candidateId = String(candidate && candidate.id ? candidate.id : "")
+        var selected = String(candidateRouteSelections[candidateId] || "")
+        var options = candidateRouteOptions(candidate, result)
+        for (var i = 0; i < options.length; ++i) {
+            var optionId = String(options[i].logical_id || options[i].logicalId || "")
+            if (selected !== "" && optionId === selected) {
+                return selected
+            }
+        }
+        var preferred = defaultRouteId(candidate)
+        for (var j = 0; j < options.length; ++j) {
+            var routeId = String(options[j].logical_id || options[j].logicalId || "")
+            if (preferred !== "" && routeId === preferred) {
+                return preferred
+            }
+        }
+        return options.length > 0 ? String(options[0].logical_id || options[0].logicalId || "") : ""
+    }
+
+    function routeOptionById(result, logicalId) {
+        var routes = routeOptionsForResult(result)
+        var needle = String(logicalId || "")
+        for (var i = 0; i < routes.length; ++i) {
+            var route = routes[i]
+            if (String(route.logical_id || route.logicalId || "") === needle) {
+                return route
+            }
+        }
+        return null
+    }
+
+    function setCandidateRoute(candidate, routeId) {
+        var candidateId = String(candidate && candidate.id ? candidate.id : "")
+        if (candidateId === "") {
+            return
+        }
+        var next = {}
+        for (var key in candidateRouteSelections) {
+            next[key] = candidateRouteSelections[key]
+        }
+        next[candidateId] = String(routeId || "")
+        candidateRouteSelections = next
+    }
+
+    function setCandidateResult(targetKey, result) {
+        var next = {}
+        for (var key in candidateResultsByKey) {
+            next[key] = candidateResultsByKey[key]
+        }
+        next[String(targetKey || "")] = result || {}
+        candidateResultsByKey = next
+    }
+
+    function searchSourcesForResult(item) {
+        var reason = sourceDisabledReason(item)
+        if (reason !== "") {
+            sourceStatusText = reason
+            return
+        }
+        var key = resultKey(item)
+        activeCandidateKey = key
+        pendingCandidateKey = key
+        sourceStatusText = ""
+        apiClient.searchAcquisitionCandidates(key, selectedType, item, 0, 0)
+    }
+
+    function routeUnavailableReason(route) {
+        if (!route) {
+            return "No acquisition route is available for this source."
+        }
+        var blocker = route.blocker
+        if (blocker !== undefined && blocker !== null && String(blocker) !== "") {
+            return String(blocker)
+        }
+        if (route.available === false) {
+            return "No provider is selected for this acquisition route."
+        }
+        return ""
+    }
+
+    function submitDisabledReason(candidate, result) {
+        var routeId = selectedRouteIdForCandidate(candidate, result)
+        var route = routeOptionById(result, routeId)
+        return routeUnavailableReason(route)
+    }
+
+    function submitCandidate(candidate, result) {
+        var routeId = selectedRouteIdForCandidate(candidate, result)
+        var reason = submitDisabledReason(candidate, result)
+        if (reason !== "") {
+            sourceStatusText = reason
+            return
+        }
+        pendingSubmitCandidateId = String(candidate.id || "")
+        sourceStatusText = ""
+        apiClient.submitAcquisitionCandidate(routeId, candidate, torrentioOwnerId)
+    }
+
+    function openRouteAccount(route) {
+        var extensionId = String(route && (route.account_extension_id || route.accountExtensionId) || "")
+        if (!stackView || extensionId === "") {
+            return
+        }
+        stackView.push(Qt.resolvedUrl("ExtensionControlView.qml"), {
+            stackView: stackView,
+            extensionId: extensionId
+        })
+    }
+
+    function formatBytes(value) {
+        var bytes = Number(value || 0)
+        if (!isFinite(bytes) || bytes <= 0) {
+            return ""
+        }
+        var units = ["B", "KB", "MB", "GB", "TB"]
+        var idx = 0
+        while (bytes >= 1024 && idx < units.length - 1) {
+            bytes = bytes / 1024
+            idx += 1
+        }
+        var decimals = idx < 2 ? 0 : 1
+        return bytes.toFixed(decimals) + " " + units[idx]
+    }
+
+    function candidateSummary(candidate) {
+        var parts = []
+        var quality = String(candidate.quality || "")
+        if (quality !== "") {
+            parts.push(quality)
+        }
+        var size = formatBytes(candidate.size_bytes || candidate.sizeBytes)
+        if (size !== "") {
+            parts.push(size)
+        }
+        var seeders = candidate.seeders
+        if (seeders !== undefined && seeders !== null && Number(seeders) > 0) {
+            parts.push(Number(seeders) + " seeders")
+        }
+        var language = String(candidate.language || "")
+        if (language !== "") {
+            parts.push(language)
+        }
+        var cachedDebrid = candidate.cached_debrid
+        if (cachedDebrid === undefined || cachedDebrid === null) {
+            cachedDebrid = candidate.cachedDebrid
+        }
+        if (cachedDebrid === true || cachedDebrid === "true") {
+            parts.push("cached debrid")
+        }
+        var kind = String(candidate.source_kind || candidate.sourceKind || "")
+        if (kind !== "") {
+            parts.push(kind === "http" ? "hoster link" : kind)
+        }
+        return parts.join(" / ")
+    }
+
+    function candidateScoreBadges(candidate) {
+        if (!candidate) {
+            return []
+        }
+        var badges = candidate.score_badges
+        if (badges === undefined || badges === null) {
+            badges = candidate.scoreBadges
+        }
+        return badges === undefined || badges === null ? [] : badges
+    }
+
     onSelectedTypeChanged: {
         selectedProviderIds = []
+        activeCandidateKey = ""
+        pendingCandidateKey = ""
+        sourceStatusText = ""
         if (apiClient.authToken !== "") {
             apiClient.fetchManagerPreferences()
             apiClient.findMedia("", selectedType, [])
@@ -646,6 +948,12 @@ Item {
             } else if (root.isFindEndpoint(endpoint, "add")) {
                 root.pendingAddKey = ""
                 root.addStatusText = root.formatAddError(error)
+            } else if (endpoint.indexOf("/api/v1/acquisition/candidates/search") === 0) {
+                root.pendingCandidateKey = ""
+                root.sourceStatusText = error
+            } else if (endpoint.indexOf("/api/v1/download-broker") === 0) {
+                root.pendingSubmitCandidateId = ""
+                root.sourceStatusText = error
             }
         }
 
@@ -662,6 +970,23 @@ Item {
             if (!apiClient.mediaAddLoading && root.pendingAddKey !== "" && root.addStatusText === "") {
                 root.pendingAddKey = ""
             }
+        }
+
+        function onAcquisitionCandidatesReceived(targetKey, result) {
+            root.pendingCandidateKey = ""
+            root.activeCandidateKey = String(targetKey || "")
+            root.sourceStatusText = ""
+            root.setCandidateResult(targetKey, result)
+        }
+
+        function onAcquisitionCandidateSubmitCompleted(candidateId, result) {
+            root.pendingSubmitCandidateId = ""
+            var accepted = result && (result.accepted === true || result.accepted === "true")
+            var route = result ? String(result.logical_id || result.logicalId || "") : ""
+            root.sourceStatusText = accepted
+                                  ? ("Download submitted" + (route !== "" ? (" via " + route) : "") + ".")
+                                  : "Download broker did not accept the candidate."
+            apiClient.fetchMediaAcquisition()
         }
 
         function onExtensionsCatalogChanged() {
@@ -915,6 +1240,18 @@ Item {
                 wrapMode: Text.WordWrap
             }
 
+            Label {
+                Layout.fillWidth: true
+                text: root.sourceStatusText
+                color: root.sourceStatusText.indexOf("Download submitted") === 0
+                       ? Theme.textSecondary
+                       : "#f26d6d"
+                font.pixelSize: 11
+                font.family: Theme.fontBody
+                visible: root.sourceStatusText !== ""
+                wrapMode: Text.WordWrap
+            }
+
             Repeater {
                 model: root.providerErrors()
                 delegate: Rectangle {
@@ -988,18 +1325,23 @@ Item {
                     radius: Theme.radiusMedium
                     color: index % 2 === 0 ? Theme.backgroundCard : Theme.backgroundCardRaised
                     border.color: rowHover.hovered ? Theme.accent : Theme.border
-                    implicitHeight: rowContent.implicitHeight + Theme.spacingSmall * 2
+                    implicitHeight: resultContainer.implicitHeight + Theme.spacingSmall * 2
 
                     HoverHandler {
                         id: rowHover
                     }
 
-                    RowLayout {
-                        id: rowContent
+                    ColumnLayout {
+                        id: resultContainer
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: parent.top
                         anchors.margins: Theme.spacingSmall
+                        spacing: Theme.spacingSmall
+
+                    RowLayout {
+                        id: rowContent
+                        Layout.fillWidth: true
                         spacing: Theme.spacingMedium
 
                         Rectangle {
@@ -1146,9 +1488,26 @@ Item {
                                 onClicked: root.addResultToManager(modelData)
                             }
 
+                            Button {
+                                Layout.alignment: Qt.AlignRight
+                                text: root.pendingCandidateKey === resultRow.rowKey
+                                      ? "Searching..."
+                                      : (root.activeCandidateKey === resultRow.rowKey ? "Hide Sources" : "Sources")
+                                enabled: root.pendingCandidateKey === ""
+                                onClicked: {
+                                    if (root.activeCandidateKey === resultRow.rowKey) {
+                                        root.activeCandidateKey = ""
+                                    } else {
+                                        root.searchSourcesForResult(modelData)
+                                    }
+                                }
+                            }
+
                             Label {
                                 Layout.fillWidth: true
-                                text: resultRow.addReason
+                                text: resultRow.addReason !== ""
+                                      ? resultRow.addReason
+                                      : root.sourceDisabledReason(modelData)
                                 color: Theme.textMuted
                                 font.pixelSize: 10
                                 font.family: Theme.fontBody
@@ -1211,12 +1570,234 @@ Item {
                                         visible: text !== ""
                                     }
 
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: root.acquisitionSourceLine(resultRow.acquisition)
+                                        color: Theme.textMuted
+                                        font.pixelSize: 10
+                                        font.family: Theme.fontBody
+                                        wrapMode: Text.WordWrap
+                                        visible: text !== ""
+                                    }
+
                                     ProgressBar {
                                         Layout.fillWidth: true
                                         from: 0
                                         to: 100
                                         value: root.acquisitionProgressValue(resultRow.acquisition)
                                         visible: root.acquisitionProgressVisible(resultRow.acquisition)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                        Rectangle {
+                            id: sourcePanel
+                            Layout.fillWidth: true
+                            visible: root.activeCandidateKey === resultRow.rowKey
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCard
+                            border.color: Theme.border
+                            implicitHeight: sourcePanelColumn.implicitHeight + Theme.spacingSmall * 2
+
+                            readonly property var candidateResult: root.candidateResultForKey(resultRow.rowKey)
+                            readonly property var candidates: root.candidateList(candidateResult)
+                            readonly property bool loading: root.pendingCandidateKey === resultRow.rowKey
+
+                            ColumnLayout {
+                                id: sourcePanelColumn
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: Theme.spacingSmall
+                                spacing: Theme.spacingSmall
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacingSmall
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: "Download Sources"
+                                        color: Theme.textPrimary
+                                        font.pixelSize: 13
+                                        font.family: Theme.fontDisplay
+                                    }
+
+                                    BusyIndicator {
+                                        running: sourcePanel.loading
+                                        visible: running
+                                        Layout.preferredWidth: 20
+                                        Layout.preferredHeight: 20
+                                    }
+
+                                    Button {
+                                        text: "Refresh"
+                                        enabled: !sourcePanel.loading
+                                                 && root.sourceDisabledReason(resultRow.modelData) === ""
+                                        onClicked: root.searchSourcesForResult(resultRow.modelData)
+                                    }
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.sourceDisabledReason(resultRow.modelData)
+                                    color: Theme.textMuted
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
+                                    visible: text !== ""
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: !sourcePanel.loading
+                                          && root.sourceDisabledReason(resultRow.modelData) === ""
+                                          && sourcePanel.candidates.length === 0
+                                          && sourcePanel.candidateResult !== null
+                                          ? "No downloadable candidates were returned."
+                                          : ""
+                                    color: Theme.textMuted
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
+                                    visible: text !== ""
+                                }
+
+                                Repeater {
+                                    model: sourcePanel.candidates.slice(0, 8)
+
+                                    delegate: Rectangle {
+                                        id: candidateRow
+                                        required property var modelData
+
+                                        readonly property string selectedRouteId: root.selectedRouteIdForCandidate(modelData, sourcePanel.candidateResult)
+                                        readonly property var selectedRoute: root.routeOptionById(sourcePanel.candidateResult, selectedRouteId)
+                                        readonly property string submitReason: root.submitDisabledReason(modelData, sourcePanel.candidateResult)
+                                        readonly property bool submitPending: root.pendingSubmitCandidateId === String(modelData.id || "")
+
+                                        Layout.fillWidth: true
+                                        radius: Theme.radiusSmall
+                                        color: Theme.backgroundCardRaised
+                                        border.color: submitReason !== "" ? Theme.accentDanger : Theme.border
+                                        implicitHeight: candidateColumn.implicitHeight + Theme.spacingSmall * 2
+
+                                        ColumnLayout {
+                                            id: candidateColumn
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.top: parent.top
+                                            anchors.margins: Theme.spacingSmall
+                                            spacing: 6
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: Theme.spacingSmall
+
+                                                ColumnLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 3
+
+                                                    Label {
+                                                        Layout.fillWidth: true
+                                                        text: String(modelData.title || modelData.name || "Untitled source")
+                                                        color: Theme.textPrimary
+                                                        font.pixelSize: 12
+                                                        font.family: Theme.fontBody
+                                                        elide: Text.ElideRight
+                                                    }
+
+                                                    Label {
+                                                        Layout.fillWidth: true
+                                                        text: root.candidateSummary(modelData)
+                                                        color: Theme.textMuted
+                                                        font.pixelSize: 10
+                                                        font.family: Theme.fontBody
+                                                        elide: Text.ElideRight
+                                                        visible: text !== ""
+                                                    }
+
+                                                    Flow {
+                                                        Layout.fillWidth: true
+                                                        spacing: 4
+                                                        visible: root.candidateScoreBadges(modelData).length > 0
+
+                                                        Repeater {
+                                                            model: root.candidateScoreBadges(modelData).slice(0, 5)
+
+                                                            delegate: Rectangle {
+                                                                required property var modelData
+                                                                readonly property int badgeValue: Number(modelData.value || 0)
+
+                                                                radius: Theme.radiusSmall
+                                                                color: badgeValue < 0 ? Theme.backgroundCard
+                                                                                      : Theme.accentSoft
+                                                                border.color: badgeValue < 0 ? Theme.border
+                                                                                             : Theme.accent
+                                                                implicitWidth: badgeLabel.implicitWidth + 10
+                                                                implicitHeight: badgeLabel.implicitHeight + 4
+
+                                                                Label {
+                                                                    id: badgeLabel
+                                                                    anchors.centerIn: parent
+                                                                    text: String(modelData.label || "")
+                                                                    color: badgeValue < 0 ? Theme.textMuted
+                                                                                          : Theme.textPrimary
+                                                                    font.pixelSize: 9
+                                                                    font.family: Theme.fontBody
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                ComboBox {
+                                                    Layout.preferredWidth: 220
+                                                    model: root.candidateRouteOptions(modelData, sourcePanel.candidateResult)
+                                                    textRole: "label"
+                                                    valueRole: "logicalId"
+                                                    currentIndex: root.optionIndexForValue(model, candidateRow.selectedRouteId)
+                                                    onActivated: {
+                                                        var value = currentValue !== undefined
+                                                                  ? String(currentValue)
+                                                                  : String(model[currentIndex].logical_id || model[currentIndex].logicalId || "")
+                                                        root.setCandidateRoute(modelData, value)
+                                                    }
+                                                }
+
+                                                Button {
+                                                    text: candidateRow.submitPending ? "Submitting..." : "Download"
+                                                    enabled: !candidateRow.submitPending
+                                                             && root.pendingSubmitCandidateId === ""
+                                                             && candidateRow.submitReason === ""
+                                                    onClicked: root.submitCandidate(modelData, sourcePanel.candidateResult)
+                                                }
+                                            }
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: Theme.spacingSmall
+                                                visible: candidateRow.submitReason !== ""
+
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    text: candidateRow.submitReason
+                                                    color: Theme.textMuted
+                                                    font.pixelSize: 10
+                                                    font.family: Theme.fontBody
+                                                    wrapMode: Text.WordWrap
+                                                }
+
+                                                Button {
+                                                    text: "Add account"
+                                                    visible: candidateRow.selectedRoute
+                                                             && (candidateRow.selectedRoute.needs_account === true
+                                                                 || candidateRow.selectedRoute.needsAccount === true)
+                                                    onClicked: root.openRouteAccount(candidateRow.selectedRoute)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }

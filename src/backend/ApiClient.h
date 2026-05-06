@@ -244,6 +244,16 @@ public:
         const QVariantMap &item,
         const QString &managerProviderId = QString(),
         const QVariantMap &options = QVariantMap());
+    Q_INVOKABLE void searchAcquisitionCandidates(
+        const QString &targetKey,
+        const QString &mediaType,
+        const QVariantMap &item,
+        int season = 0,
+        int episode = 0);
+    Q_INVOKABLE void submitAcquisitionCandidate(
+        const QString &logicalId,
+        const QVariantMap &candidate,
+        const QString &ownerId = QString());
     Q_INVOKABLE void fetchManagerPreferences();
     Q_INVOKABLE void updateManagerPreferences(
         const QString &movieProviderId,
@@ -313,6 +323,8 @@ signals:
     void reviewQueueReceived(const QVariantList &items);
     void reviewDetailReceived(const QVariantMap &detail);
     void reviewApplied(const QString &reviewId);
+    void acquisitionCandidatesReceived(const QString &targetKey, const QVariantMap &result);
+    void acquisitionCandidateSubmitCompleted(const QString &candidateId, const QVariantMap &result);
     void requestFailed(const QString &endpoint, const QString &error);
 
 private:
