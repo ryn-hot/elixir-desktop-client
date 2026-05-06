@@ -74,28 +74,6 @@ QString normalizeMediaType(const QString &value) {
     return "movies";
 }
 
-QString normalizeCandidateMediaType(const QString &value) {
-    const QString mediaType = value.trimmed().toLower();
-    if (mediaType == "movie" || mediaType == "movies") {
-        return "movie";
-    }
-    if (mediaType == "series" || mediaType == "tv") {
-        return "series";
-    }
-    if (mediaType == "anime") {
-        return "anime";
-    }
-    return "movie";
-}
-
-QVariantMap externalIdsFromItem(const QVariantMap &item) {
-    QVariant ids = item.value("external_ids");
-    if (!ids.isValid() || ids.isNull()) {
-        ids = item.value("externalIds");
-    }
-    return ids.toMap();
-}
-
 QVariantMap normalizeFindMediaPreferencesPayload(const QVariantMap &payload) {
     const QVariantMap pref = payload.value("preferences").toMap();
     QVariantMap normalizedPref;
@@ -2523,88 +2501,6 @@ void ApiClient::addMediaToManager(
                 m_mediaAddLoading = false;
                 emit mediaAddLoadingChanged();
             }
-        });
-}
-
-void ApiClient::searchAcquisitionCandidates(
-    const QString &targetKey,
-    const QString &mediaType,
-    const QVariantMap &item,
-    int season,
-    int episode) {
-    QJsonObject body;
-    body.insert("mediaType", normalizeCandidateMediaType(mediaType));
-    const QVariantMap externalIds = externalIdsFromItem(item);
-    if (!externalIds.isEmpty()) {
-        body.insert("externalIds", QJsonObject::fromVariantMap(externalIds));
-    }
-    if (season > 0) {
-        body.insert("season", season);
-    }
-    if (episode > 0) {
-        body.insert("episode", episode);
-    }
-
-    sendRequest(
-        "POST",
-        "/api/v1/acquisition/candidates/search",
-        body,
-        [this, targetKey](const QJsonDocument &doc) {
-            if (!doc.isObject()) {
-                emit requestFailed(
-                    "/api/v1/acquisition/candidates/search",
-                    "Acquisition candidate response was not an object.");
-                return;
-            }
-            emit acquisitionCandidatesReceived(targetKey, doc.object().toVariantMap());
-        });
-}
-
-void ApiClient::submitAcquisitionCandidate(
-    const QString &logicalId,
-    const QVariantMap &candidate,
-    const QString &ownerId) {
-    const QString trimmedLogicalId = logicalId.trimmed();
-    const QString source = candidate.value("source").toString().trimmed();
-    const QString candidateId = candidate.value("id").toString();
-    if (trimmedLogicalId.isEmpty()) {
-        emit requestFailed("/api/v1/download-broker", "Acquisition route is required.");
-        return;
-    }
-    if (source.isEmpty()) {
-        emit requestFailed("/api/v1/download-broker", "Candidate source is required.");
-        return;
-    }
-
-    QJsonObject body;
-    body.insert("source", source);
-    const QString title = candidate.value("title", candidate.value("name")).toString().trimmed();
-    if (!title.isEmpty()) {
-        body.insert("name", title);
-    }
-
-    QUrlQuery query;
-    const QString trimmedOwner = ownerId.trimmed();
-    if (!trimmedOwner.isEmpty()) {
-        query.addQueryItem("owner_id", trimmedOwner);
-    }
-    const QString queryString = query.toString(QUrl::FullyEncoded);
-    const QString path = QString("/api/v1/download-broker/%1/submit%2%3")
-                             .arg(
-                                 trimmedLogicalId,
-                                 queryString.isEmpty() ? QString() : QStringLiteral("?"),
-                                 queryString);
-
-    sendRequest(
-        "POST",
-        path,
-        body,
-        [this, candidateId](const QJsonDocument &doc) {
-            if (!doc.isObject()) {
-                emit requestFailed("/api/v1/download-broker", "Download broker response was not an object.");
-                return;
-            }
-            emit acquisitionCandidateSubmitCompleted(candidateId, doc.object().toVariantMap());
         });
 }
 
