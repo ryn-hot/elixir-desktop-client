@@ -21,6 +21,7 @@ ApplicationWindow {
     Component.onCompleted: {
         if (apiClient.authToken !== "") {
             apiClient.fetchMediaAcquisition()
+            apiClient.fetchAcquisitionReleases("review_required", "", 50)
         }
     }
 
@@ -76,8 +77,9 @@ ApplicationWindow {
             return
         }
         var items = apiClient.mediaAcquisitionItems || []
+        var reviewRows = apiClient.acquisitionReviewReleases || []
         var seen = seenAcquisitionIds || ({})
-        var unread = 0
+        var unread = reviewRows.length
         for (var i = 0; i < items.length; ++i) {
             var id = acquisitionItemId(items[i])
             if (id !== "" && !seen[id]) {
@@ -96,6 +98,7 @@ ApplicationWindow {
         markCurrentAcquisitionSeen()
         if (apiClient.authToken !== "") {
             apiClient.fetchMediaAcquisition()
+            apiClient.fetchAcquisitionReleases("review_required", "", 50)
         }
     }
 
@@ -246,12 +249,16 @@ ApplicationWindow {
         function onAuthTokenChanged() {
             if (apiClient.authToken !== "") {
                 apiClient.fetchMediaAcquisition()
+                apiClient.fetchAcquisitionReleases("review_required", "", 50)
             } else {
                 root.seenAcquisitionIds = ({})
                 root.acquisitionUnreadCount = 0
             }
         }
         function onMediaAcquisitionChanged() {
+            root.refreshAcquisitionUnread()
+        }
+        function onAcquisitionReviewChanged() {
             root.refreshAcquisitionUnread()
         }
         function onPlaybackStarted(info) {
@@ -279,6 +286,14 @@ ApplicationWindow {
         repeat: true
         running: apiClient.authToken !== "" && stackView.currentItem && stackView.currentItem.objectName !== "connectView"
         onTriggered: apiClient.fetchMediaAcquisition()
+    }
+
+    Timer {
+        id: acquisitionReviewPoll
+        interval: 15000
+        repeat: true
+        running: apiClient.authToken !== "" && stackView.currentItem && stackView.currentItem.objectName !== "connectView"
+        onTriggered: apiClient.fetchAcquisitionReleases("review_required", "", 50)
     }
 
     Timer {

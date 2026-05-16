@@ -430,6 +430,22 @@ int ApiClient::mediaAcquisitionNeedsAttentionCount() const {
     return m_mediaAcquisitionNeedsAttentionCount;
 }
 
+QVariantList ApiClient::acquisitionReviewReleases() const {
+    return m_acquisitionReviewReleases;
+}
+
+QVariantMap ApiClient::acquisitionReviewDetail() const {
+    return m_acquisitionReviewDetail;
+}
+
+QVariantMap ApiClient::acquisitionSubscriptionCoverage() const {
+    return m_acquisitionSubscriptionCoverage;
+}
+
+bool ApiClient::acquisitionReviewLoading() const {
+    return m_acquisitionReviewLoading;
+}
+
 void ApiClient::login(const QString &email, const QString &password) {
     QJsonObject body{{"email", email.trimmed()}, {"password", password}};
     sendRequest(
@@ -2255,6 +2271,41 @@ void ApiClient::updateMediaAcquisitionState(const QJsonObject &obj) {
     }
 }
 
+void ApiClient::setAcquisitionReviewLoading(bool loading) {
+    if (m_acquisitionReviewLoading == loading) {
+        return;
+    }
+    m_acquisitionReviewLoading = loading;
+    emit acquisitionReviewLoadingChanged();
+}
+
+void ApiClient::updateAcquisitionReviewReleases(const QJsonObject &obj) {
+    const QVariantList releases = obj.value("releases").toArray().toVariantList();
+    if (m_acquisitionReviewReleases == releases) {
+        return;
+    }
+    m_acquisitionReviewReleases = releases;
+    emit acquisitionReviewChanged();
+}
+
+void ApiClient::updateAcquisitionReviewDetail(const QJsonObject &obj) {
+    const QVariantMap detail = obj.toVariantMap();
+    if (m_acquisitionReviewDetail == detail) {
+        return;
+    }
+    m_acquisitionReviewDetail = detail;
+    emit acquisitionReviewDetailChanged();
+}
+
+void ApiClient::updateAcquisitionSubscriptionCoverage(const QJsonObject &obj) {
+    const QVariantMap coverage = obj.toVariantMap();
+    if (m_acquisitionSubscriptionCoverage == coverage) {
+        return;
+    }
+    m_acquisitionSubscriptionCoverage = coverage;
+    emit acquisitionSubscriptionCoverageChanged();
+}
+
 void ApiClient::fetchMediaAcquisition(int limit) {
     QUrlQuery query;
     query.addQueryItem("limit", QString::number(qBound(1, limit, 50)));
@@ -2288,6 +2339,172 @@ void ApiClient::findAnotherRelease(const QString &intentId) {
         QJsonObject(),
         [this](const QJsonDocument &) {
             fetchMediaAcquisition();
+        });
+}
+
+void ApiClient::fetchAcquisitionReleases(
+    const QString &state,
+    const QString &subscriptionId,
+    int limit) {
+    QUrlQuery query;
+    if (!state.trimmed().isEmpty()) {
+        query.addQueryItem("state", state.trimmed());
+    }
+    if (!subscriptionId.trimmed().isEmpty()) {
+        query.addQueryItem("subscriptionId", subscriptionId.trimmed());
+    }
+    if (limit > 0) {
+        query.addQueryItem("limit", QString::number(qBound(1, limit, 500)));
+    }
+    QString path = "/api/v1/acquisition/releases";
+    if (!query.isEmpty()) {
+        path.append('?');
+        path.append(query.toString(QUrl::FullyEncoded));
+    }
+    setAcquisitionReviewLoading(true);
+    sendRequest(
+        "GET",
+        path,
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setAcquisitionReviewLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/acquisition/releases", "Release review response was not an object.");
+                return;
+            }
+            updateAcquisitionReviewReleases(doc.object());
+        },
+        [this](const QString &) {
+            setAcquisitionReviewLoading(false);
+        });
+}
+
+void ApiClient::fetchAcquisitionRelease(const QString &releaseId) {
+    const QString trimmedReleaseId = releaseId.trimmed();
+    if (trimmedReleaseId.isEmpty()) {
+        emit requestFailed("/api/v1/acquisition/releases/:id", "Release id is required.");
+        return;
+    }
+    setAcquisitionReviewLoading(true);
+    sendRequest(
+        "GET",
+        QString("/api/v1/acquisition/releases/%1").arg(trimmedReleaseId),
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setAcquisitionReviewLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/acquisition/releases/:id", "Release detail response was not an object.");
+                return;
+            }
+            updateAcquisitionReviewDetail(doc.object());
+        },
+        [this](const QString &) {
+            setAcquisitionReviewLoading(false);
+        });
+}
+
+void ApiClient::fetchAcquisitionSubscriptionCoverage(const QString &subscriptionId) {
+    const QString trimmedSubscriptionId = subscriptionId.trimmed();
+    if (trimmedSubscriptionId.isEmpty()) {
+        emit requestFailed("/api/v1/acquisition/subscriptions/:id/coverage", "Subscription id is required.");
+        return;
+    }
+    setAcquisitionReviewLoading(true);
+    sendRequest(
+        "GET",
+        QString("/api/v1/acquisition/subscriptions/%1/coverage").arg(trimmedSubscriptionId),
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setAcquisitionReviewLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/acquisition/subscriptions/:id/coverage", "Coverage response was not an object.");
+                return;
+            }
+            updateAcquisitionSubscriptionCoverage(doc.object());
+        },
+        [this](const QString &) {
+            setAcquisitionReviewLoading(false);
+        });
+}
+
+void ApiClient::approveAcquisitionRelease(const QString &releaseId, const QVariantMap &request) {
+    const QString trimmedReleaseId = releaseId.trimmed();
+    if (trimmedReleaseId.isEmpty()) {
+        emit requestFailed("/api/v1/acquisition/releases/:id/approve", "Release id is required.");
+        return;
+    }
+    setAcquisitionReviewLoading(true);
+    sendRequest(
+        "POST",
+        QString("/api/v1/acquisition/releases/%1/approve").arg(trimmedReleaseId),
+        QJsonObject::fromVariantMap(request),
+        [this, trimmedReleaseId](const QJsonDocument &doc) {
+            setAcquisitionReviewLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/acquisition/releases/:id/approve", "Approve response was not an object.");
+                return;
+            }
+            updateAcquisitionReviewDetail(doc.object());
+            emit acquisitionReviewActionCompleted(trimmedReleaseId, "approve", doc.object().toVariantMap());
+            fetchAcquisitionReleases("review_required", QString(), 50);
+            fetchMediaAcquisition();
+        },
+        [this](const QString &) {
+            setAcquisitionReviewLoading(false);
+        });
+}
+
+void ApiClient::rejectAcquisitionRelease(const QString &releaseId, const QVariantMap &request) {
+    const QString trimmedReleaseId = releaseId.trimmed();
+    if (trimmedReleaseId.isEmpty()) {
+        emit requestFailed("/api/v1/acquisition/releases/:id/reject", "Release id is required.");
+        return;
+    }
+    setAcquisitionReviewLoading(true);
+    sendRequest(
+        "POST",
+        QString("/api/v1/acquisition/releases/%1/reject").arg(trimmedReleaseId),
+        QJsonObject::fromVariantMap(request),
+        [this, trimmedReleaseId](const QJsonDocument &doc) {
+            setAcquisitionReviewLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/acquisition/releases/:id/reject", "Reject response was not an object.");
+                return;
+            }
+            updateAcquisitionReviewDetail(doc.object());
+            emit acquisitionReviewActionCompleted(trimmedReleaseId, "reject", doc.object().toVariantMap());
+            fetchAcquisitionReleases("review_required", QString(), 50);
+            fetchMediaAcquisition();
+        },
+        [this](const QString &) {
+            setAcquisitionReviewLoading(false);
+        });
+}
+
+void ApiClient::retryAcquisitionRelease(const QString &releaseId, const QVariantMap &request) {
+    const QString trimmedReleaseId = releaseId.trimmed();
+    if (trimmedReleaseId.isEmpty()) {
+        emit requestFailed("/api/v1/acquisition/releases/:id/retry", "Release id is required.");
+        return;
+    }
+    setAcquisitionReviewLoading(true);
+    sendRequest(
+        "POST",
+        QString("/api/v1/acquisition/releases/%1/retry").arg(trimmedReleaseId),
+        QJsonObject::fromVariantMap(request),
+        [this, trimmedReleaseId](const QJsonDocument &doc) {
+            setAcquisitionReviewLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/acquisition/releases/:id/retry", "Retry response was not an object.");
+                return;
+            }
+            updateAcquisitionReviewDetail(doc.object());
+            emit acquisitionReviewActionCompleted(trimmedReleaseId, "retry", doc.object().toVariantMap());
+            fetchAcquisitionReleases("review_required", QString(), 50);
+            fetchMediaAcquisition();
+        },
+        [this](const QString &) {
+            setAcquisitionReviewLoading(false);
         });
 }
 

@@ -71,7 +71,7 @@ Item {
     }
 
     function phaseBorderColor(phase) {
-        if (phase === "needs_attention" || phase === "failed") {
+        if (phase === "needs_attention" || phase === "failed" || phase === "review_required") {
             return Theme.accentDanger
         }
         if (phase === "finding_another_release") {
@@ -90,7 +90,7 @@ Item {
     }
 
     function phaseFillColor(phase) {
-        if (phase === "needs_attention" || phase === "failed") {
+        if (phase === "needs_attention" || phase === "failed" || phase === "review_required") {
             return Theme.accentDangerSoft
         }
         if (phase === "finding_another_release") {
@@ -229,6 +229,7 @@ Item {
     Component.onCompleted: {
         if (apiClient.authToken !== "") {
             apiClient.fetchMediaAcquisition()
+            apiClient.fetchAcquisitionReleases("review_required", "", 50)
         }
     }
 
@@ -291,7 +292,10 @@ Item {
 
                 Button {
                     text: "Refresh"
-                    onClicked: apiClient.fetchMediaAcquisition()
+                    onClicked: {
+                        apiClient.fetchMediaAcquisition()
+                        apiClient.fetchAcquisitionReleases("review_required", "", 50)
+                    }
                     background: Rectangle {
                         radius: Theme.radiusSmall
                         color: Theme.backgroundCardRaised
@@ -308,6 +312,12 @@ Item {
                 }
             }
 
+            AcquisitionReviewPanel {
+                Layout.fillWidth: true
+                Layout.leftMargin: Theme.spacingXLarge
+                Layout.rightMargin: Theme.spacingXLarge
+            }
+
             Rectangle {
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.spacingXLarge
@@ -316,6 +326,7 @@ Item {
                 color: Theme.backgroundCard
                 border.color: Theme.border
                 visible: (apiClient.mediaAcquisitionItems || []).length === 0
+                         && (apiClient.acquisitionReviewReleases || []).length === 0
                 implicitHeight: emptyState.implicitHeight + Theme.spacingLarge * 2
 
                 ColumnLayout {

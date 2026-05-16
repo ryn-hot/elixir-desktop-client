@@ -66,6 +66,10 @@ class ApiClient : public QObject {
     Q_PROPERTY(int mediaAcquisitionActiveCount READ mediaAcquisitionActiveCount NOTIFY mediaAcquisitionChanged)
     Q_PROPERTY(int mediaAcquisitionDownloadingCount READ mediaAcquisitionDownloadingCount NOTIFY mediaAcquisitionChanged)
     Q_PROPERTY(int mediaAcquisitionNeedsAttentionCount READ mediaAcquisitionNeedsAttentionCount NOTIFY mediaAcquisitionChanged)
+    Q_PROPERTY(QVariantList acquisitionReviewReleases READ acquisitionReviewReleases NOTIFY acquisitionReviewChanged)
+    Q_PROPERTY(QVariantMap acquisitionReviewDetail READ acquisitionReviewDetail NOTIFY acquisitionReviewDetailChanged)
+    Q_PROPERTY(QVariantMap acquisitionSubscriptionCoverage READ acquisitionSubscriptionCoverage NOTIFY acquisitionSubscriptionCoverageChanged)
+    Q_PROPERTY(bool acquisitionReviewLoading READ acquisitionReviewLoading NOTIFY acquisitionReviewLoadingChanged)
 
 public:
     explicit ApiClient(QObject *parent = nullptr);
@@ -137,6 +141,10 @@ public:
     int mediaAcquisitionActiveCount() const;
     int mediaAcquisitionDownloadingCount() const;
     int mediaAcquisitionNeedsAttentionCount() const;
+    QVariantList acquisitionReviewReleases() const;
+    QVariantMap acquisitionReviewDetail() const;
+    QVariantMap acquisitionSubscriptionCoverage() const;
+    bool acquisitionReviewLoading() const;
 
     Q_INVOKABLE void login(const QString &email, const QString &password);
     Q_INVOKABLE void signup(const QString &email, const QString &password);
@@ -251,6 +259,15 @@ public:
         const QString &animeProviderId);
     Q_INVOKABLE void fetchMediaAcquisition(int limit = 12);
     Q_INVOKABLE void findAnotherRelease(const QString &intentId);
+    Q_INVOKABLE void fetchAcquisitionReleases(
+        const QString &state = QString(),
+        const QString &subscriptionId = QString(),
+        int limit = 50);
+    Q_INVOKABLE void fetchAcquisitionRelease(const QString &releaseId);
+    Q_INVOKABLE void fetchAcquisitionSubscriptionCoverage(const QString &subscriptionId);
+    Q_INVOKABLE void approveAcquisitionRelease(const QString &releaseId, const QVariantMap &request);
+    Q_INVOKABLE void rejectAcquisitionRelease(const QString &releaseId, const QVariantMap &request);
+    Q_INVOKABLE void retryAcquisitionRelease(const QString &releaseId, const QVariantMap &request);
 
 signals:
     void baseUrlChanged();
@@ -281,6 +298,11 @@ signals:
     void mediaAddResultChanged();
     void mediaAddLoadingChanged();
     void mediaAcquisitionChanged();
+    void acquisitionReviewChanged();
+    void acquisitionReviewDetailChanged();
+    void acquisitionSubscriptionCoverageChanged();
+    void acquisitionReviewLoadingChanged();
+    void acquisitionReviewActionCompleted(const QString &releaseId, const QString &action, const QVariantMap &detail);
     void extensionsRuntimeResetCompleted(const QString &status, const QString &message);
     void extensionControlActionCompleted(
         const QString &extensionId,
@@ -339,6 +361,10 @@ private:
     void updateNetworkProtectionListenPortSyncPlan(const QJsonObject &obj);
     void updateDownloadBrokerRoutes(const QJsonObject &obj);
     void updateMediaAcquisitionState(const QJsonObject &obj);
+    void updateAcquisitionReviewReleases(const QJsonObject &obj);
+    void updateAcquisitionReviewDetail(const QJsonObject &obj);
+    void updateAcquisitionSubscriptionCoverage(const QJsonObject &obj);
+    void setAcquisitionReviewLoading(bool loading);
     void sendRequest(
         const QString &method,
         const QString &path,
@@ -404,4 +430,8 @@ private:
     int m_mediaAcquisitionActiveCount = 0;
     int m_mediaAcquisitionDownloadingCount = 0;
     int m_mediaAcquisitionNeedsAttentionCount = 0;
+    QVariantList m_acquisitionReviewReleases;
+    QVariantMap m_acquisitionReviewDetail;
+    QVariantMap m_acquisitionSubscriptionCoverage;
+    bool m_acquisitionReviewLoading = false;
 };
