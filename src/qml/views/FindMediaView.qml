@@ -53,6 +53,20 @@ Item {
         return String(value).toLowerCase()
     }
 
+    function displayText(value, context) {
+        var text = String(value || "")
+        if (text === "") return ""
+        if (context === "Debrid account" && text === "Add account") {
+            return "Add debrid account"
+        }
+        text = text.split("Real-Debrid API token is not configured").join("Add debrid account")
+        text = text.split("Real Debrid API token is not configured").join("Add debrid account")
+        if (text === "Direct HTTPS debrid") {
+            return "Direct HTTPS debrid download"
+        }
+        return text
+    }
+
     function mediaTypeLabel(value) {
         var normalized = lower(value)
         if (normalized === "movie" || normalized === "movies") {
@@ -286,7 +300,7 @@ Item {
         return ""
     }
 
-    function addDisabledReason() {
+    function managerAddDisabledReason() {
         var managers = managerProvidersFromResult()
         if (managers.length === 0) {
             return "No healthy manager provider is available for this media type."
@@ -314,11 +328,11 @@ Item {
                 return "Manager is missing required credentials. Configure secrets and retry."
             }
             if (payload.message !== undefined && payload.message !== null) {
-                return String(payload.message)
+                return displayText(payload.message, "error")
             }
         } catch (e) {
         }
-        return text
+        return displayText(text, "error")
     }
 
     function isFindEndpoint(endpoint, suffix) {
@@ -487,7 +501,8 @@ Item {
     }
 
     function acquisitionStageColor(stage) {
-        if (stage === "needs_attention" || stage === "failed") {
+        if (stage === "needs_attention" || stage === "failed" ||
+                stage === "review_required" || stage === "quarantined") {
             return Theme.accentDanger
         }
         if (stage === "completed" || stage === "ready") {
@@ -497,7 +512,8 @@ Item {
     }
 
     function acquisitionStageFill(stage) {
-        if (stage === "needs_attention" || stage === "failed") {
+        if (stage === "needs_attention" || stage === "failed" ||
+                stage === "review_required" || stage === "quarantined") {
             return Theme.accentDangerSoft
         }
         if (stage === "completed" || stage === "ready") {
@@ -511,7 +527,8 @@ Item {
             return false
         }
         var phase = acquisitionPhaseCode(acquisition)
-        if (phase !== "downloading" && phase !== "post_processing") {
+        if (phase !== "downloading" && phase !== "materializing" &&
+                phase !== "post_processing" && phase !== "importing") {
             return false
         }
         var value = acquisition.progress_percent
@@ -532,7 +549,58 @@ Item {
         return Number(value || 0)
     }
 
+    function runAcquisitionAction(action, acquisition) {
+        var actionId = String(action.id || "")
+        if (actionId === "find_another_release") {
+            var retryReleaseId = String(action.releaseId || action.release_id || "")
+            if (retryReleaseId !== "") {
+                apiClient.retryAcquisitionRelease(retryReleaseId, {
+                    mode: String(action.retryMode || action.retry_mode || "source_discovery"),
+                    reason: "Find another release from Find Media status."
+                })
+                return
+            }
+            apiClient.findAnotherRelease(String((acquisition && (acquisition.intentId || acquisition.intent_id)) || ""))
+            return
+        }
+        if (actionId === "open_review") {
+            var releaseId = String(action.releaseId || action.release_id || "")
+            if (releaseId !== "" && stackView) {
+                stackView.push(Qt.resolvedUrl("AcquisitionView.qml"), {
+                    stackView: stackView,
+                    initialReviewReleaseId: releaseId,
+                    initialReviewSubscriptionId: String(action.subscriptionId || action.subscription_id || "")
+                })
+            }
+            return
+        }
+        if (actionId === "retry_import") {
+            var importReleaseId = String(action.releaseId || action.release_id || "")
+            if (importReleaseId !== "") {
+                apiClient.retryAcquisitionRelease(importReleaseId, {
+                    mode: String(action.retryMode || action.retry_mode || "import"),
+                    reason: "Retry import from Find Media status."
+                })
+            }
+            return
+        }
+        var extensionId = String(action.navigateExtensionId || action.navigate_extension_id || "")
+        var view = String(action.navigateView || action.navigate_view || "")
+        if (extensionId !== "" && (view === "" || view === "extension_control")) {
+            if (stackView) {
+                stackView.push(Qt.resolvedUrl("ExtensionControlView.qml"), {
+                    stackView: stackView,
+                    extensionId: extensionId
+                })
+            }
+        }
+    }
+
     function addTargetLabel() {
+        return "Elixir acquisition"
+    }
+
+    function managerAddTargetLabel() {
         var managerId = resolvedManagerProviderIdForAdd()
         if (managerId === "") {
             return "Target manager not selected"
@@ -541,8 +609,14 @@ Item {
         return label !== "" ? ("Add to " + label) : "Add to selected manager"
     }
 
+    function addResultToAcquisition(item) {
+        pendingAddKey = resultKey(item)
+        addStatusText = ""
+        apiClient.addMediaToAcquisition(selectedType, item, {})
+    }
+
     function addResultToManager(item) {
-        var blockedReason = addDisabledReason()
+        var blockedReason = managerAddDisabledReason()
         if (blockedReason !== "") {
             addStatusText = blockedReason
             return
@@ -640,10 +714,13 @@ Item {
             if (root.isFindEndpoint(endpoint, "search") ||
                     root.isFindEndpoint(endpoint, "targets")) {
                 root.requestPending = false
-                root.statusText = error
+                root.statusText = root.displayText(error, "error")
             } else if (root.isFindEndpoint(endpoint, "preferences")) {
-                root.statusText = error
+                root.statusText = root.displayText(error, "error")
             } else if (root.isFindEndpoint(endpoint, "add")) {
+                root.pendingAddKey = ""
+                root.addStatusText = root.formatAddError(error)
+            } else if (root.isFindEndpoint(endpoint, "acquisition")) {
                 root.pendingAddKey = ""
                 root.addStatusText = root.formatAddError(error)
             }
@@ -654,7 +731,11 @@ Item {
             root.lastAddedIntentId = String(apiClient.mediaAddResult.intent_id || apiClient.mediaAddResult.intentId || "")
             var title = apiClient.mediaAddResult.title || "Media"
             var manager = apiClient.mediaAddResult.manager_label || apiClient.mediaAddResult.managerLabel || "manager"
-            root.addStatusText = title + " added via " + manager + "."
+            if (apiClient.mediaAddResult.nativeAcquisition) {
+                root.addStatusText = title + " queued in Elixir acquisition."
+            } else {
+                root.addStatusText = title + " added via " + manager + "."
+            }
             apiClient.fetchMediaAcquisition()
         }
 
@@ -930,7 +1011,7 @@ Item {
                         anchors.right: parent.right
                         anchors.top: parent.top
                         anchors.margins: Theme.spacingSmall
-                        text: modelData.message || ""
+                        text: root.displayText(modelData.message || "", "providerError")
                         color: Theme.textPrimary
                         font.pixelSize: 11
                         font.family: Theme.fontBody
@@ -981,7 +1062,7 @@ Item {
 
                     readonly property string rowKey: root.resultKey(modelData)
                     readonly property bool addPending: root.pendingAddKey === rowKey && apiClient.mediaAddLoading
-                    readonly property string addReason: root.addDisabledReason()
+                    readonly property string managerAddReason: root.managerAddDisabledReason()
                     readonly property var acquisition: root.acquisitionForResult(modelData)
 
                     width: ListView.view ? ListView.view.width : 0
@@ -1141,20 +1222,28 @@ Item {
 
                             Button {
                                 Layout.alignment: Qt.AlignRight
-                                text: resultRow.addPending ? "Adding..." : "Add"
-                                enabled: !apiClient.mediaAddLoading && resultRow.addReason === ""
+                                text: resultRow.addPending ? "Queuing..." : "Acquire"
+                                enabled: !apiClient.mediaAddLoading
+                                onClicked: root.addResultToAcquisition(modelData)
+                            }
+
+                            Button {
+                                Layout.alignment: Qt.AlignRight
+                                text: resultRow.addPending ? "Adding..." : root.managerAddTargetLabel()
+                                visible: root.managerProvidersFromResult().length > 0
+                                enabled: !apiClient.mediaAddLoading && resultRow.managerAddReason === ""
                                 onClicked: root.addResultToManager(modelData)
                             }
 
                             Label {
                                 Layout.fillWidth: true
-                                text: resultRow.addReason
+                                text: resultRow.managerAddReason
                                 color: Theme.textMuted
                                 font.pixelSize: 10
                                 font.family: Theme.fontBody
                                 horizontalAlignment: Text.AlignRight
                                 wrapMode: Text.WordWrap
-                                visible: text !== ""
+                                visible: root.managerProvidersFromResult().length > 0 && text !== ""
                             }
 
                             Rectangle {
@@ -1202,7 +1291,7 @@ Item {
                                     Label {
                                         Layout.fillWidth: true
                                         text: resultRow.acquisition
-                                              ? String(resultRow.acquisition.headline || resultRow.acquisition.detail || resultRow.acquisition.description || "")
+                                              ? root.displayText(resultRow.acquisition.headline || resultRow.acquisition.detail || resultRow.acquisition.description || "", "acquisition")
                                               : ""
                                         color: Theme.textSecondary
                                         font.pixelSize: 10
@@ -1217,6 +1306,24 @@ Item {
                                         to: 100
                                         value: root.acquisitionProgressValue(resultRow.acquisition)
                                         visible: root.acquisitionProgressVisible(resultRow.acquisition)
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        visible: resultRow.acquisition !== null
+                                                 && (resultRow.acquisition.actions || []).length > 0
+
+                                        Repeater {
+                                            model: resultRow.acquisition ? (resultRow.acquisition.actions || []) : []
+
+                                            delegate: Button {
+                                                required property var modelData
+                                                text: root.displayText(modelData.label || "", "action")
+                                                visible: text !== ""
+                                                onClicked: root.runAcquisitionAction(modelData, resultRow.acquisition)
+                                            }
+                                        }
                                     }
                                 }
                             }

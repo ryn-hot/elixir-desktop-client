@@ -252,6 +252,10 @@ public:
         const QVariantMap &item,
         const QString &managerProviderId = QString(),
         const QVariantMap &options = QVariantMap());
+    Q_INVOKABLE void addMediaToAcquisition(
+        const QString &mediaType,
+        const QVariantMap &item,
+        const QVariantMap &options = QVariantMap());
     Q_INVOKABLE void fetchManagerPreferences();
     Q_INVOKABLE void updateManagerPreferences(
         const QString &movieProviderId,

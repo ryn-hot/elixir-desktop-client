@@ -10,9 +10,33 @@ Item {
     objectName: "acquisitionView"
     property StackView stackView: null
     property var batchExpansionByIntentId: ({})
+    property string initialReviewReleaseId: ""
+    property string initialReviewSubscriptionId: ""
+    property bool initialReviewOpened: false
 
     function acquisitionPhase(item) {
         return String((item && (item.phase || item.stage)) || "")
+    }
+
+    function displayText(value, context) {
+        var text = String(value || "")
+        if (text === "") return ""
+        if (context === "Debrid account" && text === "Add account") {
+            return "Add debrid account"
+        }
+        text = text.split("Real-Debrid API token is not configured").join("Add debrid account")
+        text = text.split("Real Debrid API token is not configured").join("Add debrid account")
+        if (text === "Direct HTTPS debrid") {
+            return "Direct HTTPS debrid download"
+        }
+        return text
+    }
+
+    function evidenceValue(evidence) {
+        if (!evidence) {
+            return ""
+        }
+        return displayText(evidence.value, String(evidence.label || ""))
     }
 
     function acquisitionChildren(item) {
@@ -28,7 +52,12 @@ Item {
     }
 
     function batchSectionTitle(item, count) {
-        return count + " active " + batchUnitLabel(item, count)
+        var total = Number((item && item.targetCount) || count)
+        var hidden = Number((item && item.hiddenChildCount) || 0)
+        if (hidden > 0) {
+            return count + " of " + total + " targets shown"
+        }
+        return total + " " + (total === 1 ? "target" : "targets")
     }
 
     function acquisitionItemKey(item) {
@@ -71,13 +100,15 @@ Item {
     }
 
     function phaseBorderColor(phase) {
-        if (phase === "needs_attention" || phase === "failed" || phase === "review_required") {
+        if (phase === "needs_attention" || phase === "failed" ||
+                phase === "review_required" || phase === "quarantined") {
             return Theme.accentDanger
         }
-        if (phase === "finding_another_release") {
+        if (phase === "finding_another_release" || phase === "staged" || phase === "submitted") {
             return Theme.accent
         }
-        if (phase === "downloading" || phase === "post_processing" || phase === "importing") {
+        if (phase === "downloading" || phase === "materializing" ||
+                phase === "post_processing" || phase === "importing") {
             return Theme.accent
         }
         if (phase === "completed" || phase === "ready") {
@@ -90,13 +121,15 @@ Item {
     }
 
     function phaseFillColor(phase) {
-        if (phase === "needs_attention" || phase === "failed" || phase === "review_required") {
+        if (phase === "needs_attention" || phase === "failed" ||
+                phase === "review_required" || phase === "quarantined") {
             return Theme.accentDangerSoft
         }
-        if (phase === "finding_another_release") {
+        if (phase === "finding_another_release" || phase === "staged" || phase === "submitted") {
             return Theme.accentSoft
         }
-        if (phase === "downloading" || phase === "post_processing" || phase === "importing") {
+        if (phase === "downloading" || phase === "materializing" ||
+                phase === "post_processing" || phase === "importing") {
             return Theme.accentSoft
         }
         if (phase === "completed" || phase === "ready") {
@@ -209,7 +242,8 @@ Item {
     }
 
     function phaseShowsProgress(phase) {
-        return phase === "downloading" || phase === "post_processing"
+        return phase === "downloading" || phase === "materializing" ||
+               phase === "post_processing" || phase === "importing"
     }
 
     function phaseShowsMetrics(phase) {
@@ -226,10 +260,61 @@ Item {
                && Number(item.progressPercent) < 100
     }
 
+    function runAcquisitionAction(action, item) {
+        var actionId = String(action.id || "")
+        if (actionId === "find_another_release") {
+            var retryReleaseId = String(action.releaseId || action.release_id || "")
+            if (retryReleaseId !== "") {
+                apiClient.retryAcquisitionRelease(retryReleaseId, {
+                    mode: String(action.retryMode || action.retry_mode || "source_discovery"),
+                    reason: "Find another release from acquisition status."
+                })
+                return
+            }
+            apiClient.findAnotherRelease(String(item.intentId || item.intent_id || ""))
+            return
+        }
+        if (actionId === "open_review") {
+            var releaseId = String(action.releaseId || action.release_id || "")
+            if (releaseId !== "") {
+                reviewPanel.openReleaseId(
+                    releaseId,
+                    String(action.subscriptionId || action.subscription_id || ""))
+            }
+            return
+        }
+        if (actionId === "retry_import") {
+            var importReleaseId = String(action.releaseId || action.release_id || "")
+            if (importReleaseId !== "") {
+                apiClient.retryAcquisitionRelease(importReleaseId, {
+                    mode: String(action.retryMode || action.retry_mode || "import"),
+                    reason: "Retry import from acquisition status."
+                })
+            }
+            return
+        }
+        var extensionId = String(action.navigateExtensionId || action.navigate_extension_id || "")
+        var view = String(action.navigateView || action.navigate_view || "")
+        if (extensionId !== "" && (view === "" || view === "extension_control")) {
+            if (stackView) {
+                stackView.push(Qt.resolvedUrl("ExtensionControlView.qml"), {
+                    stackView: stackView,
+                    extensionId: extensionId
+                })
+            }
+        }
+    }
+
     Component.onCompleted: {
         if (apiClient.authToken !== "") {
             apiClient.fetchMediaAcquisition()
             apiClient.fetchAcquisitionReleases("review_required", "", 50)
+        }
+        if (!initialReviewOpened && initialReviewReleaseId !== "") {
+            initialReviewOpened = true
+            Qt.callLater(function() {
+                reviewPanel.openReleaseId(initialReviewReleaseId, initialReviewSubscriptionId)
+            })
         }
     }
 
@@ -313,6 +398,7 @@ Item {
             }
 
             AcquisitionReviewPanel {
+                id: reviewPanel
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.spacingXLarge
                 Layout.rightMargin: Theme.spacingXLarge
@@ -405,7 +491,7 @@ Item {
 
                                     Label {
                                         Layout.fillWidth: true
-                                        text: String(modelData.headline || modelData.description || "")
+                                        text: root.displayText(modelData.headline || modelData.description || "", "headline")
                                         color: Theme.textPrimary
                                         font.pixelSize: 13
                                         font.family: Theme.fontBody
@@ -415,7 +501,7 @@ Item {
 
                                     Label {
                                         Layout.fillWidth: true
-                                        text: String(modelData.detail || "")
+                                        text: root.displayText(modelData.detail || "", "detail")
                                         color: Theme.textSecondary
                                         font.pixelSize: 12
                                         font.family: Theme.fontBody
@@ -460,7 +546,7 @@ Item {
 
                                     Label {
                                         Layout.fillWidth: true
-                                        text: String((modelData.blocker && (modelData.blocker.title || modelData.blocker.code)) || "")
+                                        text: root.displayText((modelData.blocker && (modelData.blocker.title || modelData.blocker.code)) || "", "blocker")
                                         color: Theme.textPrimary
                                         font.pixelSize: 11
                                         font.family: Theme.fontBody
@@ -469,7 +555,7 @@ Item {
 
                                     Label {
                                         Layout.fillWidth: true
-                                        text: String((modelData.blocker && modelData.blocker.detail) || "")
+                                        text: root.displayText((modelData.blocker && modelData.blocker.detail) || "", "blocker")
                                         color: Theme.textSecondary
                                         font.pixelSize: 11
                                         font.family: Theme.fontBody
@@ -492,7 +578,11 @@ Item {
                                         }
                                         var evidence = modelData.evidence || []
                                         for (var i = 0; i < evidence.length; ++i) {
-                                            parts.push(evidence[i])
+                                            parts.push({
+                                                label: evidence[i].label,
+                                                value: root.evidenceValue(evidence[i]),
+                                                tone: evidence[i].tone
+                                            })
                                         }
                                         var eta = formatEtaSeconds(modelData.etaSeconds)
                                         if (eta !== "") {
@@ -515,7 +605,7 @@ Item {
                                         Label {
                                             id: metricLabel
                                             anchors.centerIn: parent
-                                            text: String(modelData.label + ": " + modelData.value)
+                                            text: String(modelData.label + ": " + root.displayText(modelData.value, modelData.label))
                                             color: Theme.textSecondary
                                             font.pixelSize: 11
                                             font.family: Theme.fontBody
@@ -641,7 +731,7 @@ Item {
 
                                                 Label {
                                                     Layout.fillWidth: true
-                                                    text: String((modelData.blocker && modelData.blocker.detail) || "")
+                                                    text: root.displayText((modelData.blocker && modelData.blocker.detail) || "", "blocker")
                                                     color: Theme.textSecondary
                                                     font.pixelSize: 10
                                                     font.family: Theme.fontBody
@@ -704,12 +794,10 @@ Item {
 
                                     delegate: Button {
                                         required property var modelData
-                                        text: String(modelData.label || "")
+                                        text: root.displayText(modelData.label || "", "action")
                                         visible: text !== ""
                                         onClicked: {
-                                            if (String(modelData.id || "") === "find_another_release") {
-                                                apiClient.findAnotherRelease(String(acquisitionCard.acquisitionItem.intentId || ""))
-                                            }
+                                            root.runAcquisitionAction(modelData, acquisitionCard.acquisitionItem)
                                         }
                                         background: Rectangle {
                                             radius: Theme.radiusSmall

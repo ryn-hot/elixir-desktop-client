@@ -63,13 +63,85 @@ ColumnLayout {
         return raw.charAt(0).toUpperCase() + raw.slice(1)
     }
 
+    function displayText(value, context) {
+        var text = String(value || "")
+        if (text === "") return ""
+        if (context === "Debrid account" && text === "Add account") {
+            return "Add debrid account"
+        }
+        text = text.split("Real-Debrid API token is not configured").join("Add debrid account")
+        text = text.split("Real Debrid API token is not configured").join("Add debrid account")
+        if (text === "Direct HTTPS debrid") {
+            return "Direct HTTPS debrid download"
+        }
+        return text
+    }
+
+    function debridServiceName(value) {
+        var raw = String(value || "")
+        var normalized = raw.toLowerCase()
+        if (normalized === "real_debrid" || normalized === "real-debrid" || normalized === "real debrid") {
+            return "Real-Debrid"
+        }
+        if (normalized === "torbox") return "TorBox"
+        if (normalized === "all_debrid" || normalized === "alldebrid" || normalized === "all-debrid") {
+            return "AllDebrid"
+        }
+        if (normalized === "premiumize") return "Premiumize"
+        return raw === "" ? "" : raw
+    }
+
+    function debridEvidenceForDetail() {
+        var evidence = root.detail().evidence || ({})
+        return evidence.debridRuntime || evidence.debridFailure ||
+               evidence.debridSelection || evidence.debridStaging ||
+               evidence.debridDownload || ({})
+    }
+
+    function debridEvidenceRows() {
+        var evidence = debridEvidenceForDetail()
+        var rows = []
+        var service = String(evidence.providerName || "")
+        if (service === "") {
+            service = debridServiceName(evidence.providerImplementation)
+        }
+        if (service !== "") {
+            rows.push({ label: "Service", value: service })
+        }
+        if (evidence.providerImplementation) {
+            var implementation = debridServiceName(evidence.providerImplementation)
+            if (implementation !== "" && implementation !== service) {
+                rows.push({ label: "Implementation", value: implementation })
+            }
+        }
+        if (evidence.remoteStatus) {
+            rows.push({ label: "Remote", value: statusText(evidence.remoteStatus) })
+        }
+        if (evidence.status) {
+            rows.push({ label: "State", value: statusText(evidence.status) })
+        }
+        if (evidence.fallbackState) {
+            rows.push({ label: "Fallback", value: statusText(evidence.fallbackState) })
+        }
+        if (evidence.failureClass) {
+            rows.push({ label: "Failure", value: statusText(evidence.failureClass) })
+        }
+        if (evidence.selectedFileCount !== undefined) {
+            rows.push({ label: "Selected files", value: String(evidence.selectedFileCount) })
+        }
+        if (evidence.skippedFileCount !== undefined) {
+            rows.push({ label: "Skipped files", value: String(evidence.skippedFileCount) })
+        }
+        return rows
+    }
+
     function routeLabel(route) {
         var value = String(route || "")
         if (value.indexOf("debrid") >= 0) {
-            return "Direct HTTPS debrid"
+            return "Direct HTTPS debrid download"
         }
         if (value.indexOf("torrent") >= 0) {
-            return "Torrent broker route"
+            return "Torrent via protected downloader egress"
         }
         if (value.indexOf("usenet") >= 0) {
             return "Managed usenet route"
@@ -80,10 +152,10 @@ ColumnLayout {
     function routeDetail(route) {
         var value = String(route || "")
         if (value.indexOf("debrid") >= 0) {
-            return "Downloaded over direct HTTPS through the configured debrid provider."
+            return "Downloaded over direct HTTPS through the active debrid service. The selected service is shown as provider evidence when available."
         }
         if (value.indexOf("torrent") >= 0) {
-            return "Submitted through the torrent broker; managed qBittorrent uses the configured protected gateway, while external torrent routes use their own network."
+            return "Submitted through the torrent broker. Managed qBittorrent uses protected downloader egress; this does not imply port forwarding."
         }
         if (value.indexOf("usenet") >= 0) {
             return "Submitted through the managed usenet broker."
@@ -199,7 +271,7 @@ ColumnLayout {
             var reason = String(reasons[j] || "").trim()
             if (reason !== "" && seen[reason] === undefined) {
                 seen[reason] = true
-                unique.push(reason)
+                unique.push(displayText(reason, "reason"))
             }
         }
         return unique.join(" | ")
@@ -246,7 +318,7 @@ ColumnLayout {
         if (run.downloadId) parts.push("Download " + run.downloadId)
         if (run.remoteReleaseId) parts.push("Remote " + run.remoteReleaseId)
         if (run.retryCount > 0) parts.push("Retries " + run.retryCount)
-        return parts.join(" | ")
+        return displayText(parts.join(" | "), "import")
     }
 
     function importFileLine(fileReview) {
@@ -258,7 +330,7 @@ ColumnLayout {
         if (link.episodeId) parts.push("Episode " + link.episodeId)
         if (link.verificationState) parts.push("Verification " + statusText(link.verificationState))
         if (link.mismatchClass) parts.push(String(link.mismatchClass).replace(/_/g, " "))
-        if (link.stateReason) parts.push(String(link.stateReason))
+        if (link.stateReason) parts.push(displayText(link.stateReason, "reason"))
         var hash = (fileReview && fileReview.fileHash) || ({})
         if (hash.ed2k) parts.push("ED2K " + String(hash.ed2k).slice(0, 12))
         if (hash.hashStatus) parts.push("Hash " + statusText(hash.hashStatus))
@@ -338,6 +410,12 @@ ColumnLayout {
         var rel = releaseFromSummary(summary)
         var id = releaseId(rel)
         if (id === "") return
+        openReleaseId(id, String(rel.subscriptionId || rel.subscription_id || ""))
+    }
+
+    function openReleaseId(releaseId, subscriptionId) {
+        var id = String(releaseId || "")
+        if (id === "") return
         selectedReleaseId = id
         detailInitialized = false
         fileSelections = ({})
@@ -346,8 +424,9 @@ ColumnLayout {
         rejectNote = ""
         retryReason = ""
         apiClient.fetchAcquisitionRelease(id)
-        if (rel.subscriptionId) {
-            apiClient.fetchAcquisitionSubscriptionCoverage(String(rel.subscriptionId))
+        var subId = String(subscriptionId || "")
+        if (subId !== "") {
+            apiClient.fetchAcquisitionSubscriptionCoverage(subId)
         }
     }
 
@@ -798,6 +877,58 @@ ColumnLayout {
                     Rectangle {
                         Layout.fillWidth: true
                         radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                        visible: root.debridEvidenceRows().length > 0
+                        implicitHeight: debridEvidenceContent.implicitHeight + 16
+
+                        ColumnLayout {
+                            id: debridEvidenceContent
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: 7
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Debrid evidence"
+                                color: Theme.textPrimary
+                                font.pixelSize: 13
+                                font.family: Theme.fontBody
+                                font.weight: Font.DemiBold
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Repeater {
+                                    model: root.debridEvidenceRows()
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        radius: Theme.radiusSmall
+                                        color: Theme.panelSoft
+                                        border.color: Theme.border
+                                        implicitHeight: 24
+                                        implicitWidth: debridEvidenceText.implicitWidth + 14
+
+                                        Label {
+                                            id: debridEvidenceText
+                                            anchors.centerIn: parent
+                                            text: String(modelData.label + ": " + modelData.value)
+                                            color: Theme.textSecondary
+                                            font.pixelSize: 10
+                                            font.family: Theme.fontBody
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
                         color: Theme.accentDangerSoft
                         border.color: Theme.accentDanger
                         visible: root.reviewReasonText() !== ""
@@ -868,7 +999,7 @@ ColumnLayout {
 
                                         Label {
                                             Layout.fillWidth: true
-                                            text: String(run.stateReason || run.mismatchClass || "")
+                                            text: root.displayText(run.stateReason || run.mismatchClass || "", "reason")
                                             visible: text !== ""
                                             color: Theme.textSecondary
                                             font.pixelSize: 10
@@ -1099,7 +1230,7 @@ ColumnLayout {
                                         text: root.statusText(coverage.coverageKind) + " | " +
                                               root.statusText(coverage.confidence) + " | " +
                                               root.statusText(coverage.state) +
-                                              (coverage.reason ? " | " + coverage.reason : "")
+                                              (coverage.reason ? " | " + root.displayText(coverage.reason, "reason") : "")
                                         color: Theme.textSecondary
                                         font.pixelSize: 10
                                         font.family: Theme.fontBody

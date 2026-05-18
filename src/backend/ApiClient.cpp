@@ -885,6 +885,7 @@ void ApiClient::installExtensionSource(const QString &downloadUrl, const QString
             }
             fetchExtensionsCatalog();
             fetchExtensionInstances();
+            fetchExtensionStatusSummary();
         });
 }
 
@@ -905,6 +906,7 @@ void ApiClient::enableExtension(const QString &extensionId) {
             }
             fetchExtensionsCatalog();
             fetchExtensionInstances();
+            fetchExtensionStatusSummary();
         });
 }
 
@@ -925,6 +927,7 @@ void ApiClient::disableExtension(const QString &extensionId) {
             }
             fetchExtensionsCatalog();
             fetchExtensionInstances();
+            fetchExtensionStatusSummary();
         });
 }
 
@@ -945,6 +948,7 @@ void ApiClient::uninstallExtension(const QString &extensionId) {
             }
             fetchExtensionsCatalog();
             fetchExtensionInstances();
+            fetchExtensionStatusSummary();
         });
 }
 
@@ -2704,6 +2708,127 @@ void ApiClient::addMediaToManager(
                 return;
             }
             const QVariantMap result = doc.object().toVariantMap();
+            if (m_mediaAddResult != result) {
+                m_mediaAddResult = result;
+                emit mediaAddResultChanged();
+            }
+            if (m_mediaAddLoading) {
+                m_mediaAddLoading = false;
+                emit mediaAddLoadingChanged();
+            }
+        },
+        [this](const QString &) {
+            if (m_mediaAddLoading) {
+                m_mediaAddLoading = false;
+                emit mediaAddLoadingChanged();
+            }
+        });
+}
+
+void ApiClient::addMediaToAcquisition(
+    const QString &mediaType,
+    const QVariantMap &item,
+    const QVariantMap &options) {
+    const QString requestedType = mediaType.trimmed().toLower();
+    QString acquisitionType = QStringLiteral("movie");
+    if (requestedType == "series" || requestedType == "tv") {
+        acquisitionType = QStringLiteral("series");
+    } else if (requestedType == "anime") {
+        acquisitionType = QStringLiteral("anime");
+    }
+    const QString title = item.value("title", item.value("name")).toString().trimmed();
+    if (title.isEmpty()) {
+        emit requestFailed("/api/v1/find/acquisition", "Title is required.");
+        return;
+    }
+
+    QJsonObject body;
+    body.insert("mediaType", acquisitionType);
+    body.insert("title", title);
+
+    const QVariant year = item.value("year");
+    if (year.isValid() && !year.isNull() && year.toInt() > 0) {
+        body.insert("year", year.toInt());
+    }
+
+    QVariant externalIds = item.value("externalIds");
+    if (!externalIds.isValid() || externalIds.isNull()) {
+        externalIds = item.value("external_ids");
+    }
+    if (externalIds.canConvert<QVariantMap>()) {
+        body.insert("externalIds", QJsonObject::fromVariantMap(externalIds.toMap()));
+    }
+
+    QString sourceProviderId = options.value("sourceProviderId").toString().trimmed();
+    if (sourceProviderId.isEmpty()) {
+        QVariant sourceProviderIds = item.value("sourceProviderIds");
+        if (!sourceProviderIds.isValid() || sourceProviderIds.isNull()) {
+            sourceProviderIds = item.value("source_provider_ids");
+        }
+        const QVariantList ids = sourceProviderIds.toList();
+        if (!ids.isEmpty()) {
+            sourceProviderId = ids.first().toString().trimmed();
+        }
+    }
+    if (!sourceProviderId.isEmpty()) {
+        body.insert("sourceProviderId", sourceProviderId);
+    }
+
+    if (options.contains("routePolicy")) {
+        const QString routePolicy = options.value("routePolicy").toString().trimmed();
+        if (!routePolicy.isEmpty()) {
+            body.insert("routePolicy", routePolicy);
+        }
+    }
+
+    const QString monitorPolicy = options.value("monitorPolicy").toString().trimmed();
+    if (!monitorPolicy.isEmpty()) {
+        body.insert("monitorPolicy", monitorPolicy);
+    }
+    if (options.contains("releaseDelaySeconds")) {
+        body.insert("releaseDelaySeconds", options.value("releaseDelaySeconds").toLongLong());
+    }
+    if (options.contains("target") && options.value("target").canConvert<QVariantMap>()) {
+        body.insert("target", QJsonObject::fromVariantMap(options.value("target").toMap()));
+    }
+    if (options.contains("targets")) {
+        body.insert("targets", QJsonArray::fromVariantList(options.value("targets").toList()));
+    }
+
+    if (!m_mediaAddLoading) {
+        m_mediaAddLoading = true;
+        emit mediaAddLoadingChanged();
+    }
+    sendRequest(
+        "POST",
+        "/api/v1/find/acquisition",
+        body,
+        [this, title, acquisitionType](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                if (m_mediaAddLoading) {
+                    m_mediaAddLoading = false;
+                    emit mediaAddLoadingChanged();
+                }
+                emit requestFailed("/api/v1/find/acquisition", "Acquisition response was not an object.");
+                return;
+            }
+
+            QVariantMap result = doc.object().toVariantMap();
+            const QVariantMap detail = result.value("detail").toMap();
+            const QVariantMap subscription = detail.value("subscription").toMap();
+            const QString subscriptionId =
+                subscription.value("subscriptionId", subscription.value("subscription_id"))
+                    .toString();
+            if (!subscriptionId.isEmpty()) {
+                result.insert("intentId", subscriptionId);
+                result.insert("intent_id", subscriptionId);
+            }
+            result.insert("title", subscription.value("title", title).toString());
+            result.insert("mediaType", subscription.value("mediaType", acquisitionType).toString());
+            result.insert("managerLabel", QStringLiteral("Elixir acquisition"));
+            result.insert("manager_label", QStringLiteral("Elixir acquisition"));
+            result.insert("nativeAcquisition", true);
+
             if (m_mediaAddResult != result) {
                 m_mediaAddResult = result;
                 emit mediaAddResultChanged();
