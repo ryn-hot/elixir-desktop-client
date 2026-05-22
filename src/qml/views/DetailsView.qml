@@ -142,6 +142,34 @@ Item {
         return lifecycle.manager_label || lifecycle.managerLabel || "manager"
     }
 
+    function ownerReleaseLabel() {
+        var lifecycle = lifecycleInfo()
+        if (lifecycle.owner_release_label || lifecycle.ownerReleaseLabel) {
+            return lifecycle.owner_release_label || lifecycle.ownerReleaseLabel
+        }
+        var owner = lifecycle.primary_owner || lifecycle.primaryOwner || null
+        if (owner) {
+            if (owner.release_label || owner.releaseLabel) {
+                return owner.release_label || owner.releaseLabel
+            }
+            var ownerType = owner.owner_type || owner.ownerType || ""
+            if (ownerType === "acquisition") {
+                return "Stop Elixir acquisition monitoring"
+            }
+        }
+        return "Stop tracking in owner"
+    }
+
+    function ownerReleaseButtonLabel() {
+        var lifecycle = lifecycleInfo()
+        var owner = lifecycle.primary_owner || lifecycle.primaryOwner || null
+        var ownerType = owner ? (owner.owner_type || owner.ownerType || "") : ""
+        if (ownerType === "acquisition") {
+            return "Stop monitoring"
+        }
+        return "Stop tracking"
+    }
+
     function deleteTargetLabel() {
         return isSeriesType() ? "show" : "movie"
     }
@@ -780,7 +808,7 @@ Item {
                 font.family: Theme.fontBody
                 text: canStopTracking()
                       ? ("Delete this " + deleteTargetLabel() + " from Elixir. If you also stop tracking, "
-                         + managerDisplayName() + " will remove it from its managed list and Elixir will block future re-imports until you add it again.")
+                         + "the owner will stop monitoring it and Elixir will block future re-imports until you add it again.")
                       : ("Delete this " + deleteTargetLabel() + " from Elixir. This removes the local library entry and its files from disk.")
             }
 
@@ -826,7 +854,7 @@ Item {
                     onClicked: {
                         deleteBusy = true
                         deleteStatusText = ""
-                        apiClient.deleteLibraryItem(mediaId, false)
+                        apiClient.deleteLibraryItemWithAction(mediaId, "delete_local_only", false)
                     }
                     background: Rectangle {
                         radius: Theme.radiusSmall
@@ -845,12 +873,12 @@ Item {
 
                 Button {
                     visible: canStopTracking()
-                    text: deleteBusy ? "Working..." : ("Delete + Stop " + managerDisplayName())
+                    text: deleteBusy ? "Working..." : ("Delete + " + ownerReleaseButtonLabel())
                     enabled: !deleteBusy
                     onClicked: {
                         deleteBusy = true
                         deleteStatusText = ""
-                        apiClient.deleteLibraryItem(mediaId, true)
+                        apiClient.deleteLibraryItemWithAction(mediaId, "delete_and_release_owner", false)
                     }
                     background: Rectangle {
                         radius: Theme.radiusSmall

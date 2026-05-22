@@ -153,6 +153,7 @@ public:
     Q_INVOKABLE void fetchLibrary();
     Q_INVOKABLE void fetchMediaDetails(const QString &mediaItemId);
     Q_INVOKABLE void deleteLibraryItem(const QString &mediaItemId, bool stopTracking = false);
+    Q_INVOKABLE void deleteLibraryItemWithAction(const QString &mediaItemId, const QString &ownerReleaseAction, bool bestEffort = false);
     Q_INVOKABLE void deleteEpisode(const QString &episodeId, bool blockInElixir = false);
     Q_INVOKABLE void restoreEpisode(const QString &episodeId);
     Q_INVOKABLE void restoreBlockedEpisodes(const QString &mediaItemId);

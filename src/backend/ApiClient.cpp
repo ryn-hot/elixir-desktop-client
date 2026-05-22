@@ -570,13 +570,27 @@ void ApiClient::fetchMediaDetails(const QString &mediaItemId) {
 }
 
 void ApiClient::deleteLibraryItem(const QString &mediaItemId, bool stopTracking) {
+    deleteLibraryItemWithAction(
+        mediaItemId,
+        stopTracking ? QStringLiteral("delete_and_release_owner")
+                     : QStringLiteral("delete_local_only"),
+        false);
+}
+
+void ApiClient::deleteLibraryItemWithAction(const QString &mediaItemId,
+                                            const QString &ownerReleaseAction,
+                                            bool bestEffort) {
     const QString trimmed = mediaItemId.trimmed();
     if (trimmed.isEmpty()) {
         emit requestFailed("/api/v1/library/items/:id", "Media item id is required.");
         return;
     }
+    const QString action = ownerReleaseAction.trimmed().isEmpty()
+                               ? QStringLiteral("delete_local_only")
+                               : ownerReleaseAction.trimmed();
     QJsonObject body{
-        {"stopTracking", stopTracking}
+        {"ownerReleaseAction", action},
+        {"ownerReleaseBestEffort", bestEffort}
     };
     sendRequest(
         "DELETE",
