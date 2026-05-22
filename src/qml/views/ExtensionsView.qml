@@ -1034,15 +1034,33 @@ Item {
         var hostWarning = String(runtimeStatus.hostWarning || "")
         var rebootRecommended = Boolean(runtimeStatus.rebootRecommended)
         var autoResetAttempts = Number(runtimeStatus.autoResetAttemptsInWindow || 0)
+        var autoResetBudget = runtimeStatus.autoResetBudget || {}
+        var attemptsUsed = Number(autoResetBudget.attemptsUsed || autoResetAttempts)
+        var attemptsAllowed = Number(autoResetBudget.attemptsAllowed || 0)
         var quarantined = runtimeStatus.quarantinedInstances || []
+        var affectedSubsystems = runtimeStatus.affectedSubsystems || []
         if (hostWarning !== "" && description.indexOf(hostWarning) < 0) {
             description = description === "" ? hostWarning : description + " " + hostWarning
         }
-        if (autoResetAttempts > 0) {
-            var resetSuffix = "Elixir has attempted " + autoResetAttempts + " automatic Docker runtime reset"
-                            + (autoResetAttempts === 1 ? "" : "s")
+        if (attemptsUsed > 0) {
+            var resetSuffix = "Elixir has attempted " + attemptsUsed + " automatic Docker runtime reset"
+                            + (attemptsUsed === 1 ? "" : "s")
+                            + (attemptsAllowed > 0 ? " of " + attemptsAllowed : "")
                             + " in the current recovery window."
             description = description === "" ? resetSuffix : description + " " + resetSuffix
+        }
+        var affectedLabels = []
+        for (var i = 0; i < affectedSubsystems.length; ++i) {
+            var subsystem = affectedSubsystems[i] || {}
+            var status = String(subsystem.status || "")
+            var label = String(subsystem.label || "")
+            if (label !== "" && status !== "" && status !== "ok") {
+                affectedLabels.push(label)
+            }
+        }
+        if (affectedLabels.length > 0) {
+            var affectedSuffix = "Affected: " + affectedLabels.join(", ") + "."
+            description = description === "" ? affectedSuffix : description + " " + affectedSuffix
         }
         if (quarantined.length > 0) {
             var suffix = quarantined.length === 1
