@@ -18,6 +18,7 @@ Item {
     property string addStatusText: ""
     property string pendingAddKey: ""
     property string lastAddedIntentId: ""
+    property var pendingAcquisitionAction: null
 
     function setSearchQuery(query) {
         updateSearchQuery(query, false)
@@ -168,6 +169,26 @@ Item {
         return managerProvidersFromResult()
     }
 
+    function sourceProvidersFor(type) {
+        var key = type + "_source_providers"
+        var camel = type + "SourceProviders"
+        var providers = listValue(apiClient.mediaManagerPreferences, key, camel)
+        if (providers.length > 0) {
+            return providers
+        }
+        if (type === "movie") {
+            providers = listValue(apiClient.mediaManagerPreferences, "movies_source_candidates", "movieSourceProviders")
+        } else if (type === "series") {
+            providers = listValue(apiClient.mediaManagerPreferences, "tv_source_candidates", "seriesSourceProviders")
+        } else {
+            providers = listValue(apiClient.mediaManagerPreferences, "anime_source_candidates", "animeSourceProviders")
+        }
+        if (providers.length > 0) {
+            return providers
+        }
+        return sourceProvidersFromResult()
+    }
+
     function preferencesObject() {
         var value = apiClient.mediaManagerPreferences.preferences
         if (value === undefined || value === null) {
@@ -187,17 +208,68 @@ Item {
         return String(pref.anime_provider_id || pref.animeProviderId || "")
     }
 
-    function managerOptionsForSelectedType() {
-        var providers = managerProvidersFor(selectedType)
+    function selectedSourcePreferenceId() {
+        var pref = preferencesObject()
+        if (selectedType === "movie") {
+            return String(pref.movie_source_provider_id || pref.movieSourceProviderId || "")
+        }
+        if (selectedType === "series") {
+            return String(pref.series_source_provider_id || pref.seriesSourceProviderId || "")
+        }
+        return String(pref.anime_source_provider_id || pref.animeSourceProviderId || "")
+    }
+
+    function providerId(provider) {
+        if (!provider) {
+            return ""
+        }
+        var value = provider.provider_id !== undefined ? provider.provider_id : provider.providerId
+        return String(value || "")
+    }
+
+    function providerLabel(provider) {
+        if (!provider) {
+            return ""
+        }
+        var label = provider.label
+        if (label === undefined || label === "") {
+            label = provider.instance_name !== undefined ? provider.instance_name : provider.instanceName
+        }
+        return String(label || "")
+    }
+
+    function routeValue(kind, providerId) {
+        var id = String(providerId || "")
+        return id === "" ? "" : (kind + ":" + id)
+    }
+
+    function routeKind(value) {
+        var text = String(value || "")
+        var index = text.indexOf(":")
+        return index > 0 ? text.substring(0, index) : ""
+    }
+
+    function routeProviderId(value) {
+        var text = String(value || "")
+        var index = text.indexOf(":")
+        return index > 0 ? text.substring(index + 1) : ""
+    }
+
+    function routeOptionsForSelectedType() {
         var options = [{ label: "Auto-select", value: "" }]
-        for (var i = 0; i < providers.length; ++i) {
-            var provider = providers[i]
-            var providerId = provider.provider_id !== undefined ? provider.provider_id : provider.providerId
-            var label = provider.label
-            if (label === undefined || label === "") {
-                label = provider.instance_name !== undefined ? provider.instance_name : provider.instanceName
+        var sources = sourceProvidersFor(selectedType)
+        for (var i = 0; i < sources.length; ++i) {
+            var sourceId = providerId(sources[i])
+            if (sourceId !== "") {
+                options.push({ label: providerLabel(sources[i]), value: routeValue("source", sourceId) })
             }
-            options.push({ label: label, value: String(providerId || "") })
+        }
+        var managers = managerProvidersFor(selectedType)
+        for (var j = 0; j < managers.length; ++j) {
+            var managerId = providerId(managers[j])
+            if (managerId !== "") {
+                options.push({ label: providerLabel(managers[j]), value: routeValue("manager", managerId) })
+            }
         }
         return options
     }
@@ -228,20 +300,70 @@ Item {
         return id
     }
 
-    function updateSelectedManagerPreference(providerId) {
+    function sourceLabelByProviderId(providerId) {
+        var id = String(providerId || "")
+        if (id === "") {
+            return ""
+        }
+        var providers = sourceProvidersFromResult()
+        if (providers.length === 0) {
+            providers = sourceProvidersFor(selectedType)
+        }
+        for (var i = 0; i < providers.length; ++i) {
+            var provider = providers[i]
+            var value = provider.provider_id !== undefined ? provider.provider_id : provider.providerId
+            if (String(value || "") === id) {
+                return provider.label || provider.instance_name || provider.instanceName || id
+            }
+        }
+        return id
+    }
+
+    function routeLabelByValue(value) {
+        var kind = routeKind(value)
+        var id = routeProviderId(value)
+        if (kind === "source") {
+            return sourceLabelByProviderId(id)
+        }
+        if (kind === "manager") {
+            return managerLabelByProviderId(id)
+        }
+        return ""
+    }
+
+    function selectedRoutePreferenceValue() {
+        var sourceId = selectedSourcePreferenceId()
+        if (sourceId !== "" && sourceExists(sourceId)) {
+            return routeValue("source", sourceId)
+        }
+        var managerId = selectedManagerPreferenceId()
+        if (managerId !== "" && managerExists(managerId)) {
+            return routeValue("manager", managerId)
+        }
+        return ""
+    }
+
+    function updateSelectedRoutePreference(value) {
         var pref = preferencesObject()
         var movieId = String(pref.movie_provider_id || pref.movieProviderId || "")
         var seriesId = String(pref.series_provider_id || pref.seriesProviderId || "")
         var animeId = String(pref.anime_provider_id || pref.animeProviderId || "")
-        var target = String(providerId || "")
+        var movieSourceId = String(pref.movie_source_provider_id || pref.movieSourceProviderId || "")
+        var seriesSourceId = String(pref.series_source_provider_id || pref.seriesSourceProviderId || "")
+        var animeSourceId = String(pref.anime_source_provider_id || pref.animeSourceProviderId || "")
+        var kind = routeKind(value)
+        var target = routeProviderId(value)
         if (selectedType === "movie") {
-            movieId = target
+            movieId = kind === "manager" ? target : ""
+            movieSourceId = kind === "source" ? target : ""
         } else if (selectedType === "series") {
-            seriesId = target
+            seriesId = kind === "manager" ? target : ""
+            seriesSourceId = kind === "source" ? target : ""
         } else {
-            animeId = target
+            animeId = kind === "manager" ? target : ""
+            animeSourceId = kind === "source" ? target : ""
         }
-        apiClient.updateManagerPreferences(movieId, seriesId, animeId)
+        apiClient.updateManagerPreferences(movieId, seriesId, animeId, movieSourceId, seriesSourceId, animeSourceId)
     }
 
     function findResults() {
@@ -256,6 +378,10 @@ Item {
         return listValue(apiClient.mediaFindResult, "manager_providers", "managerProviders")
     }
 
+    function sourceProvidersFromResult() {
+        return listValue(apiClient.mediaFindResult, "source_providers", "sourceProviders")
+    }
+
     function defaultManagerProviderId() {
         var providerId = apiClient.mediaFindResult.default_manager_provider_id
         if (providerId === undefined || providerId === null) {
@@ -264,12 +390,12 @@ Item {
         return String(providerId || "")
     }
 
-    function validSelectedManagerPreferenceId() {
-        var preferred = selectedManagerPreferenceId()
-        if (preferred !== "" && managerExists(preferred)) {
-            return preferred
+    function defaultSourceProviderId() {
+        var providerId = apiClient.mediaFindResult.default_source_provider_id
+        if (providerId === undefined || providerId === null) {
+            providerId = apiClient.mediaFindResult.defaultSourceProviderId
         }
-        return ""
+        return String(providerId || "")
     }
 
     function managerExists(providerId) {
@@ -278,6 +404,9 @@ Item {
             return false
         }
         var providers = managerProvidersFromResult()
+        if (providers.length === 0) {
+            providers = managerProvidersFor(selectedType)
+        }
         for (var i = 0; i < providers.length; ++i) {
             var provider = providers[i]
             var value = provider.provider_id !== undefined ? provider.provider_id : provider.providerId
@@ -288,25 +417,59 @@ Item {
         return false
     }
 
-    function resolvedManagerProviderIdForAdd() {
-        var preferred = validSelectedManagerPreferenceId()
-        if (preferred !== "") {
-            return preferred
+    function sourceExists(providerId) {
+        var id = String(providerId || "")
+        if (id === "") {
+            return false
         }
-        var defaultId = defaultManagerProviderId()
-        if (defaultId !== "" && managerExists(defaultId)) {
-            return defaultId
+        var providers = sourceProvidersFromResult()
+        if (providers.length === 0) {
+            providers = sourceProvidersFor(selectedType)
+        }
+        for (var i = 0; i < providers.length; ++i) {
+            var provider = providers[i]
+            var value = provider.provider_id !== undefined ? provider.provider_id : provider.providerId
+            if (String(value || "") === id) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function routeExists(value) {
+        var kind = routeKind(value)
+        var id = routeProviderId(value)
+        if (kind === "source") {
+            return sourceExists(id)
+        }
+        if (kind === "manager") {
+            return managerExists(id)
+        }
+        return false
+    }
+
+    function resolvedRouteForAdd() {
+        var selected = selectedRoutePreferenceValue()
+        if (selected !== "" && routeExists(selected)) {
+            return selected
+        }
+        var defaultSource = defaultSourceProviderId()
+        if (defaultSource !== "" && sourceExists(defaultSource)) {
+            return routeValue("source", defaultSource)
+        }
+        var defaultManager = defaultManagerProviderId()
+        if (defaultManager !== "" && managerExists(defaultManager)) {
+            return routeValue("manager", defaultManager)
         }
         return ""
     }
 
-    function managerAddDisabledReason() {
-        var managers = managerProvidersFromResult()
-        if (managers.length === 0) {
-            return "No healthy manager provider is available for this media type."
+    function routeAddDisabledReason() {
+        if (sourceProvidersFromResult().length === 0 && managerProvidersFromResult().length === 0) {
+            return "No healthy route is available for this media type."
         }
-        if (resolvedManagerProviderIdForAdd() === "") {
-            return "Select a manager before adding."
+        if (resolvedRouteForAdd() === "") {
+            return "Select a route before adding."
         }
         return ""
     }
@@ -338,10 +501,6 @@ Item {
     function isFindEndpoint(endpoint, suffix) {
         return endpoint.indexOf("/api/v1/find/" + suffix) === 0
                 || endpoint.indexOf("/api/v1/find-media/" + suffix) === 0
-    }
-
-    function defaultManagerLabel() {
-        return managerLabelByProviderId(defaultManagerProviderId())
     }
 
     function triggerSearch() {
@@ -550,7 +709,36 @@ Item {
     }
 
     function runAcquisitionAction(action, acquisition) {
+        var confirmText = String(action.confirmText || action.confirm_text || "")
+        if (confirmText !== "") {
+            pendingAcquisitionAction = {
+                action: action,
+                acquisition: acquisition
+            }
+            acquisitionActionConfirmText.text = confirmText
+            acquisitionActionConfirmDialog.title = String(action.label || "Confirm action")
+            acquisitionActionConfirmDialog.open()
+            return
+        }
+        executeAcquisitionAction(action, acquisition)
+    }
+
+    function executeAcquisitionAction(action, acquisition) {
         var actionId = String(action.id || "")
+        if (actionId === "remove_acquisition_request" || actionId === "cancel_acquisition_downloads") {
+            var subscriptionId = String(action.subscriptionId || action.subscription_id || "")
+            if (subscriptionId === "" && acquisition) {
+                subscriptionId = String(acquisition.intentId || acquisition.intent_id || "")
+            }
+            if (subscriptionId !== "") {
+                apiClient.cancelAcquisitionSubscription(
+                    subscriptionId,
+                    String(action.cancelMode || action.cancel_mode || "dismiss"),
+                    "User requested acquisition removal from Find Media.",
+                    false)
+            }
+            return
+        }
         if (actionId === "find_another_release") {
             var retryReleaseId = String(action.releaseId || action.release_id || "")
             if (retryReleaseId !== "") {
@@ -596,35 +784,35 @@ Item {
         }
     }
 
-    function addTargetLabel() {
-        return "Elixir acquisition"
-    }
-
-    function managerAddTargetLabel() {
-        var managerId = resolvedManagerProviderIdForAdd()
-        if (managerId === "") {
-            return "Target manager not selected"
+    function routeTargetLabel() {
+        var route = resolvedRouteForAdd()
+        var label = routeLabelByValue(route)
+        if (label === "") {
+            return "No route selected"
         }
-        var label = managerLabelByProviderId(managerId)
-        return label !== "" ? ("Add to " + label) : "Add to selected manager"
+        return "Route: " + label
     }
 
-    function addResultToAcquisition(item) {
-        pendingAddKey = resultKey(item)
-        addStatusText = ""
-        apiClient.addMediaToAcquisition(selectedType, item, {})
-    }
-
-    function addResultToManager(item) {
-        var blockedReason = managerAddDisabledReason()
+    function addResultToSelectedRoute(item) {
+        var blockedReason = routeAddDisabledReason()
         if (blockedReason !== "") {
             addStatusText = blockedReason
             return
         }
-        var managerProviderId = resolvedManagerProviderIdForAdd()
+        var route = resolvedRouteForAdd()
+        var kind = routeKind(route)
+        var providerId = routeProviderId(route)
         pendingAddKey = resultKey(item)
         addStatusText = ""
-        apiClient.addMediaToManager(selectedType, item, managerProviderId, {})
+        if (kind === "source") {
+            var options = {}
+            if (providerId !== "") {
+                options.sourceProviderId = providerId
+            }
+            apiClient.addMediaToAcquisition(selectedType, item, options)
+            return
+        }
+        apiClient.addMediaToManager(selectedType, item, providerId, {})
     }
 
     onSelectedTypeChanged: {
@@ -868,42 +1056,32 @@ Item {
                     spacing: Theme.spacingSmall
 
                     Label {
-                        text: "Manager Routing"
+                        text: "Routing"
                         color: Theme.textPrimary
                         font.pixelSize: 16
                         font.family: Theme.fontDisplay
                     }
 
                     Label {
-                        text: "Default manager for " + root.mediaTypeLabel(root.selectedType) + ":"
+                        text: "Use for " + root.mediaTypeLabel(root.selectedType) + ":"
                         color: Theme.textSecondary
                         font.pixelSize: 12
                         font.family: Theme.fontBody
                     }
 
                     ComboBox {
-                        id: managerPreferenceCombo
+                        id: routePreferenceCombo
                         Layout.fillWidth: true
-                        model: root.managerOptionsForSelectedType()
+                        model: root.routeOptionsForSelectedType()
                         textRole: "label"
                         valueRole: "value"
-                        currentIndex: root.optionIndexForValue(model, root.selectedManagerPreferenceId())
+                        currentIndex: root.optionIndexForValue(model, root.selectedRoutePreferenceValue())
                         onActivated: {
                             var value = currentValue !== undefined ? String(currentValue) : ""
-                            root.updateSelectedManagerPreference(value)
+                            root.updateSelectedRoutePreference(value)
                         }
                     }
 
-                    Label {
-                        text: root.defaultManagerLabel() !== ""
-                              ? "Current default from provider graph: " + root.defaultManagerLabel()
-                              : "No manager currently available for this media type."
-                        color: Theme.textMuted
-                        font.pixelSize: 11
-                        font.family: Theme.fontBody
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
                 }
             }
 
@@ -1062,7 +1240,7 @@ Item {
 
                     readonly property string rowKey: root.resultKey(modelData)
                     readonly property bool addPending: root.pendingAddKey === rowKey && apiClient.mediaAddLoading
-                    readonly property string managerAddReason: root.managerAddDisabledReason()
+                    readonly property string routeAddReason: root.routeAddDisabledReason()
                     readonly property var acquisition: root.acquisitionForResult(modelData)
 
                     width: ListView.view ? ListView.view.width : 0
@@ -1212,7 +1390,7 @@ Item {
 
                             Label {
                                 Layout.fillWidth: true
-                                text: root.addTargetLabel()
+                                text: root.routeTargetLabel()
                                 color: Theme.textMuted
                                 font.pixelSize: 11
                                 font.family: Theme.fontBody
@@ -1222,28 +1400,20 @@ Item {
 
                             Button {
                                 Layout.alignment: Qt.AlignRight
-                                text: resultRow.addPending ? "Queuing..." : "Acquire"
-                                enabled: !apiClient.mediaAddLoading
-                                onClicked: root.addResultToAcquisition(modelData)
-                            }
-
-                            Button {
-                                Layout.alignment: Qt.AlignRight
-                                text: resultRow.addPending ? "Adding..." : root.managerAddTargetLabel()
-                                visible: root.managerProvidersFromResult().length > 0
-                                enabled: !apiClient.mediaAddLoading && resultRow.managerAddReason === ""
-                                onClicked: root.addResultToManager(modelData)
+                                text: resultRow.addPending ? "Adding..." : "Add"
+                                enabled: !apiClient.mediaAddLoading && resultRow.routeAddReason === ""
+                                onClicked: root.addResultToSelectedRoute(modelData)
                             }
 
                             Label {
                                 Layout.fillWidth: true
-                                text: resultRow.managerAddReason
+                                text: resultRow.routeAddReason
                                 color: Theme.textMuted
                                 font.pixelSize: 10
                                 font.family: Theme.fontBody
                                 horizontalAlignment: Text.AlignRight
                                 wrapMode: Text.WordWrap
-                                visible: root.managerProvidersFromResult().length > 0 && text !== ""
+                                visible: text !== ""
                             }
 
                             Rectangle {
@@ -1331,6 +1501,32 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    Dialog {
+        id: acquisitionActionConfirmDialog
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Cancel | Dialog.Ok
+        width: Math.min(root.width - 48, 420)
+        onAccepted: {
+            if (root.pendingAcquisitionAction) {
+                root.executeAcquisitionAction(
+                    root.pendingAcquisitionAction.action,
+                    root.pendingAcquisitionAction.acquisition)
+            }
+            root.pendingAcquisitionAction = null
+        }
+        onRejected: root.pendingAcquisitionAction = null
+
+        contentItem: Label {
+            id: acquisitionActionConfirmText
+            width: acquisitionActionConfirmDialog.width - 48
+            wrapMode: Text.WordWrap
+            color: Theme.textPrimary
+            font.pixelSize: 13
+            font.family: Theme.fontBody
         }
     }
 }

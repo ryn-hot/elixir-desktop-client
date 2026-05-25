@@ -261,15 +261,24 @@ public:
     Q_INVOKABLE void updateManagerPreferences(
         const QString &movieProviderId,
         const QString &seriesProviderId,
-        const QString &animeProviderId);
+        const QString &animeProviderId,
+        const QString &movieSourceProviderId = QString(),
+        const QString &seriesSourceProviderId = QString(),
+        const QString &animeSourceProviderId = QString());
     Q_INVOKABLE void fetchMediaAcquisition(int limit = 12);
     Q_INVOKABLE void findAnotherRelease(const QString &intentId);
+    Q_INVOKABLE void cancelAcquisitionSubscription(
+        const QString &subscriptionId,
+        const QString &mode = QString(),
+        const QString &reason = QString(),
+        bool deleteFiles = false);
     Q_INVOKABLE void fetchAcquisitionReleases(
         const QString &state = QString(),
         const QString &subscriptionId = QString(),
         int limit = 50);
     Q_INVOKABLE void fetchAcquisitionRelease(const QString &releaseId);
     Q_INVOKABLE void fetchAcquisitionSubscriptionCoverage(const QString &subscriptionId);
+    Q_INVOKABLE void inspectAcquisitionRelease(const QString &releaseId, const QVariantMap &request);
     Q_INVOKABLE void approveAcquisitionRelease(const QString &releaseId, const QVariantMap &request);
     Q_INVOKABLE void rejectAcquisitionRelease(const QString &releaseId, const QVariantMap &request);
     Q_INVOKABLE void retryAcquisitionRelease(const QString &releaseId, const QVariantMap &request);

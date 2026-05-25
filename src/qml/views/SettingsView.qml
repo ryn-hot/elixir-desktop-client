@@ -55,6 +55,60 @@ Item {
         return options
     }
 
+    function sourceProvidersFor(type) {
+        var providers = listValue(apiClient.mediaManagerPreferences, type + "_source_providers", type + "SourceProviders")
+        if (providers.length === 0) {
+            if (type === "movie") {
+                providers = listValue(apiClient.mediaManagerPreferences, "movies_source_candidates", "movieSourceProviders")
+            } else if (type === "series") {
+                providers = listValue(apiClient.mediaManagerPreferences, "tv_source_candidates", "seriesSourceProviders")
+            } else {
+                providers = listValue(apiClient.mediaManagerPreferences, "anime_source_candidates", "animeSourceProviders")
+            }
+        }
+        var options = [{ label: "Auto-select", value: "" }]
+        for (var i = 0; i < providers.length; ++i) {
+            var provider = providers[i]
+            var label = provider.label
+            if (label === undefined || label === "") {
+                label = provider.instance_name !== undefined ? provider.instance_name : provider.instanceName
+            }
+            var providerId = provider.provider_id !== undefined ? provider.provider_id : provider.providerId
+            options.push({ label: label, value: String(providerId || "") })
+        }
+        return options
+    }
+
+    function routeValue(kind, providerId) {
+        var id = String(providerId || "")
+        return id === "" ? "" : (kind + ":" + id)
+    }
+
+    function routeKind(value) {
+        var text = String(value || "")
+        var index = text.indexOf(":")
+        return index > 0 ? text.substring(0, index) : ""
+    }
+
+    function routeProviderId(value) {
+        var text = String(value || "")
+        var index = text.indexOf(":")
+        return index > 0 ? text.substring(index + 1) : ""
+    }
+
+    function routeOptionsFor(type) {
+        var options = [{ label: "Auto-select", value: "" }]
+        var sources = sourceProvidersFor(type)
+        for (var i = 1; i < sources.length; ++i) {
+            options.push({ label: sources[i].label, value: routeValue("source", sources[i].value) })
+        }
+        var managers = managerProvidersFor(type)
+        for (var j = 1; j < managers.length; ++j) {
+            options.push({ label: managers[j].label, value: routeValue("manager", managers[j].value) })
+        }
+        return options
+    }
+
     function managerPreferenceFor(type) {
         var pref = managerPreferenceState()
         if (type === "movie") {
@@ -64,6 +118,29 @@ Item {
             return String(pref.series_provider_id || pref.seriesProviderId || "")
         }
         return String(pref.anime_provider_id || pref.animeProviderId || "")
+    }
+
+    function sourcePreferenceFor(type) {
+        var pref = managerPreferenceState()
+        if (type === "movie") {
+            return String(pref.movie_source_provider_id || pref.movieSourceProviderId || "")
+        }
+        if (type === "series") {
+            return String(pref.series_source_provider_id || pref.seriesSourceProviderId || "")
+        }
+        return String(pref.anime_source_provider_id || pref.animeSourceProviderId || "")
+    }
+
+    function routePreferenceFor(type) {
+        var source = sourcePreferenceFor(type)
+        if (source !== "") {
+            return routeValue("source", source)
+        }
+        var manager = managerPreferenceFor(type)
+        if (manager !== "") {
+            return routeValue("manager", manager)
+        }
+        return ""
     }
 
     function valueOrDash(value) {
@@ -433,10 +510,16 @@ Item {
     }
 
     function saveManagerPreferences() {
-        var movie = movieManagerCombo.currentValue !== undefined ? String(movieManagerCombo.currentValue) : ""
-        var series = seriesManagerCombo.currentValue !== undefined ? String(seriesManagerCombo.currentValue) : ""
-        var anime = animeManagerCombo.currentValue !== undefined ? String(animeManagerCombo.currentValue) : ""
-        apiClient.updateManagerPreferences(movie, series, anime)
+        var movieRoute = movieRouteCombo.currentValue !== undefined ? String(movieRouteCombo.currentValue) : ""
+        var seriesRoute = seriesRouteCombo.currentValue !== undefined ? String(seriesRouteCombo.currentValue) : ""
+        var animeRoute = animeRouteCombo.currentValue !== undefined ? String(animeRouteCombo.currentValue) : ""
+        apiClient.updateManagerPreferences(
+                    routeKind(movieRoute) === "manager" ? routeProviderId(movieRoute) : "",
+                    routeKind(seriesRoute) === "manager" ? routeProviderId(seriesRoute) : "",
+                    routeKind(animeRoute) === "manager" ? routeProviderId(animeRoute) : "",
+                    routeKind(movieRoute) === "source" ? routeProviderId(movieRoute) : "",
+                    routeKind(seriesRoute) === "source" ? routeProviderId(seriesRoute) : "",
+                    routeKind(animeRoute) === "source" ? routeProviderId(animeRoute) : "")
     }
 
     Component.onCompleted: {
@@ -1799,66 +1882,58 @@ Item {
                 }
 
                 Label {
-                    text: "Find Media Manager Routing"
+                    text: "Find Media Routing"
                     color: Theme.textPrimary
                     font.pixelSize: 16
                     font.family: Theme.fontDisplay
                 }
 
                 Label {
-                    text: "Movie manager"
+                    text: "Movie"
                     color: Theme.textSecondary
                     font.pixelSize: 12
                     font.family: Theme.fontBody
                 }
 
                 ComboBox {
-                    id: movieManagerCombo
-                    model: root.managerProvidersFor("movie")
+                    id: movieRouteCombo
+                    model: root.routeOptionsFor("movie")
                     textRole: "label"
                     valueRole: "value"
-                    currentIndex: root.optionIndexForValue(model, root.managerPreferenceFor("movie"))
+                    currentIndex: root.optionIndexForValue(model, root.routePreferenceFor("movie"))
                     onActivated: root.saveManagerPreferences()
                 }
 
                 Label {
-                    text: "Series manager"
+                    text: "Series"
                     color: Theme.textSecondary
                     font.pixelSize: 12
                     font.family: Theme.fontBody
                 }
 
                 ComboBox {
-                    id: seriesManagerCombo
-                    model: root.managerProvidersFor("series")
+                    id: seriesRouteCombo
+                    model: root.routeOptionsFor("series")
                     textRole: "label"
                     valueRole: "value"
-                    currentIndex: root.optionIndexForValue(model, root.managerPreferenceFor("series"))
+                    currentIndex: root.optionIndexForValue(model, root.routePreferenceFor("series"))
                     onActivated: root.saveManagerPreferences()
                 }
 
                 Label {
-                    text: "Anime manager"
+                    text: "Anime"
                     color: Theme.textSecondary
                     font.pixelSize: 12
                     font.family: Theme.fontBody
                 }
 
                 ComboBox {
-                    id: animeManagerCombo
-                    model: root.managerProvidersFor("anime")
+                    id: animeRouteCombo
+                    model: root.routeOptionsFor("anime")
                     textRole: "label"
                     valueRole: "value"
-                    currentIndex: root.optionIndexForValue(model, root.managerPreferenceFor("anime"))
+                    currentIndex: root.optionIndexForValue(model, root.routePreferenceFor("anime"))
                     onActivated: root.saveManagerPreferences()
-                }
-
-                Label {
-                    text: "Auto-select uses the first healthy manager provider for each media type."
-                    color: Theme.textMuted
-                    font.pixelSize: 11
-                    font.family: Theme.fontBody
-                    wrapMode: Text.WordWrap
                 }
 
                 Rectangle {

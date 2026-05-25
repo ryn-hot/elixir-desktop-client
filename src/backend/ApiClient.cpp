@@ -98,6 +98,27 @@ QVariantMap normalizeFindMediaPreferencesPayload(const QVariantMap &payload) {
             pref.value(
                 "anime_default_manager_provider_id",
                 pref.value("animeProviderId", pref.value("anime_provider_id")))));
+    normalizedPref.insert(
+        "movieSourceProviderId",
+        pref.value(
+            "moviesDefaultSourceProviderId",
+            pref.value(
+                "movies_default_source_provider_id",
+                pref.value("movieSourceProviderId", pref.value("movie_source_provider_id")))));
+    normalizedPref.insert(
+        "seriesSourceProviderId",
+        pref.value(
+            "tvDefaultSourceProviderId",
+            pref.value(
+                "tv_default_source_provider_id",
+                pref.value("seriesSourceProviderId", pref.value("series_source_provider_id")))));
+    normalizedPref.insert(
+        "animeSourceProviderId",
+        pref.value(
+            "animeDefaultSourceProviderId",
+            pref.value(
+                "anime_default_source_provider_id",
+                pref.value("animeSourceProviderId", pref.value("anime_source_provider_id")))));
 
     QVariantMap normalized;
     normalized.insert("preferences", normalizedPref);
@@ -122,6 +143,27 @@ QVariantMap normalizeFindMediaPreferencesPayload(const QVariantMap &payload) {
             payload.value(
                 "anime_manager_candidates",
                 payload.value("animeProviders", payload.value("anime_providers")))));
+    normalized.insert(
+        "movieSourceProviders",
+        payload.value(
+            "moviesSourceCandidates",
+            payload.value(
+                "movies_source_candidates",
+                payload.value("movieSourceProviders", payload.value("movie_source_providers")))));
+    normalized.insert(
+        "seriesSourceProviders",
+        payload.value(
+            "tvSourceCandidates",
+            payload.value(
+                "tv_source_candidates",
+                payload.value("seriesSourceProviders", payload.value("series_source_providers")))));
+    normalized.insert(
+        "animeSourceProviders",
+        payload.value(
+            "animeSourceCandidates",
+            payload.value(
+                "anime_source_candidates",
+                payload.value("animeSourceProviders", payload.value("anime_source_providers")))));
     return normalized;
 }
 
@@ -2360,6 +2402,37 @@ void ApiClient::findAnotherRelease(const QString &intentId) {
         });
 }
 
+void ApiClient::cancelAcquisitionSubscription(
+    const QString &subscriptionId,
+    const QString &mode,
+    const QString &reason,
+    bool deleteFiles) {
+    const QString trimmedSubscriptionId = subscriptionId.trimmed();
+    if (trimmedSubscriptionId.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/acquisition/subscriptions/:id/cancel",
+            "Subscription id is required.");
+        return;
+    }
+
+    QJsonObject body;
+    const QString trimmedMode = mode.trimmed();
+    body.insert("mode", trimmedMode.isEmpty() ? QStringLiteral("dismiss") : trimmedMode);
+    const QString trimmedReason = reason.trimmed();
+    if (!trimmedReason.isEmpty()) {
+        body.insert("reason", trimmedReason);
+    }
+    body.insert("deleteFiles", deleteFiles);
+
+    sendRequest(
+        "POST",
+        QString("/api/v1/acquisition/subscriptions/%1/cancel").arg(trimmedSubscriptionId),
+        body,
+        [this](const QJsonDocument &) {
+            fetchMediaAcquisition();
+        });
+}
+
 void ApiClient::fetchAcquisitionReleases(
     const QString &state,
     const QString &subscriptionId,
@@ -2439,6 +2512,33 @@ void ApiClient::fetchAcquisitionSubscriptionCoverage(const QString &subscription
                 return;
             }
             updateAcquisitionSubscriptionCoverage(doc.object());
+        },
+        [this](const QString &) {
+            setAcquisitionReviewLoading(false);
+        });
+}
+
+void ApiClient::inspectAcquisitionRelease(const QString &releaseId, const QVariantMap &request) {
+    const QString trimmedReleaseId = releaseId.trimmed();
+    if (trimmedReleaseId.isEmpty()) {
+        emit requestFailed("/api/v1/acquisition/releases/:id/inspect", "Release id is required.");
+        return;
+    }
+    setAcquisitionReviewLoading(true);
+    sendRequest(
+        "POST",
+        QString("/api/v1/acquisition/releases/%1/inspect").arg(trimmedReleaseId),
+        QJsonObject::fromVariantMap(request),
+        [this, trimmedReleaseId](const QJsonDocument &doc) {
+            setAcquisitionReviewLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed("/api/v1/acquisition/releases/:id/inspect", "Inspect response was not an object.");
+                return;
+            }
+            updateAcquisitionReviewDetail(doc.object());
+            emit acquisitionReviewActionCompleted(trimmedReleaseId, "inspect", doc.object().toVariantMap());
+            fetchAcquisitionReleases("review_required", QString(), 50);
+            fetchMediaAcquisition();
         },
         [this](const QString &) {
             setAcquisitionReviewLoading(false);
@@ -2569,8 +2669,11 @@ void ApiClient::findMedia(
                 merged.insert("providerErrors", QJsonArray());
                 merged.insert("searchProviders", targetsObject.value("searchProviders"));
                 merged.insert("managerProviders", targetsObject.value("managerCandidates"));
+                merged.insert("sourceProviders", targetsObject.value("sourceCandidates"));
                 merged.insert("defaultManagerProviderId", targetsObject.value("defaultManagerProviderId"));
                 merged.insert("preferredManagerProviderId", targetsObject.value("preferredManagerProviderId"));
+                merged.insert("defaultSourceProviderId", targetsObject.value("defaultSourceProviderId"));
+                merged.insert("preferredSourceProviderId", targetsObject.value("preferredSourceProviderId"));
 
                 const QVariantMap result = merged.toVariantMap();
                 if (m_mediaFindResult != result) {
@@ -2654,8 +2757,11 @@ void ApiClient::findMedia(
                     QJsonObject merged = searchDoc.object();
                     merged.insert("searchProviders", targetsObject.value("searchProviders"));
                     merged.insert("managerProviders", targetsObject.value("managerCandidates"));
+                    merged.insert("sourceProviders", targetsObject.value("sourceCandidates"));
                     merged.insert("defaultManagerProviderId", targetsObject.value("defaultManagerProviderId"));
                     merged.insert("preferredManagerProviderId", targetsObject.value("preferredManagerProviderId"));
+                    merged.insert("defaultSourceProviderId", targetsObject.value("defaultSourceProviderId"));
+                    merged.insert("preferredSourceProviderId", targetsObject.value("preferredSourceProviderId"));
 
                     const QVariantMap result = merged.toVariantMap();
                     if (m_mediaFindResult != result) {
@@ -2773,17 +2879,7 @@ void ApiClient::addMediaToAcquisition(
         body.insert("externalIds", QJsonObject::fromVariantMap(externalIds.toMap()));
     }
 
-    QString sourceProviderId = options.value("sourceProviderId").toString().trimmed();
-    if (sourceProviderId.isEmpty()) {
-        QVariant sourceProviderIds = item.value("sourceProviderIds");
-        if (!sourceProviderIds.isValid() || sourceProviderIds.isNull()) {
-            sourceProviderIds = item.value("source_provider_ids");
-        }
-        const QVariantList ids = sourceProviderIds.toList();
-        if (!ids.isEmpty()) {
-            sourceProviderId = ids.first().toString().trimmed();
-        }
-    }
+    const QString sourceProviderId = options.value("sourceProviderId").toString().trimmed();
     if (!sourceProviderId.isEmpty()) {
         body.insert("sourceProviderId", sourceProviderId);
     }
@@ -2883,11 +2979,17 @@ void ApiClient::fetchManagerPreferences() {
 void ApiClient::updateManagerPreferences(
     const QString &movieProviderId,
     const QString &seriesProviderId,
-    const QString &animeProviderId) {
+    const QString &animeProviderId,
+    const QString &movieSourceProviderId,
+    const QString &seriesSourceProviderId,
+    const QString &animeSourceProviderId) {
     QJsonObject body;
     const QString movie = movieProviderId.trimmed();
     const QString series = seriesProviderId.trimmed();
     const QString anime = animeProviderId.trimmed();
+    const QString movieSource = movieSourceProviderId.trimmed();
+    const QString seriesSource = seriesSourceProviderId.trimmed();
+    const QString animeSource = animeSourceProviderId.trimmed();
     body.insert(
         "moviesDefaultManagerProviderId",
         movie.isEmpty() ? QJsonValue::Null : QJsonValue(movie));
@@ -2897,6 +2999,15 @@ void ApiClient::updateManagerPreferences(
     body.insert(
         "animeDefaultManagerProviderId",
         anime.isEmpty() ? QJsonValue::Null : QJsonValue(anime));
+    body.insert(
+        "moviesDefaultSourceProviderId",
+        movieSource.isEmpty() ? QJsonValue::Null : QJsonValue(movieSource));
+    body.insert(
+        "tvDefaultSourceProviderId",
+        seriesSource.isEmpty() ? QJsonValue::Null : QJsonValue(seriesSource));
+    body.insert(
+        "animeDefaultSourceProviderId",
+        animeSource.isEmpty() ? QJsonValue::Null : QJsonValue(animeSource));
 
     sendRequest(
         "PATCH",

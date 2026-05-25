@@ -10,9 +10,11 @@ Item {
     objectName: "acquisitionView"
     property StackView stackView: null
     property var batchExpansionByIntentId: ({})
+    property var progressPercentFloorByKey: ({})
     property string initialReviewReleaseId: ""
     property string initialReviewSubscriptionId: ""
     property bool initialReviewOpened: false
+    property var pendingAcquisitionAction: null
 
     function acquisitionPhase(item) {
         return String((item && (item.phase || item.stage)) || "")
@@ -197,6 +199,17 @@ Item {
         if (!item) {
             return parts
         }
+        if (item.sourceProviderLabel !== undefined && item.sourceProviderLabel !== null
+                && String(item.sourceProviderLabel).trim() !== "") {
+            parts.push({ label: "Source", value: String(item.sourceProviderLabel), tone: "neutral" })
+        }
+        if (item.routeProviderLabel !== undefined && item.routeProviderLabel !== null
+                && String(item.routeProviderLabel).trim() !== "") {
+            parts.push({ label: "Route", value: String(item.routeProviderLabel), tone: "neutral" })
+        } else if (item.downloaderLabel !== undefined && item.downloaderLabel !== null
+                   && String(item.downloaderLabel).trim() !== "") {
+            parts.push({ label: "Route", value: String(item.downloaderLabel), tone: "neutral" })
+        }
         var size = formatBytes(item.sizeBytes)
         if (size !== "") {
             parts.push({ label: "Size", value: size, tone: "neutral" })
@@ -254,14 +267,85 @@ Item {
         if (!item || !phaseShowsProgress(acquisitionPhase(item))) {
             return false
         }
-        return item.progressPercent !== undefined
-               && item.progressPercent !== null
-               && Number(item.progressPercent) > 0
-               && Number(item.progressPercent) < 100
+        return rawProgressPercent(item) !== null
+    }
+
+    function rawProgressPercent(item) {
+        if (!item || item.progressPercent === undefined || item.progressPercent === null) {
+            return null
+        }
+        var value = Number(item.progressPercent)
+        if (!isFinite(value)) {
+            return null
+        }
+        return Math.max(0, Math.min(100, value))
+    }
+
+    function progressIdentity(item) {
+        if (!item) {
+            return ""
+        }
+        var key = acquisitionItemKey(item)
+        var releaseId = String(item.releaseId || "")
+        var downloadId = String(item.downloadId || "")
+        if (releaseId !== "" || downloadId !== "") {
+            return key + "|" + releaseId + "|" + downloadId
+        }
+        return key + "|aggregate|" + String(item.targetCount || item.displayedChildCount || "")
+    }
+
+    function displayProgressPercent(item) {
+        var value = rawProgressPercent(item)
+        if (value === null) {
+            return null
+        }
+        if (!phaseShowsProgress(acquisitionPhase(item))) {
+            return value
+        }
+
+        var key = progressIdentity(item)
+        if (key === "") {
+            return value
+        }
+        var previous = Number(progressPercentFloorByKey[key])
+        if (isFinite(previous)) {
+            value = Math.max(previous, value)
+        }
+        progressPercentFloorByKey[key] = value
+        return value
     }
 
     function runAcquisitionAction(action, item) {
+        var confirmText = String(action.confirmText || action.confirm_text || "")
+        if (confirmText !== "") {
+            pendingAcquisitionAction = {
+                action: action,
+                item: item
+            }
+            acquisitionActionConfirmText.text = confirmText
+            acquisitionActionConfirmDialog.title = String(action.label || "Confirm action")
+            acquisitionActionConfirmDialog.open()
+            return
+        }
+        executeAcquisitionAction(action, item)
+    }
+
+    function executeAcquisitionAction(action, item) {
         var actionId = String(action.id || "")
+        if (actionId === "remove_acquisition_request" || actionId === "cancel_acquisition_downloads") {
+            var subscriptionId = String(action.subscriptionId || action.subscription_id || "")
+            if (subscriptionId === "" && item) {
+                subscriptionId = String(item.intentId || item.intent_id || "")
+            }
+            if (subscriptionId !== "") {
+                apiClient.cancelAcquisitionSubscription(
+                    subscriptionId,
+                    String(action.cancelMode || action.cancel_mode || "dismiss"),
+                    "User requested acquisition removal from Acquisition.",
+                    false)
+            }
+            return
+        }
         if (actionId === "find_another_release") {
             var retryReleaseId = String(action.releaseId || action.release_id || "")
             if (retryReleaseId !== "") {
@@ -775,7 +859,7 @@ Item {
                                                     Layout.fillWidth: true
                                                     from: 0
                                                     to: 100
-                                                    value: Number(modelData.progressPercent || 0)
+                                                    value: Number(root.displayProgressPercent(modelData) || 0)
                                                     visible: root.progressVisible(modelData)
                                                 }
                                             }
@@ -801,12 +885,16 @@ Item {
                                         }
                                         background: Rectangle {
                                             radius: Theme.radiusSmall
-                                            color: modelData.kind === "primary"
+                                            color: modelData.kind === "danger"
+                                                   ? Theme.accentDangerSoft
+                                                   : (modelData.kind === "primary"
                                                    ? Theme.accent
-                                                   : Theme.backgroundCardRaised
-                                            border.color: modelData.kind === "primary"
+                                                   : Theme.backgroundCardRaised)
+                                            border.color: modelData.kind === "danger"
+                                                          ? Theme.accentDanger
+                                                          : (modelData.kind === "primary"
                                                           ? Theme.accent
-                                                          : Theme.border
+                                                          : Theme.border)
                                         }
                                         contentItem: Label {
                                             text: parent.text
@@ -824,7 +912,7 @@ Item {
                                 Layout.fillWidth: true
                                 from: 0
                                 to: 100
-                                value: Number(modelData.progressPercent || 0)
+                                value: Number(root.displayProgressPercent(modelData) || 0)
                                 visible: root.progressVisible(modelData)
                             }
                         }
@@ -836,6 +924,32 @@ Item {
                 Layout.fillWidth: true
                 height: Theme.spacingXLarge
             }
+        }
+    }
+
+    Dialog {
+        id: acquisitionActionConfirmDialog
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Cancel | Dialog.Ok
+        width: Math.min(root.width - 48, 420)
+        onAccepted: {
+            if (root.pendingAcquisitionAction) {
+                root.executeAcquisitionAction(
+                    root.pendingAcquisitionAction.action,
+                    root.pendingAcquisitionAction.item)
+            }
+            root.pendingAcquisitionAction = null
+        }
+        onRejected: root.pendingAcquisitionAction = null
+
+        contentItem: Label {
+            id: acquisitionActionConfirmText
+            width: acquisitionActionConfirmDialog.width - 48
+            wrapMode: Text.WordWrap
+            color: Theme.textPrimary
+            font.pixelSize: 13
+            font.family: Theme.fontBody
         }
     }
 }

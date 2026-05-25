@@ -15,6 +15,8 @@ ColumnLayout {
     property string rejectReason: ""
     property string rejectNote: ""
     property string retryReason: ""
+    property string selectedRouteLogicalId: ""
+    property bool retryClearSuppression: false
 
     function reviewRows() {
         return apiClient.acquisitionReviewReleases || []
@@ -161,6 +163,203 @@ ColumnLayout {
             return "Submitted through the managed usenet broker."
         }
         return "Route evidence is stored with the release plan."
+    }
+
+    function evidenceForDetail() {
+        return root.detail().evidence || ({})
+    }
+
+    function sourceCandidateEvidence() {
+        var evidence = evidenceForDetail()
+        return evidence.sourceCandidate || evidence.selectedCandidate || ({})
+    }
+
+    function resolverEvidence() {
+        return evidenceForDetail().resolverEvidence || ({})
+    }
+
+    function routePolicyEvidence() {
+        return evidenceForDetail().routePolicy || ({})
+    }
+
+    function targetScopeEvidence() {
+        return evidenceForDetail().targetScope || ({})
+    }
+
+    function sourceCandidateRows() {
+        var candidate = sourceCandidateEvidence()
+        var rows = []
+        var title = String(candidate.releaseTitle || candidate.title || "")
+        if (title !== "") rows.push({ label: "Release", value: title })
+        var sourceKind = String(candidate.sourceKind || candidate.source_kind || "")
+        if (sourceKind !== "") rows.push({ label: "Source", value: root.statusText(sourceKind) })
+        var quality = String(candidate.quality || "")
+        if (quality !== "") rows.push({ label: "Quality", value: quality })
+        var language = String(candidate.language || "")
+        if (language !== "") rows.push({ label: "Language", value: language })
+        if (candidate.sizeBytes !== undefined && candidate.sizeBytes !== null) {
+            rows.push({ label: "Size", value: root.formatBytes(candidate.sizeBytes) })
+        }
+        if (candidate.seeders !== undefined && candidate.seeders !== null) {
+            rows.push({ label: "Seeders", value: String(candidate.seeders) })
+        }
+        if (candidate.trackerCount !== undefined && candidate.trackerCount !== null) {
+            rows.push({ label: "Trackers", value: String(candidate.trackerCount) })
+        }
+        if (candidate.cachedDebrid !== undefined && candidate.cachedDebrid !== null) {
+            rows.push({ label: "Debrid cache", value: candidate.cachedDebrid ? "Cached hint" : "No cache hint" })
+        }
+        var hash = String(candidate.infoHash || candidate.info_hash || "")
+        if (hash !== "") {
+            rows.push({ label: "Info hash", value: hash.slice(0, 12) })
+        }
+        return rows
+    }
+
+    function resolverWarningRows() {
+        var resolver = resolverEvidence()
+        var warnings = []
+        var codes = resolver.rejectionCodes || resolver.rejection_codes || []
+        for (var i = 0; i < codes.length; ++i) {
+            warnings.push(root.statusText(String(codes[i])))
+        }
+        if (resolver.reason) {
+            warnings.push(root.displayText(resolver.reason, "reason"))
+        }
+        var unique = []
+        var seen = {}
+        for (var j = 0; j < warnings.length; ++j) {
+            var value = String(warnings[j] || "").trim()
+            if (value !== "" && seen[value] === undefined) {
+                seen[value] = true
+                unique.push(value)
+            }
+        }
+        return unique
+    }
+
+    function routeChoices() {
+        var policy = routePolicyEvidence()
+        var candidate = sourceCandidateEvidence()
+        var routes = []
+        function addRoute(route) {
+            var value = String(route || "").trim()
+            if (value === "" || value === "debrid_first" || value === "torrent_first") return
+            for (var i = 0; i < routes.length; ++i) {
+                if (routes[i] === value) return
+            }
+            routes.push(value)
+        }
+        addRoute(root.detailRelease().selectedRouteLogicalId)
+        addRoute(candidate.defaultRoute || candidate.default_route)
+        var allowed = policy.allowedRoutes || policy.allowed_routes || []
+        for (var i = 0; i < allowed.length; ++i) addRoute(allowed[i])
+        var supported = candidate.supportedRoutes || candidate.supported_routes || []
+        for (var j = 0; j < supported.length; ++j) addRoute(supported[j])
+        var choices = []
+        for (var r = 0; r < routes.length; ++r) {
+            choices.push({ label: root.routeLabel(routes[r]), id: routes[r] })
+        }
+        return choices
+    }
+
+    function selectedReviewRoute() {
+        var selected = String(selectedRouteLogicalId || "").trim()
+        if (selected !== "") return selected
+        var choices = routeChoices()
+        return choices.length > 0 ? String(choices[0].id || "") : ""
+    }
+
+    function routeChoiceIndex() {
+        var choices = routeChoices()
+        var route = selectedReviewRoute()
+        for (var i = 0; i < choices.length; ++i) {
+            if (String(choices[i].id || "") === route) return i
+        }
+        return 0
+    }
+
+    function targetScopeSummaryRows() {
+        var scope = targetScopeEvidence()
+        var rows = []
+        var mediaType = String(scope.mediaType || scope.media_type || root.detailRelease().mediaType || "")
+        if (mediaType !== "") rows.push({ label: "Media", value: root.statusText(mediaType) })
+        var targets = scope.targets || []
+        if (targets.length > 0) rows.push({ label: "Targets", value: String(targets.length) })
+        var targetKeys = scope.targetKeys || scope.target_keys || []
+        if (targetKeys.length > 0) rows.push({ label: "Slots", value: targetKeys.slice(0, 8).join(", ") + (targetKeys.length > 8 ? " +" + (targetKeys.length - 8) : "") })
+        if (scope.seasonNumber !== undefined && scope.seasonNumber !== null) {
+            rows.push({ label: "Season", value: String(scope.seasonNumber) })
+        }
+        var episodes = scope.episodeNumbers || scope.episode_numbers || []
+        if (episodes.length > 0) {
+            rows.push({ label: "Episodes", value: episodes.slice(0, 10).join(", ") + (episodes.length > 10 ? " +" + (episodes.length - 10) : "") })
+        }
+        return rows
+    }
+
+    function reviewQueueSummaryRows() {
+        var rows = root.reviewRows()
+        var candidateCount = rows.length
+        var targetCount = 0
+        var stagedCount = 0
+        var selectedCount = 0
+        for (var i = 0; i < rows.length; ++i) {
+            var summary = rows[i] || ({})
+            var counts = summary.counts || ({})
+            targetCount += Number(counts.reviewRequiredCoverageCount || counts.coverageCount || 0)
+            var release = root.releaseFromSummary(summary)
+            var state = String(release.state || "")
+            if (state === "staging" || state === "submitted" || state === "downloading" || state === "materializing") {
+                stagedCount += 1
+            }
+            selectedCount += Number(counts.selectedCoverageCount || 0)
+        }
+        return [
+            { label: "Candidates", value: String(candidateCount) },
+            { label: "Targets", value: String(targetCount) },
+            { label: "Staged", value: String(stagedCount) },
+            { label: "Mapped", value: String(selectedCount) }
+        ]
+    }
+
+    function reviewCoverageRows() {
+        var rows = coverageForDetail()
+        var result = []
+        for (var i = 0; i < rows.length; ++i) {
+            var coverage = rows[i].coverage || ({})
+            if (String(coverage.state || "") !== "rejected") {
+                result.push(rows[i])
+            }
+        }
+        return result
+    }
+
+    function unmappedTargetCount() {
+        if (filesForDetail().length === 0) return 0
+        var rows = reviewCoverageRows()
+        var count = 0
+        for (var i = 0; i < rows.length; ++i) {
+            var target = rows[i].target || ({})
+            var coverage = rows[i].coverage || ({})
+            var targetId = String(target.targetId || coverage.targetId || "")
+            var fileId = String(coverageMappings[targetId] || rows[i].releaseFileId || coverage.releaseFileId || "")
+            if (targetId !== "" && (fileId === "" || fileSelections[fileId] !== true)) {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    function approvalReady() {
+        if (!detailMatchesSelection() || apiClient.acquisitionReviewLoading) return false
+        if (selectedReviewRoute() === "") return false
+        if (filesForDetail().length === 0) return true
+        return selectedReleaseFileIds().length > 0 && unmappedTargetCount() === 0
+    }
+
+    function approveButtonText() {
+        return filesForDetail().length === 0 ? "Approve candidate" : "Use selected files"
     }
 
     function badgeColor(state) {
@@ -403,6 +602,7 @@ ColumnLayout {
         }
         fileSelections = selections
         coverageMappings = mappings
+        selectedRouteLogicalId = selectedReviewRoute()
         detailInitialized = true
     }
 
@@ -423,6 +623,8 @@ ColumnLayout {
         rejectReason = ""
         rejectNote = ""
         retryReason = ""
+        retryClearSuppression = false
+        selectedRouteLogicalId = ""
         apiClient.fetchAcquisitionRelease(id)
         var subId = String(subscriptionId || "")
         if (subId !== "") {
@@ -504,11 +706,33 @@ ColumnLayout {
             reviewToast.show("Select at least one file before approving this release.")
             return
         }
+        if (unmappedTargetCount() > 0) {
+            reviewToast.show("Map every target before approving this release.")
+            return
+        }
+        var route = selectedReviewRoute()
+        if (route === "") {
+            reviewToast.show("Choose an acquisition route before approving this release.")
+            return
+        }
         apiClient.approveAcquisitionRelease(selectedReleaseId, {
+            routeLogicalId: route,
             selectedReleaseFileIds: selected,
             skippedReleaseFileIds: skippedReleaseFileIds(),
             mappings: manualMappings(),
             reason: "Approved from the Elixir acquisition review UI."
+        })
+    }
+
+    function inspectSelected() {
+        var route = selectedReviewRoute()
+        if (route === "") {
+            reviewToast.show("Choose an acquisition route before inspecting this release.")
+            return
+        }
+        apiClient.inspectAcquisitionRelease(selectedReleaseId, {
+            routeLogicalId: route,
+            reason: "Inspect files before manual approval."
         })
     }
 
@@ -521,14 +745,15 @@ ColumnLayout {
         apiClient.rejectAcquisitionRelease(selectedReleaseId, {
             reason: reason,
             note: rejectNote.trim(),
-            targetPolicy: "blocked"
+            targetPolicy: "pending"
         })
     }
 
     function retryRelease(mode) {
         apiClient.retryAcquisitionRelease(selectedReleaseId, {
             mode: mode,
-            reason: retryReason.trim()
+            reason: retryReason.trim(),
+            clearSuppression: mode === "source_discovery" && retryClearSuppression
         })
     }
 
@@ -624,8 +849,8 @@ ColumnLayout {
                         Layout.fillWidth: true
                         text: {
                             var count = root.reviewRows().length
-                            if (count > 0) return count + " releases need file or target review."
-                            return "Ambiguous packs and provider blockers appear here before downloader actions continue."
+                            if (count > 0) return count + " candidate releases need review before acquisition continues."
+                            return "Elixir found no unresolved acquisition candidates that need manual review."
                         }
                         color: Theme.textSecondary
                         font.pixelSize: 11
@@ -658,6 +883,34 @@ ColumnLayout {
             InlineToast {
                 id: reviewToast
                 Layout.fillWidth: true
+            }
+
+            Flow {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: root.reviewRows().length > 0
+
+                Repeater {
+                    model: root.reviewQueueSummaryRows()
+
+                    delegate: Rectangle {
+                        required property var modelData
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                        implicitHeight: 26
+                        implicitWidth: reviewSummaryText.implicitWidth + 16
+
+                        Label {
+                            id: reviewSummaryText
+                            anchors.centerIn: parent
+                            text: modelData.label + ": " + modelData.value
+                            color: Theme.textSecondary
+                            font.pixelSize: 10
+                            font.family: Theme.fontBody
+                        }
+                    }
+                }
             }
 
             Rectangle {
@@ -725,6 +978,26 @@ ColumnLayout {
                                           root.statusText(release.confidence) + " | " +
                                           root.statusText(release.resolverKind) + " | " +
                                           String(counts.reviewRequiredCoverageCount || 0) + " coverage rows need review"
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: {
+                                        var evidence = modelData.evidence || ({})
+                                        var candidate = evidence.sourceCandidate || evidence.selectedCandidate || ({})
+                                        var parts = []
+                                        if (candidate.quality) parts.push(String(candidate.quality))
+                                        if (candidate.language) parts.push(String(candidate.language))
+                                        if (candidate.seeders !== undefined && candidate.seeders !== null) parts.push("Seeders " + candidate.seeders)
+                                        if (candidate.trackerCount !== undefined && candidate.trackerCount !== null) parts.push("Trackers " + candidate.trackerCount)
+                                        if (candidate.cachedDebrid !== undefined && candidate.cachedDebrid !== null) parts.push(candidate.cachedDebrid ? "Cached hint" : "No cache hint")
+                                        return parts.join(" | ")
+                                    }
+                                    visible: text !== ""
                                     color: Theme.textSecondary
                                     font.pixelSize: 10
                                     font.family: Theme.fontBody
@@ -842,6 +1115,58 @@ ColumnLayout {
                         }
                     }
 
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                        implicitHeight: routeReviewContent.implicitHeight + 16
+
+                        RowLayout {
+                            id: routeReviewContent
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: Theme.spacingMedium
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: "Acquisition route"
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 13
+                                    font.family: Theme.fontBody
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.routeDetail(root.selectedReviewRoute())
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+
+                            ComboBox {
+                                Layout.preferredWidth: 300
+                                model: root.routeChoices()
+                                textRole: "label"
+                                valueRole: "id"
+                                currentIndex: root.routeChoiceIndex()
+                                enabled: root.routeChoices().length > 1 && !apiClient.acquisitionReviewLoading
+                                onActivated: function(index) {
+                                    var choices = root.routeChoices()
+                                    var choice = choices[index] || ({})
+                                    root.selectedRouteLogicalId = String(choice.id || "")
+                                }
+                            }
+                        }
+                    }
+
                     Flow {
                         Layout.fillWidth: true
                         spacing: 8
@@ -869,6 +1194,171 @@ ColumnLayout {
                                     color: Theme.textSecondary
                                     font.pixelSize: 10
                                     font.family: Theme.fontBody
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                        visible: root.sourceCandidateRows().length > 0
+                        implicitHeight: sourceCandidateContent.implicitHeight + 16
+
+                        ColumnLayout {
+                            id: sourceCandidateContent
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: 7
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Source candidate"
+                                color: Theme.textPrimary
+                                font.pixelSize: 13
+                                font.family: Theme.fontBody
+                                font.weight: Font.DemiBold
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Repeater {
+                                    model: root.sourceCandidateRows()
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        radius: Theme.radiusSmall
+                                        color: Theme.panelSoft
+                                        border.color: Theme.border
+                                        implicitHeight: 24
+                                        implicitWidth: sourceCandidateText.implicitWidth + 14
+
+                                        Label {
+                                            id: sourceCandidateText
+                                            anchors.centerIn: parent
+                                            text: String(modelData.label + ": " + modelData.value)
+                                            color: Theme.textSecondary
+                                            font.pixelSize: 10
+                                            font.family: Theme.fontBody
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                        visible: root.targetScopeSummaryRows().length > 0
+                        implicitHeight: targetScopeContent.implicitHeight + 16
+
+                        ColumnLayout {
+                            id: targetScopeContent
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: 7
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Target scope"
+                                color: Theme.textPrimary
+                                font.pixelSize: 13
+                                font.family: Theme.fontBody
+                                font.weight: Font.DemiBold
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Repeater {
+                                    model: root.targetScopeSummaryRows()
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        radius: Theme.radiusSmall
+                                        color: Theme.panelSoft
+                                        border.color: Theme.border
+                                        implicitHeight: 24
+                                        implicitWidth: targetScopeText.implicitWidth + 14
+
+                                        Label {
+                                            id: targetScopeText
+                                            anchors.centerIn: parent
+                                            text: String(modelData.label + ": " + modelData.value)
+                                            color: Theme.textSecondary
+                                            font.pixelSize: 10
+                                            font.family: Theme.fontBody
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.accentDangerSoft
+                        border.color: Theme.accentDanger
+                        visible: root.resolverWarningRows().length > 0
+                        implicitHeight: resolverWarningContent.implicitHeight + 16
+
+                        ColumnLayout {
+                            id: resolverWarningContent
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: 7
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Resolver warnings"
+                                color: Theme.textPrimary
+                                font.pixelSize: 13
+                                font.family: Theme.fontBody
+                                font.weight: Font.DemiBold
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Elixir found this release, but could not safely match it automatically."
+                                color: Theme.textSecondary
+                                font.pixelSize: 10
+                                font.family: Theme.fontBody
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Repeater {
+                                    model: root.resolverWarningRows()
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        radius: Theme.radiusSmall
+                                        color: Theme.panelSoft
+                                        border.color: Theme.accentDanger
+                                        implicitHeight: 24
+                                        implicitWidth: resolverWarningText.implicitWidth + 14
+
+                                        Label {
+                                            id: resolverWarningText
+                                            anchors.centerIn: parent
+                                            text: modelData
+                                            color: Theme.textSecondary
+                                            font.pixelSize: 10
+                                            font.family: Theme.fontBody
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1122,6 +1612,66 @@ ColumnLayout {
                         font.weight: Font.DemiBold
                     }
 
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                        visible: root.filesForDetail().length === 0
+                        implicitHeight: noFilesContent.implicitHeight + 16
+
+                        RowLayout {
+                            id: noFilesContent
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: Theme.spacingMedium
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: "Files have not been inspected yet."
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 12
+                                    font.family: Theme.fontBody
+                                    font.weight: Font.DemiBold
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: "Stage this release through the selected route to fetch provider metadata before mapping files."
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+
+                            Button {
+                                id: inspectEmptyFilesButton
+                                text: "Inspect files"
+                                enabled: !apiClient.acquisitionReviewLoading && root.selectedReviewRoute() !== ""
+                                onClicked: root.inspectSelected()
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: inspectEmptyFilesButton.enabled ? Theme.accent : Theme.backgroundCardRaised
+                                    border.color: inspectEmptyFilesButton.enabled ? Theme.accent : Theme.border
+                                }
+                                contentItem: Label {
+                                    text: inspectEmptyFilesButton.text
+                                    color: inspectEmptyFilesButton.enabled ? "#111111" : Theme.textDisabled
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+                    }
+
                     Repeater {
                         model: root.filesForDetail()
 
@@ -1240,6 +1790,7 @@ ColumnLayout {
 
                                 ComboBox {
                                     Layout.preferredWidth: 260
+                                    visible: root.filesForDetail().length > 0
                                     model: root.fileChoiceModel()
                                     textRole: "label"
                                     valueRole: "id"
@@ -1250,6 +1801,26 @@ ColumnLayout {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.accentDangerSoft
+                        border.color: Theme.accentDanger
+                        visible: root.unmappedTargetCount() > 0
+                        implicitHeight: unmappedTargetText.implicitHeight + 16
+
+                        Label {
+                            id: unmappedTargetText
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            text: root.unmappedTargetCount() + " targets still need file mappings before approval."
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
                         }
                     }
 
@@ -1290,8 +1861,8 @@ ColumnLayout {
 
                         Button {
                             id: approveReviewButton
-                            text: "Approve selected"
-                            enabled: !apiClient.acquisitionReviewLoading && root.selectedReleaseFileIds().length > 0
+                            text: root.approveButtonText()
+                            enabled: root.approvalReady()
                             onClicked: root.approveSelected()
                             background: Rectangle {
                                 radius: Theme.radiusSmall
@@ -1309,8 +1880,29 @@ ColumnLayout {
                         }
 
                         Button {
+                            id: inspectReviewButton
+                            text: "Inspect files"
+                            enabled: !apiClient.acquisitionReviewLoading && root.selectedReviewRoute() !== ""
+                            onClicked: root.inspectSelected()
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: inspectReviewButton.enabled ? Theme.accent : Theme.border
+                            }
+                            contentItem: Label {
+                                text: inspectReviewButton.text
+                                color: inspectReviewButton.enabled ? Theme.textPrimary : Theme.textDisabled
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        Button {
                             id: retryInspectionButton
-                            text: "Retry inspection"
+                            text: "Retry staged release"
+                            visible: root.filesForDetail().length > 0 || root.importRunsForDetail().length > 0
                             enabled: !apiClient.acquisitionReviewLoading
                             onClicked: root.retryRelease("same_release")
                             background: Rectangle {
@@ -1388,6 +1980,26 @@ ColumnLayout {
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                             }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        CheckBox {
+                            id: clearSuppressionCheck
+                            checked: root.retryClearSuppression
+                            onToggled: root.retryClearSuppression = checked
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "Allow rejected fingerprints to be considered again on the next source search."
+                            color: Theme.textMuted
+                            font.pixelSize: 10
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
                         }
                     }
 
