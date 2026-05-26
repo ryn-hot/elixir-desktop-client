@@ -72,7 +72,9 @@ ApplicationWindow {
     }
 
     function refreshAcquisitionUnread() {
-        if (stackView.currentItem && stackView.currentItem.objectName === "acquisitionView") {
+        if (stackView.currentItem &&
+                (stackView.currentItem.objectName === "acquisitionView" ||
+                 stackView.currentItem.objectName === "acquisitionReviewView")) {
             markCurrentAcquisitionSeen()
             return
         }
@@ -142,7 +144,8 @@ ApplicationWindow {
                 }
                 if (stackView.currentItem.objectName === "settingsView") return "settings"
                 if (stackView.currentItem.objectName === "findMediaView") return "find_media"
-                if (stackView.currentItem.objectName === "acquisitionView") return "acquisition"
+                if (stackView.currentItem.objectName === "acquisitionView" ||
+                        stackView.currentItem.objectName === "acquisitionReviewView") return "acquisition"
                 if (stackView.currentItem.objectName === "extensionsView" ||
                         stackView.currentItem.objectName === "advancedExtensionsView" ||
                         stackView.currentItem.objectName === "extensionControlView") return "extensions"

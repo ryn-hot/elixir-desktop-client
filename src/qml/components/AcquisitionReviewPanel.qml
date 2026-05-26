@@ -11,12 +11,23 @@ ColumnLayout {
     property string selectedReleaseId: ""
     property var fileSelections: ({})
     property var coverageMappings: ({})
+    property var activeReviewDetail: ({})
     property bool detailInitialized: false
+    property bool reviewActionInProgress: false
     property string rejectReason: ""
     property string rejectNote: ""
     property string retryReason: ""
     property string selectedRouteLogicalId: ""
     property bool retryClearSuppression: false
+    property bool showQueue: true
+    property bool queueOnly: false
+    property string highlightedReleaseId: ""
+    property bool showIgnoredFiles: false
+    property bool showMappedTargets: false
+    property bool showReviewDiagnostics: false
+
+    signal reviewOpenRequested(string releaseId, string subscriptionId)
+    signal returnToQueueRequested()
 
     function reviewRows() {
         return apiClient.acquisitionReviewReleases || []
@@ -31,7 +42,7 @@ ColumnLayout {
     }
 
     function detail() {
-        return apiClient.acquisitionReviewDetail || ({})
+        return activeReviewDetail || ({})
     }
 
     function detailRelease() {
@@ -47,6 +58,93 @@ ColumnLayout {
     function filesForDetail() {
         var d = detail()
         return d.files || []
+    }
+
+    function releaseStateValue() {
+        return String(root.detailRelease().state || "").toLowerCase()
+    }
+
+    function acceptedCoverageCountForDetail() {
+        var rows = coverageForDetail()
+        var count = 0
+        for (var i = 0; i < rows.length; ++i) {
+            var coverage = rows[i].coverage || ({})
+            var state = String(coverage.state || "").toLowerCase()
+            if (state === "selected" || state === "submitted" || state === "imported") {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    function reviewApprovalComplete() {
+        var state = releaseStateValue()
+        return acceptedCoverageCountForDetail() > 0 &&
+               (state === "ready" ||
+                state === "submitted" ||
+                state === "downloading" ||
+                state === "materializing" ||
+                state === "completed")
+    }
+
+    function reviewStillEditable() {
+        return !reviewApprovalComplete() &&
+               releaseStateValue() !== "cancelled" &&
+               releaseStateValue() !== "completed"
+    }
+
+    function showAuditSections() {
+        return !reviewApprovalComplete() || showReviewDiagnostics
+    }
+
+    function filesForReviewDisplay() {
+        var files = filesForDetail()
+        if (!reviewApprovalComplete()) {
+            return files
+        }
+        var selectedFromServer = []
+        for (var i = 0; i < files.length; ++i) {
+            var fileId = String(files[i].releaseFileId || "")
+            if (fileId !== "" && files[i].selected === true) {
+                selectedFromServer.push(files[i])
+            }
+        }
+        if (selectedFromServer.length > 0) {
+            return selectedFromServer
+        }
+        var selectedFromLocalState = []
+        for (var j = 0; j < files.length; ++j) {
+            var localFileId = String(files[j].releaseFileId || "")
+            if (localFileId !== "" && root.fileSelections[localFileId] === true) {
+                selectedFromLocalState.push(files[j])
+            }
+        }
+        return selectedFromLocalState.length > 0 ? selectedFromLocalState : files
+    }
+
+    function skippedFileCountForDetail() {
+        var count = filesForDetail().length - filesForReviewDisplay().length
+        return count > 0 ? count : 0
+    }
+
+    function ignoredFilesForDetail() {
+        if (!reviewApprovalComplete()) {
+            return []
+        }
+        var selectedIds = {}
+        var selected = filesForReviewDisplay()
+        for (var i = 0; i < selected.length; ++i) {
+            selectedIds[String(selected[i].releaseFileId || "")] = true
+        }
+        var ignored = []
+        var files = filesForDetail()
+        for (var j = 0; j < files.length; ++j) {
+            var fileId = String(files[j].releaseFileId || "")
+            if (fileId === "" || selectedIds[fileId] !== true) {
+                ignored.push(files[j])
+            }
+        }
+        return ignored
     }
 
     function coverageForDetail() {
@@ -186,6 +284,25 @@ ColumnLayout {
         return evidenceForDetail().targetScope || ({})
     }
 
+    function englishAudioEvidenceText(candidate) {
+        var source = candidate || ({})
+        var raw = source.raw || ({})
+        var hints = raw.parsedHints || raw.parsed_hints || ({})
+        var text = [
+            source.language,
+            hints.language,
+            source.releaseTitle,
+            source.title
+        ].join(" ").toLowerCase()
+        if (/\b(english|eng|en)\b/.test(text)) {
+            return "Indicated by release text"
+        }
+        if (/\b(multi|multi-audio|dual-audio|dual audio|dual)\b/.test(text)) {
+            return "Possible; release says multi or dual audio"
+        }
+        return "Unknown before download"
+    }
+
     function sourceCandidateRows() {
         var candidate = sourceCandidateEvidence()
         var rows = []
@@ -197,6 +314,7 @@ ColumnLayout {
         if (quality !== "") rows.push({ label: "Quality", value: quality })
         var language = String(candidate.language || "")
         if (language !== "") rows.push({ label: "Language", value: language })
+        rows.push({ label: "English audio", value: englishAudioEvidenceText(candidate) })
         if (candidate.sizeBytes !== undefined && candidate.sizeBytes !== null) {
             rows.push({ label: "Size", value: root.formatBytes(candidate.sizeBytes) })
         }
@@ -325,12 +443,39 @@ ColumnLayout {
 
     function reviewCoverageRows() {
         var rows = coverageForDetail()
-        var result = []
+        var bestByTarget = {}
+        var order = []
+
+        function coverageRank(coverage) {
+            var state = String((coverage || {}).state || "").toLowerCase()
+            if (state === "imported") return 6
+            if (state === "selected") return 5
+            if (state === "planned") return 4
+            if (state === "review_required") return 3
+            if (state === "pending") return 2
+            return 1
+        }
+
         for (var i = 0; i < rows.length; ++i) {
             var coverage = rows[i].coverage || ({})
-            if (String(coverage.state || "") !== "rejected") {
-                result.push(rows[i])
+            if (String(coverage.state || "").toLowerCase() === "rejected") {
+                continue
             }
+            var target = rows[i].target || ({})
+            var key = String(target.targetId || coverage.targetId || rows[i].targetId || i)
+            if (bestByTarget[key] === undefined) {
+                bestByTarget[key] = rows[i]
+                order.push(key)
+                continue
+            }
+            var existing = bestByTarget[key].coverage || ({})
+            if (coverageRank(coverage) >= coverageRank(existing)) {
+                bestByTarget[key] = rows[i]
+            }
+        }
+        var result = []
+        for (var j = 0; j < order.length; ++j) {
+            result.push(bestByTarget[order[j]])
         }
         return result
     }
@@ -352,6 +497,8 @@ ColumnLayout {
     }
 
     function approvalReady() {
+        if (reviewActionInProgress) return false
+        if (!reviewStillEditable()) return false
         if (!detailMatchesSelection() || apiClient.acquisitionReviewLoading) return false
         if (selectedReviewRoute() === "") return false
         if (filesForDetail().length === 0) return true
@@ -359,7 +506,31 @@ ColumnLayout {
     }
 
     function approveButtonText() {
+        if (reviewActionInProgress) return "Saving selection"
         return filesForDetail().length === 0 ? "Approve candidate" : "Use selected files"
+    }
+
+    function postApprovalText() {
+        var skipped = skippedFileCountForDetail()
+        var selected = filesForReviewDisplay().length
+        var targets = reviewCoverageRows().length
+        var parts = [
+            "Your mapping was saved. Elixir released this candidate back to the acquisition pipeline."
+        ]
+        if (selected > 0) {
+            parts.push(selected + " selected file" + (selected === 1 ? "" : "s") +
+                       " will be used for " + targets + " target" + (targets === 1 ? "" : "s") + ".")
+        }
+        if (skipped > 0) {
+            parts.push(skipped + " extra provider file" + (skipped === 1 ? "" : "s") +
+                       " were found during inspection and will be ignored.")
+        }
+        parts.push("You can return to the review queue or watch progress from Acquisition.")
+        return parts.join(" ")
+    }
+
+    function fileSectionTitle() {
+        return reviewApprovalComplete() ? "Selected files" : "Files"
     }
 
     function badgeColor(state) {
@@ -610,6 +781,10 @@ ColumnLayout {
         var rel = releaseFromSummary(summary)
         var id = releaseId(rel)
         if (id === "") return
+        if (queueOnly) {
+            reviewOpenRequested(id, String(rel.subscriptionId || rel.subscription_id || ""))
+            return
+        }
         openReleaseId(id, String(rel.subscriptionId || rel.subscription_id || ""))
     }
 
@@ -618,6 +793,10 @@ ColumnLayout {
         if (id === "") return
         selectedReleaseId = id
         detailInitialized = false
+        activeReviewDetail = ({})
+        showIgnoredFiles = false
+        showMappedTargets = false
+        showReviewDiagnostics = false
         fileSelections = ({})
         coverageMappings = ({})
         rejectReason = ""
@@ -625,6 +804,7 @@ ColumnLayout {
         retryReason = ""
         retryClearSuppression = false
         selectedRouteLogicalId = ""
+        reviewActionInProgress = false
         apiClient.fetchAcquisitionRelease(id)
         var subId = String(subscriptionId || "")
         if (subId !== "") {
@@ -701,6 +881,9 @@ ColumnLayout {
     }
 
     function approveSelected() {
+        if (reviewActionInProgress) {
+            return
+        }
         var selected = selectedReleaseFileIds()
         if (filesForDetail().length > 0 && selected.length === 0) {
             reviewToast.show("Select at least one file before approving this release.")
@@ -715,6 +898,7 @@ ColumnLayout {
             reviewToast.show("Choose an acquisition route before approving this release.")
             return
         }
+        reviewActionInProgress = true
         apiClient.approveAcquisitionRelease(selectedReleaseId, {
             routeLogicalId: route,
             selectedReleaseFileIds: selected,
@@ -788,6 +972,16 @@ ColumnLayout {
     Connections {
         target: apiClient
         function onAcquisitionReviewDetailChanged() {
+            var incoming = apiClient.acquisitionReviewDetail || ({})
+            var incomingRelease = incoming.release || ({})
+            var incomingReleaseId = root.releaseId(incomingRelease)
+            if (root.selectedReleaseId === "" || incomingReleaseId !== root.selectedReleaseId) {
+                return
+            }
+            root.activeReviewDetail = incoming
+            if (root.reviewApprovalComplete()) {
+                root.detailInitialized = false
+            }
             root.initializeDetailState()
             var rel = root.detailRelease()
             if (rel.subscriptionId) {
@@ -803,14 +997,22 @@ ColumnLayout {
             }
         }
         function onAcquisitionReviewActionCompleted(releaseId, action, detail) {
-            reviewToast.show(root.statusText(action) + " saved. Downloader data was preserved.")
+            if (action === "approve") {
+                reviewToast.show("Release approved. Elixir will continue acquisition with your selected files.")
+            } else if (action === "reject") {
+                reviewToast.show("Release rejected. Downloader data was preserved.")
+            } else {
+                reviewToast.show(root.statusText(action) + " saved. Downloader data was preserved.")
+            }
             if (action === "approve" || action === "reject") {
                 root.selectedReleaseId = String(releaseId)
             }
+            root.reviewActionInProgress = false
         }
         function onRequestFailed(endpoint, error) {
             if (String(endpoint).indexOf("/api/v1/acquisition/releases") === 0 ||
                     String(endpoint).indexOf("/api/v1/acquisition/subscriptions") === 0) {
+                root.reviewActionInProgress = false
                 reviewToast.show(String(error || "Acquisition review request failed."))
             }
         }
@@ -839,7 +1041,7 @@ ColumnLayout {
 
                     Label {
                         Layout.fillWidth: true
-                        text: "Release review"
+                        text: root.showQueue ? "Review queue" : "Review release"
                         color: Theme.textPrimary
                         font.pixelSize: 17
                         font.family: Theme.fontDisplay
@@ -848,9 +1050,14 @@ ColumnLayout {
                     Label {
                         Layout.fillWidth: true
                         text: {
+                            if (!root.showQueue) {
+                                return root.detailMatchesSelection()
+                                       ? "Choose the files that belong to this media item, map every target, then approve the release or reject it."
+                                       : "Loading release review."
+                            }
                             var count = root.reviewRows().length
-                            if (count > 0) return count + " candidate releases need review before acquisition continues."
-                            return "Elixir found no unresolved acquisition candidates that need manual review."
+                            if (count > 0) return count + " candidate releases are paused because Elixir could not safely match them automatically."
+                            return "No releases need manual review."
                         }
                         color: Theme.textSecondary
                         font.pixelSize: 11
@@ -863,7 +1070,12 @@ ColumnLayout {
                     id: refreshReviewButton
                     text: apiClient.acquisitionReviewLoading ? "Loading" : "Refresh"
                     enabled: !apiClient.acquisitionReviewLoading
-                    onClicked: apiClient.fetchAcquisitionReleases("review_required", "", 50)
+                    onClicked: {
+                        if (root.selectedReleaseId !== "") {
+                            apiClient.fetchAcquisitionRelease(root.selectedReleaseId)
+                        }
+                        apiClient.fetchAcquisitionReleases("review_required", "", 50)
+                    }
                     background: Rectangle {
                         radius: Theme.radiusSmall
                         color: Theme.backgroundCardRaised
@@ -888,7 +1100,7 @@ ColumnLayout {
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
-                visible: root.reviewRows().length > 0
+                visible: root.showQueue && root.reviewRows().length > 0
 
                 Repeater {
                     model: root.reviewQueueSummaryRows()
@@ -918,7 +1130,7 @@ ColumnLayout {
                 radius: Theme.radiusSmall
                 color: Theme.backgroundCardRaised
                 border.color: Theme.border
-                visible: root.reviewRows().length === 0 && root.selectedReleaseId === ""
+                visible: root.showQueue && root.reviewRows().length === 0 && root.selectedReleaseId === ""
                 implicitHeight: noReviewText.implicitHeight + 20
 
                 Label {
@@ -934,7 +1146,7 @@ ColumnLayout {
             }
 
             Repeater {
-                model: root.reviewRows()
+                model: root.showQueue ? root.reviewRows() : []
 
                 delegate: Rectangle {
                     id: reviewRow
@@ -944,7 +1156,9 @@ ColumnLayout {
                     readonly property string rid: root.releaseId(release)
                     Layout.fillWidth: true
                     radius: Theme.radiusSmall
-                    color: root.selectedReleaseId === rid ? Theme.surfaceHover : Theme.backgroundCardRaised
+                    color: root.selectedReleaseId === rid || root.highlightedReleaseId === rid
+                           ? Theme.surfaceHover
+                           : Theme.backgroundCardRaised
                     border.color: root.badgeBorder(modelData.reviewStatus || release.state)
                     implicitHeight: rowContent.implicitHeight + 16
 
@@ -992,6 +1206,8 @@ ColumnLayout {
                                         var parts = []
                                         if (candidate.quality) parts.push(String(candidate.quality))
                                         if (candidate.language) parts.push(String(candidate.language))
+                                        var englishAudio = root.englishAudioEvidenceText(candidate)
+                                        if (englishAudio !== "Unknown before download") parts.push("English audio: " + englishAudio)
                                         if (candidate.seeders !== undefined && candidate.seeders !== null) parts.push("Seeders " + candidate.seeders)
                                         if (candidate.trackerCount !== undefined && candidate.trackerCount !== null) parts.push("Trackers " + candidate.trackerCount)
                                         if (candidate.cachedDebrid !== undefined && candidate.cachedDebrid !== null) parts.push(candidate.cachedDebrid ? "Cached hint" : "No cache hint")
@@ -1034,7 +1250,7 @@ ColumnLayout {
 
                             Button {
                                 id: openReviewButton
-                                text: root.selectedReleaseId === reviewRow.rid ? "Open" : "Review"
+                                text: "Open review"
                                 onClicked: root.openReview(modelData)
                                 background: Rectangle {
                                     radius: Theme.radiusSmall
@@ -1060,7 +1276,7 @@ ColumnLayout {
                 radius: Theme.radiusMedium
                 color: Theme.panelSoft
                 border.color: Theme.border
-                visible: root.detailMatchesSelection()
+                visible: !root.queueOnly && root.detailMatchesSelection()
                 implicitHeight: detailContent.implicitHeight + Theme.spacingLarge * 2
 
                 ColumnLayout {
@@ -1120,6 +1336,7 @@ ColumnLayout {
                         radius: Theme.radiusSmall
                         color: Theme.backgroundCardRaised
                         border.color: Theme.border
+                        visible: root.showAuditSections()
                         implicitHeight: routeReviewContent.implicitHeight + 16
 
                         RowLayout {
@@ -1157,7 +1374,9 @@ ColumnLayout {
                                 textRole: "label"
                                 valueRole: "id"
                                 currentIndex: root.routeChoiceIndex()
-                                enabled: root.routeChoices().length > 1 && !apiClient.acquisitionReviewLoading
+                                enabled: root.reviewStillEditable() &&
+                                         root.routeChoices().length > 1 &&
+                                         !apiClient.acquisitionReviewLoading
                                 onActivated: function(index) {
                                     var choices = root.routeChoices()
                                     var choice = choices[index] || ({})
@@ -1167,9 +1386,124 @@ ColumnLayout {
                         }
                     }
 
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.accentSuccessSoft
+                        border.color: Theme.accentSuccess
+                        visible: root.reviewApprovalComplete()
+                        implicitHeight: approvalCompleteContent.implicitHeight + 16
+
+                        RowLayout {
+                            id: approvalCompleteContent
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: Theme.spacingMedium
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: "Release approved"
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 13
+                                    font.family: Theme.fontBody
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.postApprovalText()
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+
+                            Button {
+                                id: approvalQueueButton
+                                text: "Review queue"
+                                onClicked: root.returnToQueueRequested()
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.accentSuccess
+                                    border.color: Theme.accentSuccess
+                                }
+                                contentItem: Label {
+                                    text: approvalQueueButton.text
+                                    color: "#08140D"
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+                        visible: root.reviewApprovalComplete()
+
+                        Button {
+                            id: mappedTargetsToggle
+                            text: root.showMappedTargets
+                                  ? "Hide mapped targets"
+                                  : "Show mapped targets (" + root.reviewCoverageRows().length + ")"
+                            onClicked: root.showMappedTargets = !root.showMappedTargets
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: mappedTargetsToggle.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        Button {
+                            id: diagnosticsToggle
+                            text: root.showReviewDiagnostics ? "Hide diagnostics" : "Show diagnostics"
+                            onClicked: root.showReviewDiagnostics = !root.showReviewDiagnostics
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: diagnosticsToggle.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "Diagnostics show resolver warnings and provider evidence used to make the review decision."
+                            visible: root.showReviewDiagnostics
+                            color: Theme.textMuted
+                            font.pixelSize: 10
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
                     Flow {
                         Layout.fillWidth: true
                         spacing: 8
+                        visible: root.showAuditSections()
 
                         Repeater {
                             model: [
@@ -1204,7 +1538,7 @@ ColumnLayout {
                         radius: Theme.radiusSmall
                         color: Theme.backgroundCardRaised
                         border.color: Theme.border
-                        visible: root.sourceCandidateRows().length > 0
+                        visible: root.sourceCandidateRows().length > 0 && root.showAuditSections()
                         implicitHeight: sourceCandidateContent.implicitHeight + 16
 
                         ColumnLayout {
@@ -1256,7 +1590,7 @@ ColumnLayout {
                         radius: Theme.radiusSmall
                         color: Theme.backgroundCardRaised
                         border.color: Theme.border
-                        visible: root.targetScopeSummaryRows().length > 0
+                        visible: root.targetScopeSummaryRows().length > 0 && root.showAuditSections()
                         implicitHeight: targetScopeContent.implicitHeight + 16
 
                         ColumnLayout {
@@ -1308,7 +1642,7 @@ ColumnLayout {
                         radius: Theme.radiusSmall
                         color: Theme.accentDangerSoft
                         border.color: Theme.accentDanger
-                        visible: root.resolverWarningRows().length > 0
+                        visible: root.resolverWarningRows().length > 0 && root.showAuditSections()
                         implicitHeight: resolverWarningContent.implicitHeight + 16
 
                         ColumnLayout {
@@ -1369,7 +1703,7 @@ ColumnLayout {
                         radius: Theme.radiusSmall
                         color: Theme.backgroundCardRaised
                         border.color: Theme.border
-                        visible: root.debridEvidenceRows().length > 0
+                        visible: root.debridEvidenceRows().length > 0 && root.showAuditSections()
                         implicitHeight: debridEvidenceContent.implicitHeight + 16
 
                         ColumnLayout {
@@ -1421,7 +1755,7 @@ ColumnLayout {
                         radius: Theme.radiusSmall
                         color: Theme.accentDangerSoft
                         border.color: Theme.accentDanger
-                        visible: root.reviewReasonText() !== ""
+                        visible: root.reviewReasonText() !== "" && root.showAuditSections()
                         implicitHeight: reasonText.implicitHeight + 16
 
                         Label {
@@ -1441,7 +1775,7 @@ ColumnLayout {
                         radius: Theme.radiusSmall
                         color: Theme.backgroundCardRaised
                         border.color: Theme.border
-                        visible: root.importRunsForDetail().length > 0
+                        visible: root.importRunsForDetail().length > 0 && root.showAuditSections()
                         implicitHeight: importStateContent.implicitHeight + 16
 
                         ColumnLayout {
@@ -1524,7 +1858,7 @@ ColumnLayout {
                         border.color: (root.animeVerificationForDetail().mismatches || []).length > 0
                                       ? Theme.accentDanger
                                       : Theme.border
-                        visible: root.animeVerificationSummaryText() !== ""
+                        visible: root.animeVerificationSummaryText() !== "" && root.showAuditSections()
                         implicitHeight: animeVerificationContent.implicitHeight + 16
 
                         ColumnLayout {
@@ -1605,11 +1939,45 @@ ColumnLayout {
 
                     Label {
                         Layout.fillWidth: true
-                        text: "Files"
+                        text: root.fileSectionTitle()
                         color: Theme.textPrimary
                         font.pixelSize: 13
                         font.family: Theme.fontBody
                         font.weight: Font.DemiBold
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.skippedFileCountForDetail() + " extra provider file" +
+                              (root.skippedFileCountForDetail() === 1 ? " was" : "s were") +
+                              " found during inspection and will not be used."
+                        visible: root.reviewApprovalComplete() && root.skippedFileCountForDetail() > 0
+                        color: Theme.textSecondary
+                        font.pixelSize: 10
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Button {
+                        id: ignoredFilesToggle
+                        visible: root.reviewApprovalComplete() && root.ignoredFilesForDetail().length > 0
+                        text: root.showIgnoredFiles
+                              ? "Hide ignored files"
+                              : "Show ignored files (" + root.ignoredFilesForDetail().length + ")"
+                        onClicked: root.showIgnoredFiles = !root.showIgnoredFiles
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: ignoredFilesToggle.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
                     }
 
                     Rectangle {
@@ -1673,7 +2041,7 @@ ColumnLayout {
                     }
 
                     Repeater {
-                        model: root.filesForDetail()
+                        model: root.filesForReviewDisplay()
 
                         delegate: Rectangle {
                             required property var modelData
@@ -1692,7 +2060,7 @@ ColumnLayout {
 
                                 CheckBox {
                                     checked: root.fileSelections[fileId] === true
-                                    enabled: modelData.selectable !== false
+                                    enabled: modelData.selectable !== false && root.reviewStillEditable()
                                     onToggled: root.setFileSelected(fileId, checked)
                                 }
 
@@ -1733,9 +2101,62 @@ ColumnLayout {
                         }
                     }
 
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                        visible: root.reviewApprovalComplete() &&
+                                 root.showIgnoredFiles &&
+                                 root.ignoredFilesForDetail().length > 0
+                        implicitHeight: ignoredFilesContent.implicitHeight + 16
+
+                        ColumnLayout {
+                            id: ignoredFilesContent
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: 6
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Ignored provider files"
+                                color: Theme.textPrimary
+                                font.pixelSize: 12
+                                font.family: Theme.fontBody
+                                font.weight: Font.DemiBold
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "These files came back from provider inspection but are not part of the approved mapping."
+                                color: Theme.textSecondary
+                                font.pixelSize: 10
+                                font.family: Theme.fontBody
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Repeater {
+                                model: root.ignoredFilesForDetail()
+
+                                delegate: Label {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    text: root.fileLabel(modelData)
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+                    }
+
                     Label {
                         Layout.fillWidth: true
                         text: "Target coverage"
+                        visible: root.reviewStillEditable() ||
+                                 (root.reviewApprovalComplete() && root.showMappedTargets)
                         color: Theme.textPrimary
                         font.pixelSize: 13
                         font.family: Theme.fontBody
@@ -1743,7 +2164,10 @@ ColumnLayout {
                     }
 
                     Repeater {
-                        model: root.coverageForDetail()
+                        model: root.reviewStillEditable() ||
+                               (root.reviewApprovalComplete() && root.showMappedTargets)
+                               ? root.reviewCoverageRows()
+                               : []
 
                         delegate: Rectangle {
                             required property var modelData
@@ -1795,6 +2219,7 @@ ColumnLayout {
                                     textRole: "label"
                                     valueRole: "id"
                                     currentIndex: root.choiceIndexForFile(root.coverageMappings[targetId] || modelData.releaseFileId || coverage.releaseFileId || "")
+                                    enabled: root.reviewStillEditable()
                                     onActivated: function(index) {
                                         var choice = root.fileChoiceModel()[index]
                                         root.setTargetMapping(targetId, choice ? choice.id : "")
@@ -1809,7 +2234,7 @@ ColumnLayout {
                         radius: Theme.radiusSmall
                         color: Theme.accentDangerSoft
                         border.color: Theme.accentDanger
-                        visible: root.unmappedTargetCount() > 0
+                        visible: root.reviewStillEditable() && root.unmappedTargetCount() > 0
                         implicitHeight: unmappedTargetText.implicitHeight + 16
 
                         Label {
@@ -1829,7 +2254,8 @@ ColumnLayout {
                         radius: Theme.radiusSmall
                         color: Theme.backgroundCardRaised
                         border.color: Theme.border
-                        visible: (root.detail().evidence || {}).schedulerDispatch !== undefined
+                        visible: (root.detail().evidence || {}).schedulerDispatch !== undefined &&
+                                 root.showAuditSections()
                         implicitHeight: diagnosticsText.implicitHeight + 16
 
                         Label {
@@ -1858,6 +2284,7 @@ ColumnLayout {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: Theme.spacingSmall
+                        visible: root.reviewStillEditable()
 
                         Button {
                             id: approveReviewButton
@@ -1986,6 +2413,7 @@ ColumnLayout {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: Theme.spacingSmall
+                        visible: root.reviewStillEditable()
 
                         CheckBox {
                             id: clearSuppressionCheck
@@ -2006,6 +2434,7 @@ ColumnLayout {
                     TextArea {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 58
+                        visible: root.reviewStillEditable()
                         placeholderText: "Rejection reason"
                         text: root.rejectReason
                         onTextChanged: root.rejectReason = text
@@ -2021,6 +2450,7 @@ ColumnLayout {
 
                     TextField {
                         Layout.fillWidth: true
+                        visible: root.reviewStillEditable()
                         placeholderText: "Optional note"
                         text: root.rejectNote
                         onTextChanged: root.rejectNote = text
@@ -2036,6 +2466,7 @@ ColumnLayout {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: Theme.spacingSmall
+                        visible: root.reviewStillEditable()
 
                         Button {
                             id: rejectReleaseButton

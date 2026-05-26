@@ -11,9 +11,6 @@ Item {
     property StackView stackView: null
     property var batchExpansionByIntentId: ({})
     property var progressPercentFloorByKey: ({})
-    property string initialReviewReleaseId: ""
-    property string initialReviewSubscriptionId: ""
-    property bool initialReviewOpened: false
     property var pendingAcquisitionAction: null
 
     function acquisitionPhase(item) {
@@ -360,10 +357,12 @@ Item {
         }
         if (actionId === "open_review") {
             var releaseId = String(action.releaseId || action.release_id || "")
-            if (releaseId !== "") {
-                reviewPanel.openReleaseId(
-                    releaseId,
-                    String(action.subscriptionId || action.subscription_id || ""))
+            if (releaseId !== "" && stackView) {
+                stackView.push(Qt.resolvedUrl("AcquisitionReviewView.qml"), {
+                    stackView: stackView,
+                    releaseId: releaseId,
+                    subscriptionId: String(action.subscriptionId || action.subscription_id || "")
+                })
             }
             return
         }
@@ -393,12 +392,6 @@ Item {
         if (apiClient.authToken !== "") {
             apiClient.fetchMediaAcquisition()
             apiClient.fetchAcquisitionReleases("review_required", "", 50)
-        }
-        if (!initialReviewOpened && initialReviewReleaseId !== "") {
-            initialReviewOpened = true
-            Qt.callLater(function() {
-                reviewPanel.openReleaseId(initialReviewReleaseId, initialReviewSubscriptionId)
-            })
         }
     }
 
@@ -481,11 +474,77 @@ Item {
                 }
             }
 
-            AcquisitionReviewPanel {
-                id: reviewPanel
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.spacingXLarge
                 Layout.rightMargin: Theme.spacingXLarge
+                radius: Theme.radiusLarge
+                color: Theme.accentDangerSoft
+                border.color: Theme.accentDanger
+                visible: (apiClient.acquisitionReviewReleases || []).length > 0
+                implicitHeight: reviewNoticeContent.implicitHeight + Theme.spacingMedium * 2
+
+                RowLayout {
+                    id: reviewNoticeContent
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingMedium
+                    spacing: Theme.spacingMedium
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "Review needed"
+                            color: Theme.textPrimary
+                            font.pixelSize: 14
+                            font.family: Theme.fontBody
+                            font.weight: Font.DemiBold
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: (apiClient.acquisitionReviewReleases || []).length + " release" +
+                                  ((apiClient.acquisitionReviewReleases || []).length === 1 ? "" : "s") +
+                                  " need manual review before acquisition can continue."
+                            color: Theme.textSecondary
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    Button {
+                        id: openFirstReviewButton
+                        text: "Review needed"
+                        onClicked: {
+                            var rows = apiClient.acquisitionReviewReleases || []
+                            if (rows.length === 0 || !stackView) return
+                            var rel = rows[0].release || ({})
+                            var releaseId = String(rel.releaseId || rel.release_id || "")
+                            if (releaseId === "") return
+                            stackView.push(Qt.resolvedUrl("AcquisitionReviewView.qml"), {
+                                stackView: stackView,
+                                releaseId: releaseId,
+                                subscriptionId: String(rel.subscriptionId || rel.subscription_id || "")
+                            })
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.accent
+                            border.color: Theme.accent
+                        }
+                        contentItem: Label {
+                            text: openFirstReviewButton.text
+                            color: "#111111"
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
             }
 
             Rectangle {

@@ -26,6 +26,7 @@
         <file alias="views/HomeView.qml">../src/qml/views/HomeView.qml</file>
         <file alias="views/FindMediaView.qml">../src/qml/views/FindMediaView.qml</file>
         <file alias="views/AcquisitionView.qml">../src/qml/views/AcquisitionView.qml</file>
+        <file alias="views/AcquisitionReviewView.qml">../src/qml/views/AcquisitionReviewView.qml</file>
         <file alias="views/DetailsView.qml">../src/qml/views/DetailsView.qml</file>
         <file alias="views/PlayerView.qml">../src/qml/views/PlayerView.qml</file>
         <file alias="views/SettingsView.qml">../src/qml/views/SettingsView.qml</file>

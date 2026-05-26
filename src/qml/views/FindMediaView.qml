@@ -754,10 +754,10 @@ Item {
         if (actionId === "open_review") {
             var releaseId = String(action.releaseId || action.release_id || "")
             if (releaseId !== "" && stackView) {
-                stackView.push(Qt.resolvedUrl("AcquisitionView.qml"), {
+                stackView.push(Qt.resolvedUrl("AcquisitionReviewView.qml"), {
                     stackView: stackView,
-                    initialReviewReleaseId: releaseId,
-                    initialReviewSubscriptionId: String(action.subscriptionId || action.subscription_id || "")
+                    releaseId: releaseId,
+                    subscriptionId: String(action.subscriptionId || action.subscription_id || "")
                 })
             }
             return
