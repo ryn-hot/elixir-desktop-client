@@ -267,6 +267,9 @@ public:
         const QString &animeSourceProviderId = QString());
     Q_INVOKABLE void fetchMediaAcquisition(int limit = 12);
     Q_INVOKABLE void findAnotherRelease(const QString &intentId);
+    Q_INVOKABLE void retryAcquisitionRequest(
+        const QString &subscriptionId,
+        const QString &reason = QString());
     Q_INVOKABLE void cancelAcquisitionSubscription(
         const QString &subscriptionId,
         const QString &mode = QString(),

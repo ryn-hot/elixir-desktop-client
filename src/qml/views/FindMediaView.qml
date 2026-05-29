@@ -18,6 +18,7 @@ Item {
     property string addStatusText: ""
     property string pendingAddKey: ""
     property string lastAddedIntentId: ""
+    property var addedResultKeys: ({})
     property var pendingAcquisitionAction: null
 
     function setSearchQuery(query) {
@@ -517,7 +518,8 @@ Item {
     function resultKey(item) {
         var title = item && item.title ? String(item.title) : ""
         var year = item && item.year ? String(item.year) : ""
-        return title + "::" + year
+        var type = item && item.type ? String(item.type) : selectedType
+        return lower(type) + "::" + title + "::" + year
     }
 
     function resultPosterUrl(item) {
@@ -650,6 +652,40 @@ Item {
             }
         }
         return best
+    }
+
+    function markResultAdded(key) {
+        var rowKey = String(key || "")
+        if (rowKey === "") {
+            return
+        }
+        var next = {}
+        var current = addedResultKeys || {}
+        for (var existingKey in current) {
+            next[existingKey] = current[existingKey]
+        }
+        next[rowKey] = true
+        addedResultKeys = next
+    }
+
+    function syncAddedResultsFromAcquisition() {
+        var next = {}
+        var current = addedResultKeys || {}
+        for (var existingKey in current) {
+            next[existingKey] = current[existingKey]
+        }
+        var results = findResults()
+        for (var i = 0; i < results.length; ++i) {
+            if (acquisitionForResult(results[i]) !== null) {
+                next[resultKey(results[i])] = true
+            }
+        }
+        addedResultKeys = next
+    }
+
+    function resultAlreadyAdded(item) {
+        var key = resultKey(item)
+        return acquisitionForResult(item) !== null || (addedResultKeys && addedResultKeys[key] === true)
     }
 
     function acquisitionPhaseCode(acquisition) {
@@ -890,6 +926,7 @@ Item {
             if (filtered.length !== root.selectedProviderIds.length) {
                 root.selectedProviderIds = filtered
             }
+            root.syncAddedResultsFromAcquisition()
         }
 
         function onMediaFindLoadingChanged() {
@@ -915,6 +952,10 @@ Item {
         }
 
         function onMediaAddResultChanged() {
+            var completedKey = root.pendingAddKey
+            if (completedKey !== "") {
+                root.markResultAdded(completedKey)
+            }
             root.pendingAddKey = ""
             root.lastAddedIntentId = String(apiClient.mediaAddResult.intent_id || apiClient.mediaAddResult.intentId || "")
             var title = apiClient.mediaAddResult.title || "Media"
@@ -931,6 +972,10 @@ Item {
             if (!apiClient.mediaAddLoading && root.pendingAddKey !== "" && root.addStatusText === "") {
                 root.pendingAddKey = ""
             }
+        }
+
+        function onMediaAcquisitionChanged() {
+            root.syncAddedResultsFromAcquisition()
         }
 
         function onExtensionsCatalogChanged() {
@@ -1240,6 +1285,7 @@ Item {
 
                     readonly property string rowKey: root.resultKey(modelData)
                     readonly property bool addPending: root.pendingAddKey === rowKey && apiClient.mediaAddLoading
+                    readonly property bool addComplete: root.resultAlreadyAdded(modelData)
                     readonly property string routeAddReason: root.routeAddDisabledReason()
                     readonly property var acquisition: root.acquisitionForResult(modelData)
 
@@ -1399,15 +1445,41 @@ Item {
                             }
 
                             Button {
+                                id: addResultButton
                                 Layout.alignment: Qt.AlignRight
-                                text: resultRow.addPending ? "Adding..." : "Add"
-                                enabled: !apiClient.mediaAddLoading && resultRow.routeAddReason === ""
+                                text: resultRow.addPending ? "Adding..." : (resultRow.addComplete ? "Added" : "Add")
+                                enabled: !apiClient.mediaAddLoading &&
+                                         !resultRow.addComplete &&
+                                         resultRow.routeAddReason === ""
                                 onClicked: root.addResultToSelectedRoute(modelData)
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: addResultButton.enabled
+                                           ? Theme.accent
+                                           : (resultRow.addComplete
+                                              ? Theme.accentSuccessSoft
+                                              : Theme.backgroundCardRaised)
+                                    border.color: addResultButton.enabled
+                                                  ? Theme.accent
+                                                  : (resultRow.addComplete
+                                                     ? Theme.accentSuccess
+                                                     : Theme.border)
+                                }
+                                contentItem: Label {
+                                    text: addResultButton.text
+                                    color: addResultButton.enabled
+                                           ? "#17120A"
+                                           : (resultRow.addComplete ? Theme.textPrimary : Theme.textDisabled)
+                                    font.pixelSize: 12
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
                             }
 
                             Label {
                                 Layout.fillWidth: true
-                                text: resultRow.routeAddReason
+                                text: resultRow.addComplete ? "" : resultRow.routeAddReason
                                 color: Theme.textMuted
                                 font.pixelSize: 10
                                 font.family: Theme.fontBody

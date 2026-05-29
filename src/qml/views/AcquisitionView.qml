@@ -9,6 +9,7 @@ Item {
     id: root
     objectName: "acquisitionView"
     property StackView stackView: null
+    property string focusIntentId: ""
     property var batchExpansionByIntentId: ({})
     property var progressPercentFloorByKey: ({})
     property var pendingAcquisitionAction: null
@@ -46,6 +47,143 @@ Item {
         return value === undefined || value === null ? [] : value
     }
 
+    function normalizedStatusText(value) {
+        return String(value || "").trim().toLowerCase()
+    }
+
+    function childPhaseLabel(child) {
+        return normalizedStatusText((child && (child.phaseLabel || child.stageLabel || "")) || "")
+    }
+
+    function childStatusValue(child) {
+        return normalizedStatusText((child && (child.status || child.state || "")) || "")
+    }
+
+    function childIsImported(child) {
+        var phase = acquisitionPhase(child)
+        var status = childStatusValue(child)
+        var label = childPhaseLabel(child)
+        return phase === "completed" || phase === "ready" || phase === "imported" ||
+               status === "completed" || status === "ready" || status === "imported" ||
+               status === "downloaded" || label === "downloaded" || label === "imported"
+    }
+
+    function childIsNoResults(child) {
+        var phase = acquisitionPhase(child)
+        var status = childStatusValue(child)
+        var label = childPhaseLabel(child)
+        return phase === "no_results" || status === "no_results" || label === "no results"
+    }
+
+    function acquisitionEvidenceCount(item, label) {
+        var evidence = (item && item.evidence) || []
+        var wanted = normalizedStatusText(label)
+        for (var i = 0; i < evidence.length; ++i) {
+            if (normalizedStatusText(evidence[i].label) !== wanted) {
+                continue
+            }
+            var text = String(evidence[i].value || "")
+            var match = text.match(/[0-9]+/)
+            if (match && match.length > 0) {
+                return Number(match[0])
+            }
+        }
+        return -1
+    }
+
+    function terminalSourceSummary(item) {
+        var source = String((item && item.source) || "")
+        if (!item || (source !== "acquisition_subscription" && source !== "source_acquisition")) {
+            return ""
+        }
+        var phase = acquisitionPhase(item)
+        if (phase !== "completed" && phase !== "ready") {
+            return ""
+        }
+
+        var children = acquisitionChildren(item)
+        if (children.length <= 0) {
+            return ""
+        }
+
+        var imported = acquisitionEvidenceCount(item, "Imported")
+        var noResults = acquisitionEvidenceCount(item, "No results")
+        if (imported < 0 && noResults < 0) {
+            imported = 0
+            noResults = 0
+            for (var i = 0; i < children.length; ++i) {
+                if (childIsNoResults(children[i])) {
+                    noResults += 1
+                } else if (childIsImported(children[i])) {
+                    imported += 1
+                }
+            }
+        } else {
+            imported = Math.max(0, imported)
+            noResults = Math.max(0, noResults)
+        }
+
+        var total = acquisitionEvidenceCount(item, "Targets")
+        if (total < 0) {
+            total = Number(item.targetCount || item.displayedChildCount || children.length)
+        }
+        if (!isFinite(total) || total <= 0) {
+            total = children.length
+        }
+
+        if (imported + noResults < total) {
+            return ""
+        }
+
+        return imported + " imported, " + noResults + " no results out of " + total + " targets."
+    }
+
+    function acquisitionHeadline(item) {
+        var summary = terminalSourceSummary(item)
+        if (summary !== "") {
+            return summary
+        }
+        return displayText((item && (item.headline || item.description)) || "", "headline")
+    }
+
+    function acquisitionDetail(item) {
+        if (terminalSourceSummary(item) !== "") {
+            return ""
+        }
+        return displayText((item && item.detail) || "", "detail")
+    }
+
+    function terminalSourceHadImports(item) {
+        if (terminalSourceSummary(item) === "") {
+            return false
+        }
+        var imported = acquisitionEvidenceCount(item, "Imported")
+        if (imported >= 0) {
+            return imported > 0
+        }
+        var children = acquisitionChildren(item)
+        for (var i = 0; i < children.length; ++i) {
+            if (childIsImported(children[i])) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function acquisitionStageLabel(item) {
+        if (terminalSourceSummary(item) !== "") {
+            return terminalSourceHadImports(item) ? "Downloaded" : "Completed"
+        }
+        return String((item && (item.phaseLabel || item.stageLabel || item.phase || item.stage)) || "")
+    }
+
+    function showChildTargets(item) {
+        if (terminalSourceSummary(item) !== "") {
+            return false
+        }
+        return acquisitionChildren(item).length > 0
+    }
+
     function batchUnitLabel(item, count) {
         return count === 1 ? "download" : "downloads"
     }
@@ -64,6 +202,10 @@ Item {
             return ""
         }
         return String(item.intentId || item.id || item.title || "")
+    }
+
+    function isFocusedItem(item) {
+        return focusIntentId !== "" && acquisitionItemKey(item) === focusIntentId
     }
 
     function isBatchExpanded(item, childCount) {
@@ -366,6 +508,28 @@ Item {
             }
             return
         }
+        if (actionId === "open_show" || String(action.navigateView || action.navigate_view || "") === "media_detail") {
+            var mediaItemId = String(action.navigateMediaItemId || action.navigate_media_item_id || item.mediaItemId || item.media_item_id || "")
+            if (mediaItemId !== "" && stackView) {
+                stackView.push(Qt.resolvedUrl("DetailsView.qml"), {
+                    stackView: stackView,
+                    mediaId: mediaItemId
+                })
+            }
+            return
+        }
+        if (actionId === "retry_missing") {
+            var retrySubscriptionId = String(action.subscriptionId || action.subscription_id || "")
+            if (retrySubscriptionId === "" && item) {
+                retrySubscriptionId = String(item.intentId || item.intent_id || "")
+            }
+            if (retrySubscriptionId !== "") {
+                apiClient.retryAcquisitionRequest(
+                    retrySubscriptionId,
+                    "User retried missing targets from Acquisition.")
+            }
+            return
+        }
         if (actionId === "retry_import") {
             var importReleaseId = String(action.releaseId || action.release_id || "")
             if (importReleaseId !== "") {
@@ -390,7 +554,7 @@ Item {
 
     Component.onCompleted: {
         if (apiClient.authToken !== "") {
-            apiClient.fetchMediaAcquisition()
+            apiClient.fetchMediaAcquisition(focusIntentId === "" ? 12 : 50)
             apiClient.fetchAcquisitionReleases("review_required", "", 50)
         }
     }
@@ -599,14 +763,18 @@ Item {
                         required property var modelData
                         property var acquisitionItem: modelData
                         readonly property var childItems: root.acquisitionChildren(modelData)
+                        readonly property bool showChildRows: root.showChildTargets(modelData)
                         readonly property string itemKey: root.acquisitionItemKey(modelData)
                         property bool batchExpanded: root.isBatchExpanded(modelData, childItems.length)
-                        readonly property int collapsedChildCount: Math.max(0, childItems.length - 5)
+                        readonly property int collapsedChildCount: showChildRows ? Math.max(0, childItems.length - 5) : 0
 
                         Layout.fillWidth: true
                         radius: Theme.radiusLarge
                         color: Theme.backgroundCard
-                        border.color: root.phaseBorderColor(root.acquisitionPhase(modelData))
+                        border.color: root.isFocusedItem(modelData)
+                                      ? Theme.accent
+                                      : root.phaseBorderColor(root.acquisitionPhase(modelData))
+                        border.width: root.isFocusedItem(modelData) ? 2 : 1
                         implicitHeight: itemContent.implicitHeight + Theme.spacingLarge * 2
 
                         ColumnLayout {
@@ -634,7 +802,7 @@ Item {
 
                                     Label {
                                         Layout.fillWidth: true
-                                        text: root.displayText(modelData.headline || modelData.description || "", "headline")
+                                        text: root.acquisitionHeadline(modelData)
                                         color: Theme.textPrimary
                                         font.pixelSize: 13
                                         font.family: Theme.fontBody
@@ -644,7 +812,7 @@ Item {
 
                                     Label {
                                         Layout.fillWidth: true
-                                        text: root.displayText(modelData.detail || "", "detail")
+                                        text: root.acquisitionDetail(modelData)
                                         color: Theme.textSecondary
                                         font.pixelSize: 12
                                         font.family: Theme.fontBody
@@ -663,7 +831,7 @@ Item {
                                     Label {
                                         id: stageLabel
                                         anchors.centerIn: parent
-                                        text: String(modelData.phaseLabel || modelData.stageLabel || modelData.phase || modelData.stage || "")
+                                        text: root.acquisitionStageLabel(modelData)
                                         color: Theme.textPrimary
                                         font.pixelSize: 10
                                         font.family: Theme.fontBody
@@ -716,6 +884,13 @@ Item {
                                 Repeater {
                                     model: (function() {
                                         var parts = []
+                                        if (modelData.requestLabel) {
+                                            parts.push({
+                                                label: "Request",
+                                                value: modelData.requestLabel,
+                                                tone: modelData.oneShot ? "success" : "neutral"
+                                            })
+                                        }
                                         if (modelData.managerLabel) {
                                             parts.push({ label: "Manager", value: modelData.managerLabel, tone: "neutral" })
                                         }
@@ -762,7 +937,7 @@ Item {
                                 radius: Theme.radiusMedium
                                 color: Theme.backgroundCardRaised
                                 border.color: Theme.border
-                                visible: acquisitionCard.childItems.length > 0
+                                visible: acquisitionCard.showChildRows
                                 implicitHeight: batchColumn.implicitHeight + 12
 
                                 ColumnLayout {
@@ -808,7 +983,9 @@ Item {
                                     }
 
                                     Repeater {
-                                        model: acquisitionCard.batchExpanded
+                                        model: !acquisitionCard.showChildRows
+                                               ? []
+                                               : acquisitionCard.batchExpanded
                                                ? acquisitionCard.childItems
                                                : acquisitionCard.childItems.slice(0, 5)
 

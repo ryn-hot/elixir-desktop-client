@@ -2402,6 +2402,32 @@ void ApiClient::findAnotherRelease(const QString &intentId) {
         });
 }
 
+void ApiClient::retryAcquisitionRequest(
+    const QString &subscriptionId,
+    const QString &reason) {
+    const QString trimmedSubscriptionId = subscriptionId.trimmed();
+    if (trimmedSubscriptionId.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/acquisition/requests/:id/retry",
+            "Subscription id is required.");
+        return;
+    }
+
+    QJsonObject body;
+    const QString trimmedReason = reason.trimmed();
+    if (!trimmedReason.isEmpty()) {
+        body.insert("reason", trimmedReason);
+    }
+
+    sendRequest(
+        "POST",
+        QString("/api/v1/acquisition/requests/%1/retry").arg(trimmedSubscriptionId),
+        body,
+        [this](const QJsonDocument &) {
+            fetchMediaAcquisition();
+        });
+}
+
 void ApiClient::cancelAcquisitionSubscription(
     const QString &subscriptionId,
     const QString &mode,
@@ -2891,12 +2917,30 @@ void ApiClient::addMediaToAcquisition(
         }
     }
 
+    const auto insertStringOption = [&body, &options](const QString &key) {
+        if (!options.contains(key)) {
+            return;
+        }
+        const QString value = options.value(key).toString().trimmed();
+        if (!value.isEmpty()) {
+            body.insert(key, value);
+        }
+    };
+    insertStringOption(QStringLiteral("requestMode"));
+    insertStringOption(QStringLiteral("requestScope"));
+    insertStringOption(QStringLiteral("metadataPolicy"));
+    insertStringOption(QStringLiteral("completionPolicy"));
+    insertStringOption(QStringLiteral("idempotencyKey"));
+
     const QString monitorPolicy = options.value("monitorPolicy").toString().trimmed();
     if (!monitorPolicy.isEmpty()) {
         body.insert("monitorPolicy", monitorPolicy);
     }
     if (options.contains("releaseDelaySeconds")) {
         body.insert("releaseDelaySeconds", options.value("releaseDelaySeconds").toLongLong());
+    }
+    if (options.contains("scope") && options.value("scope").canConvert<QVariantMap>()) {
+        body.insert("scope", QJsonObject::fromVariantMap(options.value("scope").toMap()));
     }
     if (options.contains("target") && options.value("target").canConvert<QVariantMap>()) {
         body.insert("target", QJsonObject::fromVariantMap(options.value("target").toMap()));
@@ -2938,6 +2982,15 @@ void ApiClient::addMediaToAcquisition(
             result.insert("managerLabel", QStringLiteral("Elixir acquisition"));
             result.insert("manager_label", QStringLiteral("Elixir acquisition"));
             result.insert("nativeAcquisition", true);
+            const QString requestMode =
+                subscription.value("requestMode", subscription.value("request_mode", QStringLiteral("monitored")))
+                    .toString();
+            const QString requestScope =
+                subscription.value("requestScope", subscription.value("request_scope", QStringLiteral("subscription")))
+                    .toString();
+            result.insert("requestMode", requestMode);
+            result.insert("requestScope", requestScope);
+            result.insert("oneShot", requestMode == QStringLiteral("one_shot"));
 
             if (m_mediaAddResult != result) {
                 m_mediaAddResult = result;

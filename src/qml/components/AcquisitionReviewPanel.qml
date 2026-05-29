@@ -14,6 +14,7 @@ ColumnLayout {
     property var activeReviewDetail: ({})
     property bool detailInitialized: false
     property bool reviewActionInProgress: false
+    property string reviewActionInProgressKind: ""
     property string rejectReason: ""
     property string rejectNote: ""
     property string retryReason: ""
@@ -499,15 +500,30 @@ ColumnLayout {
     function approvalReady() {
         if (reviewActionInProgress) return false
         if (!reviewStillEditable()) return false
-        if (!detailMatchesSelection() || apiClient.acquisitionReviewLoading) return false
+        if (!detailMatchesSelection()) return false
         if (selectedReviewRoute() === "") return false
         if (filesForDetail().length === 0) return true
         return selectedReleaseFileIds().length > 0 && unmappedTargetCount() === 0
     }
 
     function approveButtonText() {
-        if (reviewActionInProgress) return "Saving selection"
+        if (reviewActionInProgress && reviewActionInProgressKind === "approve") return "Saving selection"
+        if (reviewActionInProgress) return "Working"
         return filesForDetail().length === 0 ? "Approve candidate" : "Use selected files"
+    }
+
+    function beginReviewAction(kind) {
+        if (reviewActionInProgress) {
+            return false
+        }
+        reviewActionInProgress = true
+        reviewActionInProgressKind = String(kind || "")
+        return true
+    }
+
+    function endReviewAction() {
+        reviewActionInProgress = false
+        reviewActionInProgressKind = ""
     }
 
     function postApprovalText() {
@@ -804,7 +820,7 @@ ColumnLayout {
         retryReason = ""
         retryClearSuppression = false
         selectedRouteLogicalId = ""
-        reviewActionInProgress = false
+        endReviewAction()
         apiClient.fetchAcquisitionRelease(id)
         var subId = String(subscriptionId || "")
         if (subId !== "") {
@@ -881,24 +897,26 @@ ColumnLayout {
     }
 
     function approveSelected() {
-        if (reviewActionInProgress) {
+        if (!beginReviewAction("approve")) {
             return
         }
         var selected = selectedReleaseFileIds()
         if (filesForDetail().length > 0 && selected.length === 0) {
+            endReviewAction()
             reviewToast.show("Select at least one file before approving this release.")
             return
         }
         if (unmappedTargetCount() > 0) {
+            endReviewAction()
             reviewToast.show("Map every target before approving this release.")
             return
         }
         var route = selectedReviewRoute()
         if (route === "") {
+            endReviewAction()
             reviewToast.show("Choose an acquisition route before approving this release.")
             return
         }
-        reviewActionInProgress = true
         apiClient.approveAcquisitionRelease(selectedReleaseId, {
             routeLogicalId: route,
             selectedReleaseFileIds: selected,
@@ -909,8 +927,12 @@ ColumnLayout {
     }
 
     function inspectSelected() {
+        if (!beginReviewAction("inspect")) {
+            return
+        }
         var route = selectedReviewRoute()
         if (route === "") {
+            endReviewAction()
             reviewToast.show("Choose an acquisition route before inspecting this release.")
             return
         }
@@ -921,8 +943,12 @@ ColumnLayout {
     }
 
     function rejectRelease() {
+        if (!beginReviewAction("reject")) {
+            return
+        }
         var reason = rejectReason.trim()
         if (reason === "") {
+            endReviewAction()
             reviewToast.show("Enter a rejection reason before rejecting this release.")
             return
         }
@@ -934,6 +960,9 @@ ColumnLayout {
     }
 
     function retryRelease(mode) {
+        if (!beginReviewAction("retry")) {
+            return
+        }
         apiClient.retryAcquisitionRelease(selectedReleaseId, {
             mode: mode,
             reason: retryReason.trim(),
@@ -989,11 +1018,15 @@ ColumnLayout {
             }
         }
         function onMediaAcquisitionChanged() {
-            if (apiClient.authToken !== "") {
+            if (!root.visible || apiClient.authToken === "") {
+                return
+            }
+            if (root.showQueue) {
                 apiClient.fetchAcquisitionReleases("review_required", "", 50)
-                if (root.selectedReleaseId !== "") {
-                    apiClient.fetchAcquisitionRelease(root.selectedReleaseId)
-                }
+                return
+            }
+            if (root.selectedReleaseId !== "" && !root.reviewStillEditable()) {
+                apiClient.fetchAcquisitionRelease(root.selectedReleaseId)
             }
         }
         function onAcquisitionReviewActionCompleted(releaseId, action, detail) {
@@ -1007,12 +1040,12 @@ ColumnLayout {
             if (action === "approve" || action === "reject") {
                 root.selectedReleaseId = String(releaseId)
             }
-            root.reviewActionInProgress = false
+            root.endReviewAction()
         }
         function onRequestFailed(endpoint, error) {
             if (String(endpoint).indexOf("/api/v1/acquisition/releases") === 0 ||
                     String(endpoint).indexOf("/api/v1/acquisition/subscriptions") === 0) {
-                root.reviewActionInProgress = false
+                root.endReviewAction()
                 reviewToast.show(String(error || "Acquisition review request failed."))
             }
         }
@@ -1376,7 +1409,7 @@ ColumnLayout {
                                 currentIndex: root.routeChoiceIndex()
                                 enabled: root.reviewStillEditable() &&
                                          root.routeChoices().length > 1 &&
-                                         !apiClient.acquisitionReviewLoading
+                                         !root.reviewActionInProgress
                                 onActivated: function(index) {
                                     var choices = root.routeChoices()
                                     var choice = choices[index] || ({})
@@ -1500,39 +1533,6 @@ ColumnLayout {
                         }
                     }
 
-                    Flow {
-                        Layout.fillWidth: true
-                        spacing: 8
-                        visible: root.showAuditSections()
-
-                        Repeater {
-                            model: [
-                                { label: "Kind", value: root.statusText(root.detailRelease().releaseKind) },
-                                { label: "Resolver", value: root.statusText(root.detailRelease().resolverKind) },
-                                { label: "Files", value: String((root.detail().counts || {}).fileCount || 0) },
-                                { label: "Selected", value: String(root.selectedReleaseFileIds().length) },
-                                { label: "Coverage", value: String((root.detail().counts || {}).coverageCount || 0) },
-                                { label: "Imports", value: String(root.importRunsForDetail().length) }
-                            ]
-                            delegate: Rectangle {
-                                required property var modelData
-                                radius: Theme.radiusSmall
-                                color: Theme.backgroundCardRaised
-                                border.color: Theme.border
-                                implicitHeight: 26
-                                implicitWidth: metricText.implicitWidth + 16
-                                Label {
-                                    id: metricText
-                                    anchors.centerIn: parent
-                                    text: modelData.label + ": " + modelData.value
-                                    color: Theme.textSecondary
-                                    font.pixelSize: 10
-                                    font.family: Theme.fontBody
-                                }
-                            }
-                        }
-                    }
-
                     Rectangle {
                         Layout.fillWidth: true
                         radius: Theme.radiusSmall
@@ -1627,67 +1627,6 @@ ColumnLayout {
                                             id: targetScopeText
                                             anchors.centerIn: parent
                                             text: String(modelData.label + ": " + modelData.value)
-                                            color: Theme.textSecondary
-                                            font.pixelSize: 10
-                                            font.family: Theme.fontBody
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        radius: Theme.radiusSmall
-                        color: Theme.accentDangerSoft
-                        border.color: Theme.accentDanger
-                        visible: root.resolverWarningRows().length > 0 && root.showAuditSections()
-                        implicitHeight: resolverWarningContent.implicitHeight + 16
-
-                        ColumnLayout {
-                            id: resolverWarningContent
-                            anchors.fill: parent
-                            anchors.margins: 8
-                            spacing: 7
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: "Resolver warnings"
-                                color: Theme.textPrimary
-                                font.pixelSize: 13
-                                font.family: Theme.fontBody
-                                font.weight: Font.DemiBold
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: "Elixir found this release, but could not safely match it automatically."
-                                color: Theme.textSecondary
-                                font.pixelSize: 10
-                                font.family: Theme.fontBody
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Flow {
-                                Layout.fillWidth: true
-                                spacing: 6
-
-                                Repeater {
-                                    model: root.resolverWarningRows()
-
-                                    delegate: Rectangle {
-                                        required property var modelData
-                                        radius: Theme.radiusSmall
-                                        color: Theme.panelSoft
-                                        border.color: Theme.accentDanger
-                                        implicitHeight: 24
-                                        implicitWidth: resolverWarningText.implicitWidth + 14
-
-                                        Label {
-                                            id: resolverWarningText
-                                            anchors.centerIn: parent
-                                            text: modelData
                                             color: Theme.textSecondary
                                             font.pixelSize: 10
                                             font.family: Theme.fontBody
@@ -2021,7 +1960,9 @@ ColumnLayout {
                             Button {
                                 id: inspectEmptyFilesButton
                                 text: "Inspect files"
-                                enabled: !apiClient.acquisitionReviewLoading && root.selectedReviewRoute() !== ""
+                                enabled: !root.reviewActionInProgress &&
+                                         root.detailMatchesSelection() &&
+                                         root.selectedReviewRoute() !== ""
                                 onClicked: root.inspectSelected()
                                 background: Rectangle {
                                     radius: Theme.radiusSmall
@@ -2309,7 +2250,9 @@ ColumnLayout {
                         Button {
                             id: inspectReviewButton
                             text: "Inspect files"
-                            enabled: !apiClient.acquisitionReviewLoading && root.selectedReviewRoute() !== ""
+                            enabled: !root.reviewActionInProgress &&
+                                     root.detailMatchesSelection() &&
+                                     root.selectedReviewRoute() !== ""
                             onClicked: root.inspectSelected()
                             background: Rectangle {
                                 radius: Theme.radiusSmall
@@ -2330,7 +2273,7 @@ ColumnLayout {
                             id: retryInspectionButton
                             text: "Retry staged release"
                             visible: root.filesForDetail().length > 0 || root.importRunsForDetail().length > 0
-                            enabled: !apiClient.acquisitionReviewLoading
+                            enabled: !root.reviewActionInProgress && root.detailMatchesSelection()
                             onClicked: root.retryRelease("same_release")
                             background: Rectangle {
                                 radius: Theme.radiusSmall
@@ -2351,7 +2294,7 @@ ColumnLayout {
                             id: retryImportButton
                             text: "Retry import"
                             visible: root.importRunsForDetail().length > 0
-                            enabled: !apiClient.acquisitionReviewLoading
+                            enabled: !root.reviewActionInProgress && root.detailMatchesSelection()
                             onClicked: root.retryRelease("import")
                             background: Rectangle {
                                 radius: Theme.radiusSmall
@@ -2372,7 +2315,7 @@ ColumnLayout {
                             id: retryVerificationButton
                             text: "Retry verification"
                             visible: root.animeVerificationSummaryText() !== ""
-                            enabled: !apiClient.acquisitionReviewLoading
+                            enabled: !root.reviewActionInProgress && root.detailMatchesSelection()
                             onClicked: root.retryRelease("verification")
                             background: Rectangle {
                                 radius: Theme.radiusSmall
@@ -2392,7 +2335,7 @@ ColumnLayout {
                         Button {
                             id: searchAnotherButton
                             text: "Search another"
-                            enabled: !apiClient.acquisitionReviewLoading
+                            enabled: !root.reviewActionInProgress && root.detailMatchesSelection()
                             onClicked: root.retryRelease("source_discovery")
                             background: Rectangle {
                                 radius: Theme.radiusSmall
@@ -2471,7 +2414,7 @@ ColumnLayout {
                         Button {
                             id: rejectReleaseButton
                             text: "Reject release"
-                            enabled: !apiClient.acquisitionReviewLoading
+                            enabled: !root.reviewActionInProgress && root.detailMatchesSelection()
                             onClicked: root.rejectRelease()
                             background: Rectangle {
                                 radius: Theme.radiusSmall

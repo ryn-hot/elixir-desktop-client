@@ -9,15 +9,51 @@ Rectangle {
     property string description: ""
     property string thumbnail: ""
     property string statusText: ""
+    property string statusMessage: ""
+    property string recoveryState: ""
     property bool available: false
     property bool blocked: false
     property bool canDelete: false
     property bool canRestore: false
+    property bool canAcquire: false
+    property bool selectionMode: false
+    property bool selectable: false
+    property bool selected: false
+    property string acquireText: "Get episode"
     property bool busy: false
     readonly property int verticalPadding: Theme.space10
     signal playRequested()
     signal deleteRequested()
     signal restoreRequested()
+    signal acquireRequested()
+    signal selectionToggled(bool selected)
+
+    function showStatusChrome() {
+        return root.recoveryState !== "available" && root.statusText !== ""
+    }
+
+    function stateColor() {
+        if (root.blocked || root.recoveryState === "blocked") return Theme.accentInfo
+        if (root.available || root.recoveryState === "available") return Theme.accentSuccess
+        if (root.recoveryState === "review_needed") return Theme.accent
+        if (root.recoveryState === "no_results" || root.recoveryState === "failed") return Theme.accentDanger
+        if (root.recoveryState === "queued" ||
+                root.recoveryState === "searching" ||
+                root.recoveryState === "downloading" ||
+                root.recoveryState === "post_processing") return Theme.accentInfo
+        return Theme.accent
+    }
+
+    function stateFill() {
+        if (root.available || root.recoveryState === "available") return Theme.accentSuccessSoft
+        if (root.recoveryState === "no_results" || root.recoveryState === "failed") return Theme.accentDangerSoft
+        if (root.recoveryState === "queued" ||
+                root.recoveryState === "searching" ||
+                root.recoveryState === "downloading" ||
+                root.recoveryState === "post_processing" ||
+                root.recoveryState === "blocked") return Theme.accentInfoSoft
+        return Theme.accentSoft
+    }
 
     radius: Theme.radius4
     color: hover.hovered ? Qt.rgba(1, 1, 1, 0.055) : "transparent"
@@ -33,6 +69,20 @@ Rectangle {
         anchors.topMargin: root.verticalPadding
         anchors.bottomMargin: root.verticalPadding
         spacing: Theme.space16
+
+        Item {
+            Layout.preferredWidth: root.selectionMode ? 32 : 0
+            Layout.fillHeight: true
+            visible: root.selectionMode
+
+            CheckBox {
+                anchors.centerIn: parent
+                checked: root.selected
+                enabled: root.selectable && !root.busy
+                opacity: enabled ? 1.0 : 0.45
+                onToggled: root.selectionToggled(checked)
+            }
+        }
 
         Rectangle {
             Layout.preferredWidth: Theme.episodeThumbWidth
@@ -100,24 +150,59 @@ Rectangle {
 
             RowLayout {
                 spacing: Theme.space8
+
+                Rectangle {
+                    Layout.preferredWidth: 132
+                    Layout.preferredHeight: 24
+                    visible: root.showStatusChrome()
+                    radius: Theme.radiusSmall
+                    color: root.stateFill()
+                    border.color: root.stateColor()
+
+                    Label {
+                        id: statusLabel
+                        anchors.centerIn: parent
+                        text: root.statusText
+                        color: Theme.textPrimary
+                        font.family: Theme.fontBody
+                        font.pixelSize: 11
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                    }
+                }
+
                 Label {
-                    text: root.statusText
-                    color: root.blocked ? Theme.info : (root.available ? Theme.textMuted : Theme.accent)
+                    Layout.fillWidth: true
+                    text: root.showStatusChrome() ? root.statusMessage : ""
+                    color: Theme.textSecondary
                     font.family: Theme.fontBody
                     font.pixelSize: 12
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
                 }
-                Item { Layout.fillWidth: true }
+
                 ActionButton {
                     text: "Play"
                     compact: true
+                    Layout.preferredWidth: 104
                     visible: root.available && !root.blocked
                     enabled: !root.busy
                     onClicked: root.playRequested()
                 }
                 ActionButton {
+                    text: root.busy ? "Requesting..." : root.acquireText
+                    compact: true
+                    Layout.preferredWidth: 124
+                    visible: root.canAcquire && !root.available && !root.blocked
+                    enabled: !root.busy
+                    onClicked: root.acquireRequested()
+                }
+                ActionButton {
                     text: root.busy ? "Working..." : "Delete"
                     compact: true
                     variant: "danger"
+                    Layout.preferredWidth: 104
                     visible: root.canDelete && !root.blocked
                     enabled: !root.busy
                     onClicked: root.deleteRequested()
@@ -125,6 +210,7 @@ Rectangle {
                 ActionButton {
                     text: root.busy ? "Working..." : "Allow again"
                     compact: true
+                    Layout.preferredWidth: 124
                     visible: root.canRestore
                     enabled: !root.busy
                     onClicked: root.restoreRequested()
