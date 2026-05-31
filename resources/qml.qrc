@@ -22,6 +22,7 @@
         <file alias="components/ServerListItem.qml">../src/qml/components/ServerListItem.qml</file>
         <file alias="components/InlineToast.qml">../src/qml/components/InlineToast.qml</file>
         <file alias="components/AcquisitionReviewPanel.qml">../src/qml/components/AcquisitionReviewPanel.qml</file>
+        <file alias="components/ScopedAddDialog.qml">../src/qml/components/ScopedAddDialog.qml</file>
         <file alias="views/ConnectServerView.qml">../src/qml/views/ConnectServerView.qml</file>
         <file alias="views/HomeView.qml">../src/qml/views/HomeView.qml</file>
         <file alias="views/FindMediaView.qml">../src/qml/views/FindMediaView.qml</file>

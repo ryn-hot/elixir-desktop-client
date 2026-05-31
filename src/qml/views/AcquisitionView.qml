@@ -135,7 +135,8 @@ Item {
             return ""
         }
 
-        return imported + " imported, " + noResults + " no results out of " + total + " targets."
+        return imported + " imported, " + noResults + " no results out of " +
+               total + " " + (total === 1 ? "target" : "targets") + "."
     }
 
     function acquisitionHeadline(item) {
@@ -148,7 +149,8 @@ Item {
 
     function acquisitionDetail(item) {
         if (terminalSourceSummary(item) !== "") {
-            return ""
+            var requestLabel = String((item && item.requestLabel) || "")
+            return requestLabel !== "" ? requestLabel + "." : ""
         }
         return displayText((item && item.detail) || "", "detail")
     }

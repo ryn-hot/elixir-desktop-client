@@ -61,6 +61,8 @@ class ApiClient : public QObject {
     Q_PROPERTY(QVariantMap mediaManagerPreferences READ mediaManagerPreferences NOTIFY mediaManagerPreferencesChanged)
     Q_PROPERTY(QVariantMap mediaAddResult READ mediaAddResult NOTIFY mediaAddResultChanged)
     Q_PROPERTY(bool mediaAddLoading READ mediaAddLoading NOTIFY mediaAddLoadingChanged)
+    Q_PROPERTY(QVariantMap mediaScopePreview READ mediaScopePreview NOTIFY mediaScopePreviewChanged)
+    Q_PROPERTY(bool mediaScopePreviewLoading READ mediaScopePreviewLoading NOTIFY mediaScopePreviewLoadingChanged)
     Q_PROPERTY(QVariantMap mediaAcquisitionStatus READ mediaAcquisitionStatus NOTIFY mediaAcquisitionChanged)
     Q_PROPERTY(QVariantList mediaAcquisitionItems READ mediaAcquisitionItems NOTIFY mediaAcquisitionChanged)
     Q_PROPERTY(int mediaAcquisitionActiveCount READ mediaAcquisitionActiveCount NOTIFY mediaAcquisitionChanged)
@@ -136,6 +138,8 @@ public:
     QVariantMap mediaManagerPreferences() const;
     QVariantMap mediaAddResult() const;
     bool mediaAddLoading() const;
+    QVariantMap mediaScopePreview() const;
+    bool mediaScopePreviewLoading() const;
     QVariantMap mediaAcquisitionStatus() const;
     QVariantList mediaAcquisitionItems() const;
     int mediaAcquisitionActiveCount() const;
@@ -257,6 +261,16 @@ public:
         const QString &mediaType,
         const QVariantMap &item,
         const QVariantMap &options = QVariantMap());
+    Q_INVOKABLE void fetchFindMediaScopePreview(
+        const QString &mediaType,
+        const QVariantMap &item,
+        const QString &sourceProviderId = QString());
+    Q_INVOKABLE void addScopedMediaFromFind(
+        const QString &mediaType,
+        const QVariantMap &item,
+        const QString &sourceProviderId,
+        const QVariantMap &scope,
+        const QString &routePolicy = QString());
     Q_INVOKABLE void fetchManagerPreferences();
     Q_INVOKABLE void updateManagerPreferences(
         const QString &movieProviderId,
@@ -314,6 +328,8 @@ signals:
     void mediaManagerPreferencesChanged();
     void mediaAddResultChanged();
     void mediaAddLoadingChanged();
+    void mediaScopePreviewChanged();
+    void mediaScopePreviewLoadingChanged();
     void mediaAcquisitionChanged();
     void acquisitionReviewChanged();
     void acquisitionReviewDetailChanged();
@@ -442,6 +458,9 @@ private:
     QVariantMap m_mediaManagerPreferences;
     QVariantMap m_mediaAddResult;
     bool m_mediaAddLoading = false;
+    QVariantMap m_mediaScopePreview;
+    bool m_mediaScopePreviewLoading = false;
+    quint64 m_mediaScopePreviewRequestId = 0;
     QVariantMap m_mediaAcquisitionStatus;
     QVariantList m_mediaAcquisitionItems;
     int m_mediaAcquisitionActiveCount = 0;

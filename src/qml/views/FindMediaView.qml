@@ -383,6 +383,27 @@ Item {
         return listValue(apiClient.mediaFindResult, "source_providers", "sourceProviders")
     }
 
+    function scopedSourceOptionsForSelectedType() {
+        var providers = sourceProvidersFromResult()
+        if (providers.length === 0) {
+            providers = sourceProvidersFor(selectedType)
+        }
+        var options = []
+        var seen = {}
+        for (var i = 0; i < providers.length; ++i) {
+            var id = providerId(providers[i])
+            if (id === "" || seen[id]) {
+                continue
+            }
+            seen[id] = true
+            options.push({
+                id: id,
+                label: providerLabel(providers[i]) || id
+            })
+        }
+        return options
+    }
+
     function defaultManagerProviderId() {
         var providerId = apiClient.mediaFindResult.default_manager_provider_id
         if (providerId === undefined || providerId === null) {
@@ -463,6 +484,28 @@ Item {
             return routeValue("manager", defaultManager)
         }
         return ""
+    }
+
+    function resolvedSourceProviderForScopedAdd() {
+        var route = resolvedRouteForAdd()
+        if (routeKind(route) === "source" && sourceExists(routeProviderId(route))) {
+            return routeProviderId(route)
+        }
+        var sourceId = selectedSourcePreferenceId()
+        if (sourceId !== "" && sourceExists(sourceId)) {
+            return sourceId
+        }
+        var defaultSource = defaultSourceProviderId()
+        if (defaultSource !== "" && sourceExists(defaultSource)) {
+            return defaultSource
+        }
+        var options = scopedSourceOptionsForSelectedType()
+        return options.length > 0 ? String(options[0].id || "") : ""
+    }
+
+    function scopedOptionsVisible(item) {
+        var type = lower(item && item.type ? item.type : selectedType)
+        return type === "series" || type === "tv" || type === "anime"
     }
 
     function routeAddDisabledReason() {
@@ -849,6 +892,15 @@ Item {
             return
         }
         apiClient.addMediaToManager(selectedType, item, providerId, {})
+    }
+
+    function openScopedAddOptions(item) {
+        addStatusText = ""
+        scopedAddDialog.openFor(
+            selectedType,
+            item,
+            resolvedSourceProviderForScopedAdd(),
+            scopedSourceOptionsForSelectedType())
     }
 
     onSelectedTypeChanged: {
@@ -1444,36 +1496,61 @@ Item {
                                 wrapMode: Text.WordWrap
                             }
 
-                            Button {
-                                id: addResultButton
+                            RowLayout {
                                 Layout.alignment: Qt.AlignRight
-                                text: resultRow.addPending ? "Adding..." : (resultRow.addComplete ? "Added" : "Add")
-                                enabled: !apiClient.mediaAddLoading &&
-                                         !resultRow.addComplete &&
-                                         resultRow.routeAddReason === ""
-                                onClicked: root.addResultToSelectedRoute(modelData)
-                                background: Rectangle {
-                                    radius: Theme.radiusSmall
-                                    color: addResultButton.enabled
-                                           ? Theme.accent
-                                           : (resultRow.addComplete
-                                              ? Theme.accentSuccessSoft
-                                              : Theme.backgroundCardRaised)
-                                    border.color: addResultButton.enabled
-                                                  ? Theme.accent
-                                                  : (resultRow.addComplete
-                                                     ? Theme.accentSuccess
-                                                     : Theme.border)
+                                spacing: 6
+
+                                Button {
+                                    id: scopedOptionsButton
+                                    text: "Options"
+                                    visible: root.scopedOptionsVisible(modelData) && !resultRow.addComplete
+                                    enabled: !apiClient.mediaAddLoading
+                                    onClicked: root.openScopedAddOptions(modelData)
+                                    background: Rectangle {
+                                        radius: Theme.radiusSmall
+                                        color: scopedOptionsButton.enabled ? Theme.backgroundCardRaised : Theme.surface
+                                        border.color: scopedOptionsButton.enabled ? Theme.border : Theme.textDisabled
+                                    }
+                                    contentItem: Label {
+                                        text: scopedOptionsButton.text
+                                        color: scopedOptionsButton.enabled ? Theme.textPrimary : Theme.textDisabled
+                                        font.pixelSize: 12
+                                        font.family: Theme.fontBody
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
                                 }
-                                contentItem: Label {
-                                    text: addResultButton.text
-                                    color: addResultButton.enabled
-                                           ? "#17120A"
-                                           : (resultRow.addComplete ? Theme.textPrimary : Theme.textDisabled)
-                                    font.pixelSize: 12
-                                    font.family: Theme.fontBody
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
+
+                                Button {
+                                    id: addResultButton
+                                    text: resultRow.addPending ? "Adding..." : (resultRow.addComplete ? "Added" : "Add")
+                                    enabled: !apiClient.mediaAddLoading &&
+                                             !resultRow.addComplete &&
+                                             resultRow.routeAddReason === ""
+                                    onClicked: root.addResultToSelectedRoute(modelData)
+                                    background: Rectangle {
+                                        radius: Theme.radiusSmall
+                                        color: addResultButton.enabled
+                                               ? Theme.accent
+                                               : (resultRow.addComplete
+                                                  ? Theme.accentSuccessSoft
+                                                  : Theme.backgroundCardRaised)
+                                        border.color: addResultButton.enabled
+                                                      ? Theme.accent
+                                                      : (resultRow.addComplete
+                                                         ? Theme.accentSuccess
+                                                         : Theme.border)
+                                    }
+                                    contentItem: Label {
+                                        text: addResultButton.text
+                                        color: addResultButton.enabled
+                                               ? "#17120A"
+                                               : (resultRow.addComplete ? Theme.textPrimary : Theme.textDisabled)
+                                        font.pixelSize: 12
+                                        font.family: Theme.fontBody
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
                                 }
                             }
 
@@ -1573,6 +1650,15 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    ScopedAddDialog {
+        id: scopedAddDialog
+
+        onAcceptedScopedAdd: {
+            root.addStatusText = "Scoped request queued in Elixir acquisition."
+            apiClient.fetchMediaAcquisition()
         }
     }
 

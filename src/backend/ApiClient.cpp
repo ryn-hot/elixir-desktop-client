@@ -74,6 +74,49 @@ QString normalizeMediaType(const QString &value) {
     return "movies";
 }
 
+QString normalizeAcquisitionMediaType(const QString &value) {
+    const QString mediaType = value.trimmed().toLower();
+    if (mediaType == "movie" || mediaType == "movies") {
+        return "movie";
+    }
+    if (mediaType == "series" || mediaType == "tv") {
+        return "series";
+    }
+    if (mediaType == "anime") {
+        return "anime";
+    }
+    return "movie";
+}
+
+QJsonObject findMediaScopedIdentity(const QString &mediaType, const QVariantMap &item) {
+    QJsonObject result = QJsonObject::fromVariantMap(item);
+    const QString normalizedType = normalizeAcquisitionMediaType(mediaType);
+    result.insert("kind", normalizedType);
+
+    QString title = item.value("title", item.value("name")).toString().trimmed();
+    if (title.isEmpty()) {
+        title = result.value("title").toString(result.value("name").toString()).trimmed();
+    }
+    if (!title.isEmpty()) {
+        result.insert("title", title);
+    }
+
+    const QVariant year = item.value("year");
+    if (year.isValid() && !year.isNull() && year.toInt() > 0) {
+        result.insert("year", year.toInt());
+    }
+
+    QVariant externalIds = item.value("externalIds");
+    if (!externalIds.isValid() || externalIds.isNull()) {
+        externalIds = item.value("external_ids");
+    }
+    if (externalIds.canConvert<QVariantMap>()) {
+        result.insert("externalIds", QJsonObject::fromVariantMap(externalIds.toMap()));
+    }
+
+    return result;
+}
+
 QVariantMap normalizeFindMediaPreferencesPayload(const QVariantMap &payload) {
     const QVariantMap pref = payload.value("preferences").toMap();
     QVariantMap normalizedPref;
@@ -450,6 +493,14 @@ QVariantMap ApiClient::mediaAddResult() const {
 
 bool ApiClient::mediaAddLoading() const {
     return m_mediaAddLoading;
+}
+
+QVariantMap ApiClient::mediaScopePreview() const {
+    return m_mediaScopePreview;
+}
+
+bool ApiClient::mediaScopePreviewLoading() const {
+    return m_mediaScopePreviewLoading;
 }
 
 QVariantMap ApiClient::mediaAcquisitionStatus() const {
@@ -2987,6 +3038,156 @@ void ApiClient::addMediaToAcquisition(
                     .toString();
             const QString requestScope =
                 subscription.value("requestScope", subscription.value("request_scope", QStringLiteral("subscription")))
+                    .toString();
+            result.insert("requestMode", requestMode);
+            result.insert("requestScope", requestScope);
+            result.insert("oneShot", requestMode == QStringLiteral("one_shot"));
+
+            if (m_mediaAddResult != result) {
+                m_mediaAddResult = result;
+                emit mediaAddResultChanged();
+            }
+            if (m_mediaAddLoading) {
+                m_mediaAddLoading = false;
+                emit mediaAddLoadingChanged();
+            }
+        },
+        [this](const QString &) {
+            if (m_mediaAddLoading) {
+                m_mediaAddLoading = false;
+                emit mediaAddLoadingChanged();
+            }
+        });
+}
+
+void ApiClient::fetchFindMediaScopePreview(
+    const QString &mediaType,
+    const QVariantMap &item,
+    const QString &sourceProviderId) {
+    const QString acquisitionType = normalizeAcquisitionMediaType(mediaType);
+
+    QJsonObject body;
+    body.insert("mediaType", acquisitionType);
+    body.insert("result", findMediaScopedIdentity(acquisitionType, item));
+
+    const QString provider = sourceProviderId.trimmed();
+    if (!provider.isEmpty()) {
+        body.insert("providerId", provider);
+    }
+
+    const quint64 requestId = ++m_mediaScopePreviewRequestId;
+    m_mediaScopePreview = QVariantMap();
+    emit mediaScopePreviewChanged();
+    if (!m_mediaScopePreviewLoading) {
+        m_mediaScopePreviewLoading = true;
+        emit mediaScopePreviewLoadingChanged();
+    }
+
+    sendRequest(
+        "POST",
+        "/api/v1/find-media/scope-preview",
+        body,
+        [this, requestId](const QJsonDocument &doc) {
+            if (requestId != m_mediaScopePreviewRequestId) {
+                return;
+            }
+            if (!doc.isObject()) {
+                if (m_mediaScopePreviewLoading) {
+                    m_mediaScopePreviewLoading = false;
+                    emit mediaScopePreviewLoadingChanged();
+                }
+                emit requestFailed(
+                    "/api/v1/find-media/scope-preview",
+                    "Scope preview response was not an object.");
+                return;
+            }
+
+            const QVariantMap preview = doc.object().toVariantMap();
+            if (m_mediaScopePreview != preview) {
+                m_mediaScopePreview = preview;
+                emit mediaScopePreviewChanged();
+            }
+            if (m_mediaScopePreviewLoading) {
+                m_mediaScopePreviewLoading = false;
+                emit mediaScopePreviewLoadingChanged();
+            }
+        },
+        [this, requestId](const QString &) {
+            if (requestId != m_mediaScopePreviewRequestId) {
+                return;
+            }
+            if (m_mediaScopePreviewLoading) {
+                m_mediaScopePreviewLoading = false;
+                emit mediaScopePreviewLoadingChanged();
+            }
+        });
+}
+
+void ApiClient::addScopedMediaFromFind(
+    const QString &mediaType,
+    const QVariantMap &item,
+    const QString &sourceProviderId,
+    const QVariantMap &scope,
+    const QString &routePolicy) {
+    const QString provider = sourceProviderId.trimmed();
+    if (provider.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/find-media/scoped-add",
+            "Install or enable an acquisition source before adding scoped media.");
+        return;
+    }
+    const QString acquisitionType = normalizeAcquisitionMediaType(mediaType);
+
+    QJsonObject body;
+    body.insert("providerId", provider);
+    body.insert("mediaType", acquisitionType);
+    body.insert("result", findMediaScopedIdentity(acquisitionType, item));
+    body.insert("scope", QJsonObject::fromVariantMap(scope));
+    const QString trimmedRoutePolicy = routePolicy.trimmed();
+    if (!trimmedRoutePolicy.isEmpty()) {
+        body.insert("routePolicy", trimmedRoutePolicy);
+    }
+
+    if (!m_mediaAddLoading) {
+        m_mediaAddLoading = true;
+        emit mediaAddLoadingChanged();
+    }
+    sendRequest(
+        "POST",
+        "/api/v1/find-media/scoped-add",
+        body,
+        [this, item, acquisitionType](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                if (m_mediaAddLoading) {
+                    m_mediaAddLoading = false;
+                    emit mediaAddLoadingChanged();
+                }
+                emit requestFailed(
+                    "/api/v1/find-media/scoped-add",
+                    "Scoped add response was not an object.");
+                return;
+            }
+
+            QVariantMap result = doc.object().toVariantMap();
+            const QString subscriptionId =
+                result.value("subscriptionId", result.value("subscription_id")).toString();
+            if (!subscriptionId.isEmpty()) {
+                result.insert("intentId", subscriptionId);
+                result.insert("intent_id", subscriptionId);
+            }
+            const QString title = item.value("title", item.value("name", QStringLiteral("Media")))
+                                      .toString();
+            result.insert("title", title);
+            result.insert("mediaType", acquisitionType);
+            result.insert("managerLabel", QStringLiteral("Elixir acquisition"));
+            result.insert("manager_label", QStringLiteral("Elixir acquisition"));
+            result.insert("nativeAcquisition", true);
+            result.insert("scopedFindMedia", true);
+            const QString requestMode =
+                result.value("requestMode", result.value("request_mode", QStringLiteral("one_shot")))
+                    .toString();
+            const QString requestScope =
+                result.value("requestScope", result.value("request_scope", QStringLiteral("selected_targets")))
                     .toString();
             result.insert("requestMode", requestMode);
             result.insert("requestScope", requestScope);
