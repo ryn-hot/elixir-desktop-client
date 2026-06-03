@@ -489,7 +489,7 @@ ColumnLayout {
             var target = rows[i].target || ({})
             var coverage = rows[i].coverage || ({})
             var targetId = String(target.targetId || coverage.targetId || "")
-            var fileId = String(coverageMappings[targetId] || rows[i].releaseFileId || coverage.releaseFileId || "")
+            var fileId = String(coverageMappings[targetId] || "")
             if (targetId !== "" && (fileId === "" || fileSelections[fileId] !== true)) {
                 count += 1
             }
@@ -783,7 +783,8 @@ ColumnLayout {
             var target = rows[j].target || ({})
             var targetId = String(target.targetId || (rows[j].coverage && rows[j].coverage.targetId) || "")
             var releaseFileId = String(rows[j].releaseFileId || (rows[j].coverage && rows[j].coverage.releaseFileId) || "")
-            if (targetId !== "" && releaseFileId !== "") {
+            if (targetId !== "" && releaseFileId !== "" &&
+                    root.fileCanDefaultMapTarget(root.fileForId(releaseFileId), target)) {
                 mappings[targetId] = releaseFileId
             }
         }
@@ -845,6 +846,14 @@ ColumnLayout {
     }
 
     function setTargetMapping(targetId, fileId) {
+        if (String(fileId || "") !== "") {
+            var target = root.targetForId(targetId)
+            var file = root.fileForId(fileId)
+            if (!root.fileMatchesTarget(file, target)) {
+                reviewToast.show("That file's parsed episode does not match this target.")
+                return
+            }
+        }
         var next = {}
         for (var key in coverageMappings) next[key] = coverageMappings[key]
         if (String(fileId || "") === "") {
@@ -908,7 +917,7 @@ ColumnLayout {
         }
         if (unmappedTargetCount() > 0) {
             endReviewAction()
-            reviewToast.show("Map every target before approving this release.")
+            reviewToast.show("Map each target to a matching file before approving this release.")
             return
         }
         var route = selectedReviewRoute()
@@ -981,6 +990,90 @@ ColumnLayout {
             })
         }
         return choices
+    }
+
+    function fileForId(fileId) {
+        var id = String(fileId || "")
+        if (id === "") return ({})
+        var files = filesForDetail()
+        for (var i = 0; i < files.length; ++i) {
+            if (String(files[i].releaseFileId || "") === id) return files[i]
+        }
+        return ({})
+    }
+
+    function targetForId(targetId) {
+        var id = String(targetId || "")
+        if (id === "") return ({})
+        var rows = reviewCoverageRows()
+        for (var i = 0; i < rows.length; ++i) {
+            var target = rows[i].target || ({})
+            var coverage = rows[i].coverage || ({})
+            if (String(target.targetId || coverage.targetId || "") === id) return target
+        }
+        return ({})
+    }
+
+    function fileCanDefaultMapTarget(file, target) {
+        return root.fileHasTargetEvidence(file) && root.fileMatchesTarget(file, target)
+    }
+
+    function fileHasTargetEvidence(file) {
+        var parsed = (file && file.parsed) || ({})
+        return (parsed.seasonNumber !== undefined && parsed.seasonNumber !== null) ||
+               (parsed.episodeNumber !== undefined && parsed.episodeNumber !== null) ||
+               (parsed.absoluteEpisodeNumber !== undefined && parsed.absoluteEpisodeNumber !== null) ||
+               (parsed.airDate !== undefined && parsed.airDate !== null && String(parsed.airDate).trim() !== "")
+    }
+
+    function fileMatchesTarget(file, target) {
+        var parsed = (file && file.parsed) || ({})
+        if (!target || String(target.targetId || "") === "") return true
+
+        if (parsed.seasonNumber !== undefined && parsed.seasonNumber !== null &&
+                target.seasonNumber !== undefined && target.seasonNumber !== null &&
+                Number(parsed.seasonNumber) !== Number(target.seasonNumber) &&
+                (parsed.absoluteEpisodeNumber === undefined || parsed.absoluteEpisodeNumber === null)) {
+            return false
+        }
+
+        if (parsed.episodeNumber !== undefined && parsed.episodeNumber !== null &&
+                target.episodeNumber !== undefined && target.episodeNumber !== null) {
+            var episodeStart = Number(parsed.episodeNumber)
+            var episodeEnd = parsed.episodeEndNumber !== undefined && parsed.episodeEndNumber !== null
+                    ? Number(parsed.episodeEndNumber)
+                    : episodeStart
+            if (!root.numberInRange(Number(target.episodeNumber), episodeStart, episodeEnd)) return false
+        }
+
+        if (parsed.absoluteEpisodeNumber !== undefined && parsed.absoluteEpisodeNumber !== null) {
+            var absoluteStart = Number(parsed.absoluteEpisodeNumber)
+            var absoluteEnd = parsed.absoluteEpisodeEndNumber !== undefined && parsed.absoluteEpisodeEndNumber !== null
+                    ? Number(parsed.absoluteEpisodeEndNumber)
+                    : absoluteStart
+            var targetAbsolute = target.absoluteEpisodeNumber !== undefined && target.absoluteEpisodeNumber !== null
+                    ? Number(target.absoluteEpisodeNumber)
+                    : (target.seasonNumber === undefined || target.seasonNumber === null || Number(target.seasonNumber) === 1
+                       ? Number(target.episodeNumber)
+                       : NaN)
+            if (isFinite(targetAbsolute) && !root.numberInRange(targetAbsolute, absoluteStart, absoluteEnd)) return false
+        }
+
+        if (parsed.airDate !== undefined && parsed.airDate !== null &&
+                target.airDate !== undefined && target.airDate !== null &&
+                String(parsed.airDate).trim() !== "" &&
+                String(target.airDate).trim() !== "" &&
+                String(parsed.airDate).trim() !== String(target.airDate).trim()) {
+            return false
+        }
+
+        return true
+    }
+
+    function numberInRange(value, start, end) {
+        if (!isFinite(value) || !isFinite(start) || !isFinite(end)) return true
+        if (start <= end) return value >= start && value <= end
+        return value >= end && value <= start
     }
 
     function choiceIndexForFile(fileId) {
@@ -1085,7 +1178,7 @@ ColumnLayout {
                         text: {
                             if (!root.showQueue) {
                                 return root.detailMatchesSelection()
-                                       ? "Choose the files that belong to this media item, map every target, then approve the release or reject it."
+                                       ? "Choose the files that belong to this media item, map each target to the matching file, then approve the release or reject it."
                                        : "Loading release review."
                             }
                             var count = root.reviewRows().length
@@ -2159,7 +2252,7 @@ ColumnLayout {
                                     model: root.fileChoiceModel()
                                     textRole: "label"
                                     valueRole: "id"
-                                    currentIndex: root.choiceIndexForFile(root.coverageMappings[targetId] || modelData.releaseFileId || coverage.releaseFileId || "")
+                                    currentIndex: root.choiceIndexForFile(root.coverageMappings[targetId] || "")
                                     enabled: root.reviewStillEditable()
                                     onActivated: function(index) {
                                         var choice = root.fileChoiceModel()[index]

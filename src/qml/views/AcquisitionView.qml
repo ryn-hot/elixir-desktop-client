@@ -11,7 +11,7 @@ Item {
     property StackView stackView: null
     property string focusIntentId: ""
     property var batchExpansionByIntentId: ({})
-    property var progressPercentFloorByKey: ({})
+    property var progressRenderedPercentByKey: ({})
     property var pendingAcquisitionAction: null
 
     function acquisitionPhase(item) {
@@ -412,7 +412,16 @@ Item {
     }
 
     function rawProgressPercent(item) {
-        if (!item || item.progressPercent === undefined || item.progressPercent === null) {
+        if (!item) {
+            return null
+        }
+
+        var byteValue = byteProgressPercent(item)
+        if (byteValue !== null) {
+            return byteValue
+        }
+
+        if (item.progressPercent === undefined || item.progressPercent === null) {
             return null
         }
         var value = Number(item.progressPercent)
@@ -422,6 +431,19 @@ Item {
         return Math.max(0, Math.min(100, value))
     }
 
+    function byteProgressPercent(item) {
+        if (!item) {
+            return null
+        }
+
+        var downloaded = Number(item.downloadedBytes)
+        var size = Number(item.sizeBytes)
+        if (!isFinite(downloaded) || !isFinite(size) || size <= 0 || downloaded < 0) {
+            return null
+        }
+        return Math.max(0, Math.min(100, downloaded * 100 / size))
+    }
+
     function progressIdentity(item) {
         if (!item) {
             return ""
@@ -429,31 +451,114 @@ Item {
         var key = acquisitionItemKey(item)
         var releaseId = String(item.releaseId || "")
         var downloadId = String(item.downloadId || "")
+        var phase = acquisitionPhase(item)
+        var byteProgress = byteProgressPercent(item)
+        var source = byteProgress !== null
+                   ? ("bytes:" + String(item.sizeBytes || ""))
+                   : "reported"
         if (releaseId !== "" || downloadId !== "") {
-            return key + "|" + releaseId + "|" + downloadId
+            return key + "|" + phase + "|" + source + "|" + releaseId + "|" + downloadId
         }
-        return key + "|aggregate|" + String(item.targetCount || item.displayedChildCount || "")
+        return key + "|" + phase + "|" + source + "|aggregate|" + String(item.targetCount || item.displayedChildCount || "")
     }
 
     function displayProgressPercent(item) {
         var value = rawProgressPercent(item)
-        if (value === null) {
-            return null
-        }
-        if (!phaseShowsProgress(acquisitionPhase(item))) {
-            return value
+        return value === null ? null : Math.max(0, Math.min(100, Number(value)))
+    }
+
+    function progressValue(item) {
+        var value = displayProgressPercent(item)
+        return value === null ? 0 : Math.max(0, Math.min(100, Number(value)))
+    }
+
+    function cachedRenderedProgressPercent(key, fallback) {
+        var fallbackValue = Number(fallback)
+        fallbackValue = isFinite(fallbackValue) ? Math.max(0, Math.min(100, fallbackValue)) : 0
+        if (key === "") {
+            return fallbackValue
         }
 
-        var key = progressIdentity(item)
+        var previous = Number(progressRenderedPercentByKey[key])
+        if (!isFinite(previous)) {
+            return fallbackValue
+        }
+
+        previous = Math.max(0, Math.min(100, previous))
+        if (previous <= fallbackValue || Math.abs(previous - fallbackValue) <= 1) {
+            return previous
+        }
+        return fallbackValue
+    }
+
+    function recordRenderedProgressPercent(key, value) {
         if (key === "") {
-            return value
+            return
         }
-        var previous = Number(progressPercentFloorByKey[key])
-        if (isFinite(previous)) {
-            value = Math.max(previous, value)
+        var percent = Number(value)
+        if (!isFinite(percent)) {
+            return
         }
-        progressPercentFloorByKey[key] = value
-        return value
+        progressRenderedPercentByKey[key] = Math.max(0, Math.min(100, percent))
+    }
+
+    function progressSummary(item, displayValue) {
+        var value = Number(displayValue)
+        if (!isFinite(value)) {
+            value = progressValue(item)
+        }
+        value = Math.max(0, Math.min(100, value))
+        var parts = []
+        parts.push(value.toFixed(value > 0 && value < 10 ? 1 : 0) + "%")
+
+        var downloaded = formatBytes(item && item.downloadedBytes)
+        var size = formatBytes(item && item.sizeBytes)
+        if (downloaded !== "" && size !== "") {
+            parts.push(downloaded + " of " + size)
+        } else if (downloaded !== "") {
+            parts.push(downloaded)
+        }
+
+        return parts.join(" · ")
+    }
+
+    function progressFillColor(item) {
+        var phase = acquisitionPhase(item)
+        if (phase === "completed" || phase === "ready") {
+            return Theme.accentSuccess
+        }
+        if (phase === "needs_attention" || phase === "failed" ||
+                phase === "review_required" || phase === "quarantined") {
+            return Theme.accentDanger
+        }
+        return Theme.accent
+    }
+
+    function aggregateProgressVisible(item) {
+        if (!progressVisible(item)) {
+            return false
+        }
+        var children = acquisitionChildren(item)
+        return children.length !== 1 || !progressVisible(children[0])
+    }
+
+    function childStatusDetail(child) {
+        if (!child) {
+            return ""
+        }
+        var blockerDetail = String((child.blocker && child.blocker.detail) || "")
+        if (blockerDetail !== "") {
+            return displayText(blockerDetail, "blocker")
+        }
+        var detail = String(child.detail || "")
+        if (detail !== "") {
+            return displayText(detail, "detail")
+        }
+        var headline = String(child.headline || "")
+        if (headline !== "") {
+            return displayText(headline, "headline")
+        }
+        return ""
     }
 
     function runAcquisitionAction(action, item) {
@@ -558,6 +663,106 @@ Item {
         if (apiClient.authToken !== "") {
             apiClient.fetchMediaAcquisition(focusIntentId === "" ? 12 : 50)
             apiClient.fetchAcquisitionReleases("review_required", "", 50)
+        }
+    }
+
+    component AcquisitionProgressMeter : Item {
+        id: meter
+        property string progressKey: ""
+        property real percent: 0
+        property real initialPercent: percent
+        property string summary: ""
+        property color fillColor: Theme.accent
+        property real renderedPercent: 0
+        property bool animationReady: false
+        property bool componentReady: false
+        readonly property real boundedPercent: {
+            var value = Number(percent)
+            return isFinite(value) ? Math.max(0, Math.min(100, value)) : 0
+        }
+        readonly property real boundedRenderedPercent: {
+            var value = Number(renderedPercent)
+            return isFinite(value) ? Math.max(0, Math.min(100, value)) : 0
+        }
+        readonly property real boundedInitialPercent: {
+            var value = Number(initialPercent)
+            return isFinite(value) ? Math.max(0, Math.min(100, value)) : boundedPercent
+        }
+
+        function restoreRenderedPercent() {
+            animationReady = false
+            renderedPercent = boundedInitialPercent
+            Qt.callLater(function() {
+                animationReady = true
+                renderedPercent = boundedPercent
+            })
+        }
+
+        implicitHeight: progressColumn.implicitHeight
+
+        Component.onCompleted: {
+            componentReady = true
+            restoreRenderedPercent()
+        }
+
+        onProgressKeyChanged: {
+            if (componentReady) {
+                restoreRenderedPercent()
+            }
+        }
+
+        onBoundedPercentChanged: {
+            if (animationReady) {
+                renderedPercent = boundedPercent
+            } else {
+                renderedPercent = boundedInitialPercent
+            }
+        }
+
+        Behavior on renderedPercent {
+            enabled: meter.animationReady
+            NumberAnimation {
+                duration: 180
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        ColumnLayout {
+            id: progressColumn
+            anchors.fill: parent
+            spacing: 4
+
+            Label {
+                Layout.fillWidth: true
+                text: meter.summary
+                color: Theme.textSecondary
+                font.pixelSize: 10
+                font.family: Theme.fontBody
+                horizontalAlignment: Text.AlignRight
+                visible: text !== ""
+            }
+
+            Rectangle {
+                id: progressTrack
+                Layout.fillWidth: true
+                Layout.preferredHeight: 7
+                radius: 3
+                clip: true
+                color: Theme.panelSoft
+                border.color: Theme.border
+
+                Rectangle {
+                    x: 1
+                    y: 1
+                    width: meter.boundedRenderedPercent <= 0
+                           ? 0
+                           : Math.max(2, (progressTrack.width - 2) * meter.boundedRenderedPercent / 100)
+                    height: Math.max(0, progressTrack.height - 2)
+                    radius: 2
+                    color: meter.fillColor
+                    visible: width > 0
+                }
+            }
         }
     }
 
@@ -765,6 +970,7 @@ Item {
                         required property var modelData
                         property var acquisitionItem: modelData
                         readonly property var childItems: root.acquisitionChildren(modelData)
+                        readonly property real itemProgressPercent: root.progressValue(modelData)
                         readonly property bool showChildRows: root.showChildTargets(modelData)
                         readonly property string itemKey: root.acquisitionItemKey(modelData)
                         property bool batchExpanded: root.isBatchExpanded(modelData, childItems.length)
@@ -993,6 +1199,7 @@ Item {
 
                                         delegate: Rectangle {
                                             required property var modelData
+                                            readonly property real childProgressPercent: root.progressValue(modelData)
                                             Layout.fillWidth: true
                                             radius: Theme.radiusSmall
                                             color: Theme.backgroundCard
@@ -1053,7 +1260,7 @@ Item {
 
                                                 Label {
                                                     Layout.fillWidth: true
-                                                    text: root.displayText((modelData.blocker && modelData.blocker.detail) || "", "blocker")
+                                                    text: root.childStatusDetail(modelData)
                                                     color: Theme.textSecondary
                                                     font.pixelSize: 10
                                                     font.family: Theme.fontBody
@@ -1093,12 +1300,15 @@ Item {
                                                     }
                                                 }
 
-                                                ProgressBar {
+                                                AcquisitionProgressMeter {
                                                     Layout.fillWidth: true
-                                                    from: 0
-                                                    to: 100
-                                                    value: Number(root.displayProgressPercent(modelData) || 0)
+                                                    progressKey: root.progressIdentity(modelData)
+                                                    initialPercent: root.cachedRenderedProgressPercent(root.progressIdentity(modelData), childProgressPercent)
+                                                    percent: childProgressPercent
+                                                    summary: root.progressSummary(modelData, childProgressPercent)
+                                                    fillColor: root.progressFillColor(modelData)
                                                     visible: root.progressVisible(modelData)
+                                                    onRenderedPercentChanged: root.recordRenderedProgressPercent(root.progressIdentity(modelData), renderedPercent)
                                                 }
                                             }
                                         }
@@ -1146,12 +1356,15 @@ Item {
                                 }
                             }
 
-                            ProgressBar {
+                            AcquisitionProgressMeter {
                                 Layout.fillWidth: true
-                                from: 0
-                                to: 100
-                                value: Number(root.displayProgressPercent(modelData) || 0)
-                                visible: root.progressVisible(modelData)
+                                progressKey: root.progressIdentity(modelData)
+                                initialPercent: root.cachedRenderedProgressPercent(root.progressIdentity(modelData), acquisitionCard.itemProgressPercent)
+                                percent: acquisitionCard.itemProgressPercent
+                                summary: root.progressSummary(modelData, acquisitionCard.itemProgressPercent)
+                                fillColor: root.progressFillColor(modelData)
+                                visible: root.aggregateProgressVisible(modelData)
+                                onRenderedPercentChanged: root.recordRenderedProgressPercent(root.progressIdentity(modelData), renderedPercent)
                             }
                         }
                     }
