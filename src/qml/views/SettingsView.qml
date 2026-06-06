@@ -32,6 +32,17 @@ Item {
         return value === undefined || value === null ? [] : value
     }
 
+    function fieldValue(objectValue, snakeKey, camelKey) {
+        if (!objectValue) {
+            return ""
+        }
+        var value = objectValue[camelKey]
+        if (value === undefined && snakeKey !== "") {
+            value = objectValue[snakeKey]
+        }
+        return value === undefined || value === null ? "" : value
+    }
+
     function managerPreferenceState() {
         var value = apiClient.mediaManagerPreferences.preferences
         if (value === undefined || value === null) {
@@ -79,8 +90,19 @@ Item {
         return options
     }
 
+    function suiteRouteValue() {
+        return "suite:default"
+    }
+
+    function suiteRouteLabel() {
+        return "Elixir Extension Suite"
+    }
+
     function routeValue(kind, providerId) {
         var id = String(providerId || "")
+        if (kind === "suite") {
+            return suiteRouteValue()
+        }
         return id === "" ? "" : (kind + ":" + id)
     }
 
@@ -98,15 +120,41 @@ Item {
 
     function routeOptionsFor(type) {
         var options = [{ label: "Auto-select", value: "" }]
-        var sources = sourceProvidersFor(type)
-        for (var i = 1; i < sources.length; ++i) {
-            options.push({ label: sources[i].label, value: routeValue("source", sources[i].value) })
+        if (hasSourceSuiteFor(type)) {
+            options.push({ label: suiteRouteLabel(), value: suiteRouteValue() })
         }
         var managers = managerProvidersFor(type)
         for (var j = 1; j < managers.length; ++j) {
             options.push({ label: managers[j].label, value: routeValue("manager", managers[j].value) })
         }
         return options
+    }
+
+    function sourceOptionExists(type, providerId) {
+        var id = String(providerId || "")
+        if (id === "") {
+            return false
+        }
+        var sources = sourceProvidersFor(type)
+        for (var i = 1; i < sources.length; ++i) {
+            if (String(sources[i].value || "") === id) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function hasSourceSuiteFor(type) {
+        return sourceProvidersFor(type).length > 1
+    }
+
+    function suiteBackingSourceProviderFor(type) {
+        var source = sourcePreferenceFor(type)
+        if (sourceOptionExists(type, source)) {
+            return source
+        }
+        var sources = sourceProvidersFor(type)
+        return sources.length > 1 ? String(sources[1].value || "") : ""
     }
 
     function managerPreferenceFor(type) {
@@ -133,14 +181,55 @@ Item {
 
     function routePreferenceFor(type) {
         var source = sourcePreferenceFor(type)
-        if (source !== "") {
-            return routeValue("source", source)
+        if (sourceOptionExists(type, source)) {
+            return suiteRouteValue()
         }
         var manager = managerPreferenceFor(type)
         if (manager !== "") {
             return routeValue("manager", manager)
         }
         return ""
+    }
+
+    function sourceSuiteProviders() {
+        return listValue(apiClient.mediaManagerPreferences, "source_suite_providers", "sourceSuiteProviders")
+    }
+
+    function sourceSuiteProviderLabel(provider) {
+        var label = fieldValue(provider, "label", "label")
+        if (label !== "") {
+            return String(label)
+        }
+        var instanceName = fieldValue(provider, "instance_name", "instanceName")
+        var implementation = fieldValue(provider, "implementation", "implementation")
+        if (instanceName !== "" && implementation !== "") {
+            return String(instanceName) + " (" + String(implementation) + ")"
+        }
+        return String(instanceName || fieldValue(provider, "provider_id", "providerId") || "Provider")
+    }
+
+    function sourceSuiteMediaLabel(provider) {
+        var values = listValue(provider, "media_types", "mediaTypes")
+        if (!values || values.length === 0) {
+            return "media: unknown"
+        }
+        return "media: " + values.join(", ")
+    }
+
+    function sourceSuiteProviderHealth(provider) {
+        return String(fieldValue(provider, "health_state", "healthState") || "unknown")
+    }
+
+    function sourceSuiteProviderEnabled(provider) {
+        return fieldValue(provider, "enabled", "enabled") === true
+    }
+
+    function sourceSuiteProviderLastError(provider) {
+        return String(fieldValue(provider, "last_error", "lastError") || "")
+    }
+
+    function sourceSuiteProviderInstanceId(provider) {
+        return String(fieldValue(provider, "instance_id", "instanceId") || "")
     }
 
     function valueOrDash(value) {
@@ -517,9 +606,12 @@ Item {
                     routeKind(movieRoute) === "manager" ? routeProviderId(movieRoute) : "",
                     routeKind(seriesRoute) === "manager" ? routeProviderId(seriesRoute) : "",
                     routeKind(animeRoute) === "manager" ? routeProviderId(animeRoute) : "",
-                    routeKind(movieRoute) === "source" ? routeProviderId(movieRoute) : "",
-                    routeKind(seriesRoute) === "source" ? routeProviderId(seriesRoute) : "",
-                    routeKind(animeRoute) === "source" ? routeProviderId(animeRoute) : "")
+                    routeKind(movieRoute) === "suite" ? suiteBackingSourceProviderFor("movie")
+                        : (routeKind(movieRoute) === "source" ? routeProviderId(movieRoute) : ""),
+                    routeKind(seriesRoute) === "suite" ? suiteBackingSourceProviderFor("series")
+                        : (routeKind(seriesRoute) === "source" ? routeProviderId(seriesRoute) : ""),
+                    routeKind(animeRoute) === "suite" ? suiteBackingSourceProviderFor("anime")
+                        : (routeKind(animeRoute) === "source" ? routeProviderId(animeRoute) : ""))
     }
 
     Component.onCompleted: {
@@ -1936,6 +2028,109 @@ Item {
                     onActivated: root.saveManagerPreferences()
                 }
 
+                Label {
+                    text: "Extension Suite Providers"
+                    color: Theme.textPrimary
+                    font.pixelSize: 14
+                    font.family: Theme.fontDisplay
+                }
+
+                Label {
+                    text: root.sourceSuiteProviders().length === 0
+                          ? "No suite providers are installed or registered."
+                          : (root.sourceSuiteProviders().length + " provider" +
+                             (root.sourceSuiteProviders().length === 1 ? "" : "s") +
+                             " can feed the Elixir resolver.")
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Repeater {
+                    model: root.sourceSuiteProviders()
+
+                    delegate: Rectangle {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        radius: Theme.radiusMedium
+                        color: Theme.backgroundCardRaised
+                        border.color: root.sourceSuiteProviderEnabled(modelData)
+                                      ? (root.sourceSuiteProviderHealth(modelData) === "healthy"
+                                         ? Theme.accentSuccess
+                                         : Theme.accent)
+                                      : Theme.border
+                        implicitHeight: suiteProviderRow.implicitHeight + Theme.spacingMedium * 2
+
+                        RowLayout {
+                            id: suiteProviderRow
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: Theme.spacingMedium
+                            spacing: Theme.spacingMedium
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.sourceSuiteProviderLabel(modelData)
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 13
+                                    font.family: Theme.fontDisplay
+                                    elide: Text.ElideRight
+                                }
+
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacingSmall
+                                    PillTag { text: root.sourceSuiteProviderEnabled(modelData) ? "enabled" : "disabled" }
+                                    PillTag { text: "health: " + root.sourceSuiteProviderHealth(modelData) }
+                                    PillTag { text: root.sourceSuiteMediaLabel(modelData) }
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.sourceSuiteProviderLastError(modelData) !== ""
+                                          ? ("Last error: " + root.sourceSuiteProviderLastError(modelData))
+                                          : "Last error: none"
+                                    color: root.sourceSuiteProviderLastError(modelData) !== ""
+                                           ? Theme.textSecondary
+                                           : Theme.textMuted
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+
+                            Button {
+                                text: root.sourceSuiteProviderEnabled(modelData) ? "Disable" : "Enable"
+                                enabled: apiClient.authToken !== "" &&
+                                         root.sourceSuiteProviderInstanceId(modelData) !== ""
+                                onClicked: apiClient.setExtensionInstanceEnabled(
+                                               root.sourceSuiteProviderInstanceId(modelData),
+                                               !root.sourceSuiteProviderEnabled(modelData))
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: Theme.backgroundCard
+                                    border.color: Theme.border
+                                }
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: parent.enabled ? Theme.textPrimary : Theme.textDisabled
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Rectangle {
                     height: 1
                     color: Theme.border
@@ -1958,13 +2153,13 @@ Item {
 
                 ComboBox {
                     id: resolutionCombo
-                    model: ["480p", "720p", "1080p", "4k"]
+                    model: ["720p", "1080p", "1440p", "2160p", "unlimited"]
                     currentIndex: model.indexOf(sessionManager.playbackMaxResolution)
                     onActivated: sessionManager.playbackMaxResolution = model[index]
                 }
 
                 Label {
-                    text: "Max bitrate (bps)"
+                    text: "Max bitrate (bps, 0 unlimited)"
                     color: Theme.textSecondary
                     font.pixelSize: 12
                     font.family: Theme.fontBody

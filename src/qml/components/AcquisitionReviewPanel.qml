@@ -497,13 +497,29 @@ ColumnLayout {
         return count
     }
 
+    function mappedTargetCount() {
+        if (filesForDetail().length === 0) return 0
+        var rows = reviewCoverageRows()
+        var count = 0
+        for (var i = 0; i < rows.length; ++i) {
+            var target = rows[i].target || ({})
+            var coverage = rows[i].coverage || ({})
+            var targetId = String(target.targetId || coverage.targetId || "")
+            var fileId = String(coverageMappings[targetId] || "")
+            if (targetId !== "" && fileId !== "" && fileSelections[fileId] === true) {
+                count += 1
+            }
+        }
+        return count
+    }
+
     function approvalReady() {
         if (reviewActionInProgress) return false
         if (!reviewStillEditable()) return false
         if (!detailMatchesSelection()) return false
         if (selectedReviewRoute() === "") return false
         if (filesForDetail().length === 0) return true
-        return selectedReleaseFileIds().length > 0 && unmappedTargetCount() === 0
+        return selectedReleaseFileIds().length > 0 && mappedTargetCount() > 0
     }
 
     function approveButtonText() {
@@ -915,9 +931,9 @@ ColumnLayout {
             reviewToast.show("Select at least one file before approving this release.")
             return
         }
-        if (unmappedTargetCount() > 0) {
+        if (mappedTargetCount() === 0) {
             endReviewAction()
-            reviewToast.show("Map each target to a matching file before approving this release.")
+            reviewToast.show("Map at least one target to a selected file before approving this release.")
             return
         }
         var route = selectedReviewRoute()
@@ -2268,14 +2284,16 @@ ColumnLayout {
                         radius: Theme.radiusSmall
                         color: Theme.accentDangerSoft
                         border.color: Theme.accentDanger
-                        visible: root.reviewStillEditable() && root.unmappedTargetCount() > 0
+                        visible: root.reviewStillEditable() &&
+                                 root.filesForDetail().length > 0 &&
+                                 root.mappedTargetCount() === 0
                         implicitHeight: unmappedTargetText.implicitHeight + 16
 
                         Label {
                             id: unmappedTargetText
                             anchors.fill: parent
                             anchors.margins: 8
-                            text: root.unmappedTargetCount() + " targets still need file mappings before approval."
+                            text: "Map at least one target to a selected file before approval."
                             color: Theme.textPrimary
                             font.pixelSize: 11
                             font.family: Theme.fontBody

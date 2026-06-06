@@ -14,11 +14,25 @@ constexpr const char *kPlaybackMaxBitrateKey = "playback/maxBitrateBps";
 constexpr const char *kPlaybackSupportedContainersKey = "playback/supportedContainers";
 constexpr const char *kPlaybackSupportedVideoCodecsKey = "playback/supportedVideoCodecs";
 constexpr const char *kPlaybackSupportedAudioCodecsKey = "playback/supportedAudioCodecs";
+constexpr const char *kPlaybackProfileVersionKey = "playback/profileVersion";
+constexpr int kNativeMpvPlaybackProfileVersion = 2;
 constexpr const char *kSubtitleModeKey = "playback/subtitleMode";
 constexpr const char *kSubtitleLangKey = "playback/subtitleLang";
 constexpr const char *kSubtitleTitleKey = "playback/subtitleTitle";
 constexpr const char *kEmailKey = "session/email";
 constexpr const char *kNetworkTypeKey = "session/networkType";
+
+QStringList nativeMpvContainers() {
+    return {"mkv", "mp4", "m4v", "avi", "mov", "webm", "ts", "m2ts", "wmv"};
+}
+
+QStringList nativeMpvVideoCodecs() {
+    return {"h264", "hevc", "h265", "mpeg4", "mpeg2video", "vp9", "av1", "vc1"};
+}
+
+QStringList nativeMpvAudioCodecs() {
+    return {"aac", "ac3", "eac3", "mp3", "opus", "dts", "truehd", "flac", "vorbis"};
+}
 }
 
 SessionManager::SessionManager(QObject *parent)
@@ -31,16 +45,31 @@ SessionManager::SessionManager(QObject *parent)
       m_controlPlaneToken(m_settings.value(kControlPlaneTokenKey, "").toString()),
       m_controlPlaneExpiresAt(m_settings.value(kControlPlaneExpiresAtKey, "").toString()),
       m_selectedServerId(m_settings.value(kSelectedServerIdKey, "").toString()),
-      m_playbackMaxResolution(m_settings.value(kPlaybackMaxResolutionKey, "1080p").toString()),
-      m_playbackMaxBitrateBps(m_settings.value(kPlaybackMaxBitrateKey, 8000000).toInt()),
-      m_playbackSupportedContainers(m_settings.value(kPlaybackSupportedContainersKey, QStringList{"mkv", "mp4"}).toStringList()),
-      m_playbackSupportedVideoCodecs(m_settings.value(kPlaybackSupportedVideoCodecsKey, QStringList{"h264"}).toStringList()),
-      m_playbackSupportedAudioCodecs(m_settings.value(kPlaybackSupportedAudioCodecsKey, QStringList{"aac", "ac3"}).toStringList()),
+      m_playbackMaxResolution(m_settings.value(kPlaybackMaxResolutionKey, "unlimited").toString()),
+      m_playbackMaxBitrateBps(m_settings.value(kPlaybackMaxBitrateKey, 0).toInt()),
+      m_playbackSupportedContainers(m_settings.value(kPlaybackSupportedContainersKey, nativeMpvContainers()).toStringList()),
+      m_playbackSupportedVideoCodecs(m_settings.value(kPlaybackSupportedVideoCodecsKey, nativeMpvVideoCodecs()).toStringList()),
+      m_playbackSupportedAudioCodecs(m_settings.value(kPlaybackSupportedAudioCodecsKey, nativeMpvAudioCodecs()).toStringList()),
       m_subtitleMode(m_settings.value(kSubtitleModeKey, "default").toString()),
       m_subtitleLang(m_settings.value(kSubtitleLangKey, "").toString()),
       m_subtitleTitle(m_settings.value(kSubtitleTitleKey, "").toString()),
       m_email(m_settings.value(kEmailKey, "").toString()),
-      m_networkType(m_settings.value(kNetworkTypeKey, "auto").toString()) {}
+      m_networkType(m_settings.value(kNetworkTypeKey, "auto").toString()) {
+    const int profileVersion = m_settings.value(kPlaybackProfileVersionKey, 0).toInt();
+    if (profileVersion < kNativeMpvPlaybackProfileVersion) {
+        m_playbackMaxResolution = "unlimited";
+        m_playbackMaxBitrateBps = 0;
+        m_playbackSupportedContainers = nativeMpvContainers();
+        m_playbackSupportedVideoCodecs = nativeMpvVideoCodecs();
+        m_playbackSupportedAudioCodecs = nativeMpvAudioCodecs();
+        storeValue(kPlaybackMaxResolutionKey, m_playbackMaxResolution);
+        storeValue(kPlaybackMaxBitrateKey, m_playbackMaxBitrateBps);
+        storeValue(kPlaybackSupportedContainersKey, m_playbackSupportedContainers);
+        storeValue(kPlaybackSupportedVideoCodecsKey, m_playbackSupportedVideoCodecs);
+        storeValue(kPlaybackSupportedAudioCodecsKey, m_playbackSupportedAudioCodecs);
+        storeValue(kPlaybackProfileVersionKey, kNativeMpvPlaybackProfileVersion);
+    }
+}
 
 QString SessionManager::baseUrl() const {
     return m_baseUrl;

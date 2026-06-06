@@ -165,6 +165,7 @@ public:
     Q_INVOKABLE void fetchSeasonDetail(const QString &seasonId);
     Q_INVOKABLE void fetchEpisodes(const QString &seasonId);
     Q_INVOKABLE void startPlayback(const QString &mediaItemId, const QString &preferredFileId);
+    Q_INVOKABLE void startEpisodePlayback(const QString &mediaItemId, const QString &episodeId);
     Q_INVOKABLE void seekPlayback(const QString &sessionId, double seconds);
     Q_INVOKABLE void pollSession(const QString &sessionId);
     Q_INVOKABLE void endSession(const QString &sessionId);

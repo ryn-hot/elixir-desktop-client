@@ -96,7 +96,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         text: root.detailMode
-                              ? "Confirm that this release contains the right files, map every target, then approve or reject it."
+                              ? "Confirm that this release contains the right files, map the targets it covers, then approve or reject it."
                               : "Elixir paused these releases because it could not safely match them automatically. Open a candidate to review the files and target mappings."
                         color: Theme.textSecondary
                         font.pixelSize: 12

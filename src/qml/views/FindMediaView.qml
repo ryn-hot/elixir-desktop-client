@@ -239,8 +239,19 @@ Item {
         return String(label || "")
     }
 
+    function suiteRouteValue() {
+        return "suite:default"
+    }
+
+    function suiteRouteLabel() {
+        return "Elixir Extension Suite"
+    }
+
     function routeValue(kind, providerId) {
         var id = String(providerId || "")
+        if (kind === "suite") {
+            return suiteRouteValue()
+        }
         return id === "" ? "" : (kind + ":" + id)
     }
 
@@ -258,12 +269,8 @@ Item {
 
     function routeOptionsForSelectedType() {
         var options = [{ label: "Auto-select", value: "" }]
-        var sources = sourceProvidersFor(selectedType)
-        for (var i = 0; i < sources.length; ++i) {
-            var sourceId = providerId(sources[i])
-            if (sourceId !== "") {
-                options.push({ label: providerLabel(sources[i]), value: routeValue("source", sourceId) })
-            }
+        if (hasSourceSuiteFor(selectedType)) {
+            options.push({ label: suiteRouteLabel(), value: suiteRouteValue() })
         }
         var managers = managerProvidersFor(selectedType)
         for (var j = 0; j < managers.length; ++j) {
@@ -323,6 +330,9 @@ Item {
     function routeLabelByValue(value) {
         var kind = routeKind(value)
         var id = routeProviderId(value)
+        if (kind === "suite") {
+            return suiteRouteLabel()
+        }
         if (kind === "source") {
             return sourceLabelByProviderId(id)
         }
@@ -335,7 +345,7 @@ Item {
     function selectedRoutePreferenceValue() {
         var sourceId = selectedSourcePreferenceId()
         if (sourceId !== "" && sourceExists(sourceId)) {
-            return routeValue("source", sourceId)
+            return suiteRouteValue()
         }
         var managerId = selectedManagerPreferenceId()
         if (managerId !== "" && managerExists(managerId)) {
@@ -356,13 +366,16 @@ Item {
         var target = routeProviderId(value)
         if (selectedType === "movie") {
             movieId = kind === "manager" ? target : ""
-            movieSourceId = kind === "source" ? target : ""
+            movieSourceId = kind === "suite" ? suiteBackingSourceProviderId()
+                : (kind === "source" ? target : "")
         } else if (selectedType === "series") {
             seriesId = kind === "manager" ? target : ""
-            seriesSourceId = kind === "source" ? target : ""
+            seriesSourceId = kind === "suite" ? suiteBackingSourceProviderId()
+                : (kind === "source" ? target : "")
         } else {
             animeId = kind === "manager" ? target : ""
-            animeSourceId = kind === "source" ? target : ""
+            animeSourceId = kind === "suite" ? suiteBackingSourceProviderId()
+                : (kind === "source" ? target : "")
         }
         apiClient.updateManagerPreferences(movieId, seriesId, animeId, movieSourceId, seriesSourceId, animeSourceId)
     }
@@ -420,6 +433,29 @@ Item {
         return String(providerId || "")
     }
 
+    function hasSourceSuiteFor(type) {
+        var providers = sourceProvidersFor(type)
+        for (var i = 0; i < providers.length; ++i) {
+            if (providerId(providers[i]) !== "") {
+                return true
+            }
+        }
+        return false
+    }
+
+    function suiteBackingSourceProviderId() {
+        var sourceId = selectedSourcePreferenceId()
+        if (sourceId !== "" && sourceExists(sourceId)) {
+            return sourceId
+        }
+        var defaultSource = defaultSourceProviderId()
+        if (defaultSource !== "" && sourceExists(defaultSource)) {
+            return defaultSource
+        }
+        var options = scopedSourceOptionsForSelectedType()
+        return options.length > 0 ? String(options[0].id || "") : ""
+    }
+
     function managerExists(providerId) {
         var id = String(providerId || "")
         if (id === "") {
@@ -461,6 +497,9 @@ Item {
     function routeExists(value) {
         var kind = routeKind(value)
         var id = routeProviderId(value)
+        if (kind === "suite") {
+            return hasSourceSuiteFor(selectedType) && suiteBackingSourceProviderId() !== ""
+        }
         if (kind === "source") {
             return sourceExists(id)
         }
@@ -475,9 +514,8 @@ Item {
         if (selected !== "" && routeExists(selected)) {
             return selected
         }
-        var defaultSource = defaultSourceProviderId()
-        if (defaultSource !== "" && sourceExists(defaultSource)) {
-            return routeValue("source", defaultSource)
+        if (hasSourceSuiteFor(selectedType) && suiteBackingSourceProviderId() !== "") {
+            return suiteRouteValue()
         }
         var defaultManager = defaultManagerProviderId()
         if (defaultManager !== "" && managerExists(defaultManager)) {
@@ -488,6 +526,9 @@ Item {
 
     function resolvedSourceProviderForScopedAdd() {
         var route = resolvedRouteForAdd()
+        if (routeKind(route) === "suite") {
+            return suiteBackingSourceProviderId()
+        }
         if (routeKind(route) === "source" && sourceExists(routeProviderId(route))) {
             return routeProviderId(route)
         }
@@ -509,7 +550,7 @@ Item {
     }
 
     function routeAddDisabledReason() {
-        if (sourceProvidersFromResult().length === 0 && managerProvidersFromResult().length === 0) {
+        if (!hasSourceSuiteFor(selectedType) && managerProvidersFor(selectedType).length === 0) {
             return "No healthy route is available for this media type."
         }
         if (resolvedRouteForAdd() === "") {
@@ -887,8 +928,22 @@ Item {
             var options = {}
             if (providerId !== "") {
                 options.sourceProviderId = providerId
+                options.sourceSelectionRoute = route
             }
             apiClient.addMediaToAcquisition(selectedType, item, options)
+            return
+        }
+        if (kind === "suite") {
+            var suiteOptions = {
+                sourceSelectionRoute: suiteRouteValue(),
+                sourceSelectionMode: "suite",
+                sourceSuiteId: "default"
+            }
+            var backingProviderId = suiteBackingSourceProviderId()
+            if (backingProviderId !== "") {
+                suiteOptions.sourceProviderId = backingProviderId
+            }
+            apiClient.addMediaToAcquisition(selectedType, item, suiteOptions)
             return
         }
         apiClient.addMediaToManager(selectedType, item, providerId, {})

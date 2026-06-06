@@ -140,6 +140,8 @@ int main(int argc, char *argv[]) {
 
     auto syncClientCapabilities = [&]() {
         QVariantMap caps;
+        caps.insert("client_kind", "native_mpv");
+        caps.insert("direct_play_preferred", true);
         caps.insert("max_resolution", sessionManager.playbackMaxResolution());
         caps.insert("max_bitrate_bps", sessionManager.playbackMaxBitrateBps());
         caps.insert("supported_containers", sessionManager.playbackSupportedContainers());

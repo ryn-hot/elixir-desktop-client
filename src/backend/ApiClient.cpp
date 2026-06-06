@@ -207,6 +207,11 @@ QVariantMap normalizeFindMediaPreferencesPayload(const QVariantMap &payload) {
             payload.value(
                 "anime_source_candidates",
                 payload.value("animeSourceProviders", payload.value("anime_source_providers")))));
+    normalized.insert(
+        "sourceSuiteProviders",
+        payload.value(
+            "sourceSuiteProviders",
+            payload.value("source_suite_providers")));
     return normalized;
 }
 
@@ -826,6 +831,29 @@ void ApiClient::startPlayback(const QString &mediaItemId, const QString &preferr
                 });
 }
 
+void ApiClient::startEpisodePlayback(const QString &mediaItemId, const QString &episodeId) {
+    QJsonObject body{{"media_item_id", mediaItemId}};
+    if (!episodeId.trimmed().isEmpty()) {
+        body.insert("preferred_episode_id", episodeId);
+    } else {
+        body.insert("preferred_episode_id", QJsonValue::Null);
+    }
+    if (!m_networkType.isEmpty() && m_networkType != "auto") {
+        body.insert("network_type", m_networkType);
+    }
+    if (!m_clientCapabilities.isEmpty()) {
+        body.insert("client_capabilities", QJsonObject::fromVariantMap(m_clientCapabilities));
+    }
+    sendRequest("POST", "/api/v1/play", body,
+                [this](const QJsonDocument &doc) {
+                    if (!doc.isObject()) {
+                        emit requestFailed("/api/v1/play", "Playback response was not an object.");
+                        return;
+                    }
+                    emit playbackStarted(doc.object().toVariantMap());
+                });
+}
+
 void ApiClient::seekPlayback(const QString &sessionId, double seconds) {
     QJsonObject body{{"position_seconds", seconds}};
     sendRequest("POST", QString("/api/v1/sessions/%1/seek").arg(sessionId), body,
@@ -1182,6 +1210,7 @@ void ApiClient::setExtensionInstanceEnabled(const QString &instanceId, bool enab
                 return;
             }
             fetchExtensionInstances();
+            fetchManagerPreferences();
         });
 }
 
@@ -2553,6 +2582,10 @@ void ApiClient::fetchAcquisitionRelease(const QString &releaseId) {
         emit requestFailed("/api/v1/acquisition/releases/:id", "Release id is required.");
         return;
     }
+    if (!m_acquisitionReviewDetail.isEmpty()) {
+        m_acquisitionReviewDetail = QVariantMap();
+        emit acquisitionReviewDetailChanged();
+    }
     setAcquisitionReviewLoading(true);
     sendRequest(
         "GET",
@@ -2959,6 +2992,21 @@ void ApiClient::addMediaToAcquisition(
     const QString sourceProviderId = options.value("sourceProviderId").toString().trimmed();
     if (!sourceProviderId.isEmpty()) {
         body.insert("sourceProviderId", sourceProviderId);
+    }
+
+    const QString sourceSelectionRoute = options.value("sourceSelectionRoute").toString().trimmed();
+    if (!sourceSelectionRoute.isEmpty()) {
+        body.insert("sourceSelectionRoute", sourceSelectionRoute);
+    }
+
+    const QString sourceSelectionMode = options.value("sourceSelectionMode").toString().trimmed();
+    if (!sourceSelectionMode.isEmpty()) {
+        body.insert("sourceSelectionMode", sourceSelectionMode);
+    }
+
+    const QString sourceSuiteId = options.value("sourceSuiteId").toString().trimmed();
+    if (!sourceSuiteId.isEmpty()) {
+        body.insert("sourceSuiteId", sourceSuiteId);
     }
 
     if (options.contains("routePolicy")) {

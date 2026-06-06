@@ -1733,7 +1733,7 @@ Item {
                         busy: root.episodeActionBusyId === modelData.id
                               || root.acquisitionBusyKey === root.targetKeyForEpisode(modelData)
                               || root.targetKeyPending(modelData)
-                        onPlayRequested: apiClient.startPlayback(mediaId, modelData.id)
+                        onPlayRequested: apiClient.startEpisodePlayback(mediaId, modelData.id)
                         onDeleteRequested: root.openEpisodeDeleteDialog(modelData)
                         onRestoreRequested: {
                             episodeActionBusyId = modelData.id
