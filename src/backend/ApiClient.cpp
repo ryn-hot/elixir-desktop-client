@@ -162,6 +162,11 @@ QVariantMap normalizeFindMediaPreferencesPayload(const QVariantMap &payload) {
             pref.value(
                 "anime_default_source_provider_id",
                 pref.value("animeSourceProviderId", pref.value("anime_source_provider_id")))));
+    normalizedPref.insert(
+        "languagePreference",
+        pref.value(
+            "languagePreference",
+            pref.value("language_preference", QVariantMap())));
 
     QVariantMap normalized;
     normalized.insert("preferences", normalizedPref);
@@ -3284,7 +3289,8 @@ void ApiClient::updateManagerPreferences(
     const QString &animeProviderId,
     const QString &movieSourceProviderId,
     const QString &seriesSourceProviderId,
-    const QString &animeSourceProviderId) {
+    const QString &animeSourceProviderId,
+    const QVariantMap &languagePreference) {
     QJsonObject body;
     const QString movie = movieProviderId.trimmed();
     const QString series = seriesProviderId.trimmed();
@@ -3310,6 +3316,9 @@ void ApiClient::updateManagerPreferences(
     body.insert(
         "animeDefaultSourceProviderId",
         animeSource.isEmpty() ? QJsonValue::Null : QJsonValue(animeSource));
+    if (!languagePreference.isEmpty()) {
+        body.insert("languagePreference", QJsonObject::fromVariantMap(languagePreference));
+    }
 
     sendRequest(
         "PATCH",

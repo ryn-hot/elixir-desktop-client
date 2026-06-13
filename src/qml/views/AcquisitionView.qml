@@ -12,7 +12,30 @@ Item {
     property string focusIntentId: ""
     property var batchExpansionByIntentId: ({})
     property var progressRenderedPercentByKey: ({})
+    property var diagnosticsExpansionByKey: ({})
     property var pendingAcquisitionAction: null
+
+    function fieldValue(objectValue, snakeKey, camelKey) {
+        if (!objectValue) {
+            return ""
+        }
+        var value = objectValue[camelKey]
+        if (value === undefined && snakeKey !== "") {
+            value = objectValue[snakeKey]
+        }
+        return value === undefined || value === null ? "" : value
+    }
+
+    function listValue(objectValue, snakeKey, camelKey) {
+        if (!objectValue) {
+            return []
+        }
+        var value = objectValue[camelKey]
+        if (value === undefined && snakeKey !== "") {
+            value = objectValue[snakeKey]
+        }
+        return value === undefined || value === null ? [] : value
+    }
 
     function acquisitionPhase(item) {
         return String((item && (item.phase || item.stage)) || "")
@@ -28,6 +51,9 @@ Item {
         text = text.split("Real Debrid API token is not configured").join("Add debrid account")
         if (text === "Direct HTTPS debrid") {
             return "Direct HTTPS debrid download"
+        }
+        if (text === "acquisition.http_stream.default") {
+            return "Direct HTTP stream download"
         }
         return text
     }
@@ -335,21 +361,132 @@ Item {
         return Number(value).toFixed(Number(value) >= 10 ? 1 : 2) + "x"
     }
 
+    function routeLogicalId(item) {
+        return String(fieldValue(item, "route_logical_id", "routeLogicalId") || "")
+    }
+
+    function isHttpStreamRoute(item) {
+        return routeLogicalId(item) === "acquisition.http_stream.default"
+    }
+
+    function sourceSuiteForItem(item) {
+        var suite = fieldValue(item, "source_suite", "sourceSuite")
+        return suite === "" ? null : suite
+    }
+
+    function sourceSuiteLabel(suite) {
+        return String(fieldValue(suite, "label", "label") || "Elixir Extension Suite")
+    }
+
+    function sourceSuitePrimaryLabel(suite) {
+        return String(fieldValue(suite, "primary_provider_label", "primaryProviderLabel") ||
+                      fieldValue(suite, "primary_extension_name", "primaryExtensionName") ||
+                      fieldValue(suite, "primary_implementation", "primaryImplementation") ||
+                      "")
+    }
+
+    function sourceSuiteImplementationLabel(suite) {
+        return String(fieldValue(suite, "primary_implementation", "primaryImplementation") || "")
+    }
+
+    function routeDisplayLabel(item) {
+        if (isHttpStreamRoute(item)) {
+            return "Direct HTTP stream download"
+        }
+        var routeProvider = String(fieldValue(item, "route_provider_label", "routeProviderLabel") || "")
+        if (routeProvider.trim() !== "") {
+            return routeProvider
+        }
+        var downloader = String(fieldValue(item, "downloader_label", "downloaderLabel") || "")
+        if (downloader.trim() !== "") {
+            return displayText(downloader, "Route")
+        }
+        return displayText(routeLogicalId(item), "Route")
+    }
+
+    function sourceSuiteDiagnosticsKey(item) {
+        return String(fieldValue(item, "id", "id") ||
+                      fieldValue(item, "release_id", "releaseId") ||
+                      fieldValue(item, "download_id", "downloadId") ||
+                      acquisitionItemKey(item))
+    }
+
+    function sourceSuiteDiagnosticsExpanded(item) {
+        var key = sourceSuiteDiagnosticsKey(item)
+        return key !== "" && diagnosticsExpansionByKey[key] === true
+    }
+
+    function setSourceSuiteDiagnosticsExpanded(item, expanded) {
+        var key = sourceSuiteDiagnosticsKey(item)
+        if (key === "") {
+            return
+        }
+        var next = {}
+        var current = diagnosticsExpansionByKey || {}
+        for (var existingKey in current) {
+            next[existingKey] = current[existingKey]
+        }
+        next[key] = expanded
+        diagnosticsExpansionByKey = next
+    }
+
+    function sourceSuiteDiagnosticsLines(item) {
+        var suite = sourceSuiteForItem(item)
+        if (!suite) {
+            return []
+        }
+        var lines = []
+        lines.push("Suite: " + sourceSuiteLabel(suite))
+        var provider = sourceSuitePrimaryLabel(suite)
+        if (provider !== "") {
+            lines.push("Primary provider: " + provider)
+        }
+        var implementation = sourceSuiteImplementationLabel(suite)
+        if (implementation !== "") {
+            lines.push("Implementation: " + implementation)
+        }
+        var route = routeDisplayLabel(item)
+        if (route !== "") {
+            lines.push("Route: " + route)
+        }
+        var contributors = listValue(suite, "contributors", "contributors")
+        if (contributors.length > 0) {
+            for (var i = 0; i < contributors.length; ++i) {
+                var contributor = contributors[i]
+                var label = String(fieldValue(contributor, "provider_label", "providerLabel") ||
+                                   fieldValue(contributor, "extension_name", "extensionName") ||
+                                   fieldValue(contributor, "implementation", "implementation") ||
+                                   "Provider")
+                var suffix = fieldValue(contributor, "primary", "primary") === true ? "primary" : "contributor"
+                lines.push(label + " (" + suffix + ")")
+                var warnings = listValue(contributor, "warnings", "warnings")
+                for (var j = 0; j < warnings.length; ++j) {
+                    lines.push("Warning: " + String(warnings[j]))
+                }
+            }
+        }
+        return lines
+    }
+
     function transferMetricParts(item) {
         var parts = []
         if (!item) {
             return parts
         }
-        if (item.sourceProviderLabel !== undefined && item.sourceProviderLabel !== null
-                && String(item.sourceProviderLabel).trim() !== "") {
+        var suite = sourceSuiteForItem(item)
+        if (suite) {
+            parts.push({ label: "Source", value: sourceSuiteLabel(suite), tone: "neutral" })
+            var primaryProvider = sourceSuitePrimaryLabel(suite)
+            if (primaryProvider !== "") {
+                parts.push({ label: "Provider", value: primaryProvider, tone: "neutral" })
+            }
+        } else if (item.sourceProviderLabel !== undefined && item.sourceProviderLabel !== null
+                   && String(item.sourceProviderLabel).trim() !== "") {
             parts.push({ label: "Source", value: String(item.sourceProviderLabel), tone: "neutral" })
         }
-        if (item.routeProviderLabel !== undefined && item.routeProviderLabel !== null
-                && String(item.routeProviderLabel).trim() !== "") {
-            parts.push({ label: "Route", value: String(item.routeProviderLabel), tone: "neutral" })
-        } else if (item.downloaderLabel !== undefined && item.downloaderLabel !== null
-                   && String(item.downloaderLabel).trim() !== "") {
-            parts.push({ label: "Route", value: String(item.downloaderLabel), tone: "neutral" })
+        var routeLabel = routeDisplayLabel(item)
+        if (routeLabel !== "") {
+            parts.push({ label: "Route", value: routeLabel, tone: isHttpStreamRoute(item) ? "success" : "neutral" })
         }
         var size = formatBytes(item.sizeBytes)
         if (size !== "") {
@@ -1295,6 +1432,72 @@ Item {
                                                                 color: Theme.textSecondary
                                                                 font.pixelSize: 10
                                                                 font.family: Theme.fontBody
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 5
+                                                    visible: root.sourceSuiteForItem(modelData) !== null
+
+                                                    Item {
+                                                        Layout.fillWidth: true
+                                                        Layout.preferredHeight: 1
+                                                    }
+
+                                                    Button {
+                                                        id: diagnosticsToggleButton
+                                                        text: root.sourceSuiteDiagnosticsExpanded(modelData)
+                                                              ? "Hide diagnostics"
+                                                              : "Diagnostics"
+                                                        onClicked: root.setSourceSuiteDiagnosticsExpanded(
+                                                                       modelData,
+                                                                       !root.sourceSuiteDiagnosticsExpanded(modelData))
+                                                        background: Rectangle {
+                                                            radius: Theme.radiusSmall
+                                                            color: Theme.backgroundCardRaised
+                                                            border.color: Theme.border
+                                                        }
+                                                        contentItem: Label {
+                                                            text: diagnosticsToggleButton.text
+                                                            color: Theme.textSecondary
+                                                            font.pixelSize: 10
+                                                            font.family: Theme.fontBody
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            verticalAlignment: Text.AlignVCenter
+                                                        }
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    Layout.fillWidth: true
+                                                    radius: Theme.radiusSmall
+                                                    color: Theme.backgroundCardRaised
+                                                    border.color: Theme.border
+                                                    visible: root.sourceSuiteDiagnosticsExpanded(modelData)
+                                                    implicitHeight: diagnosticsColumn.implicitHeight + 8
+
+                                                    ColumnLayout {
+                                                        id: diagnosticsColumn
+                                                        anchors.left: parent.left
+                                                        anchors.right: parent.right
+                                                        anchors.top: parent.top
+                                                        anchors.margins: 4
+                                                        spacing: 3
+
+                                                        Repeater {
+                                                            model: root.sourceSuiteDiagnosticsLines(modelData)
+
+                                                            delegate: Label {
+                                                                required property var modelData
+                                                                Layout.fillWidth: true
+                                                                text: String(modelData)
+                                                                color: Theme.textMuted
+                                                                font.pixelSize: 10
+                                                                font.family: Theme.fontBody
+                                                                wrapMode: Text.WordWrap
                                                             }
                                                         }
                                                     }

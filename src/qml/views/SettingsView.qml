@@ -191,8 +191,137 @@ Item {
         return ""
     }
 
+    function languagePreferenceState() {
+        var pref = managerPreferenceState()
+        var value = pref.languagePreference || pref.language_preference || ({})
+        return value || {}
+    }
+
+    function languagePreferenceMode() {
+        return String(languagePreferenceState().mode || "off")
+    }
+
+    function languagePreferenceModeIndex() {
+        var mode = languagePreferenceMode()
+        if (mode === "prefer") {
+            return 1
+        }
+        if (mode === "require_review") {
+            return 2
+        }
+        return 0
+    }
+
+    function languagePreferenceRule(kind) {
+        var pref = languagePreferenceState()
+        var value = pref[kind] || ({})
+        return value || {}
+    }
+
+    function languageRuleHasAudio(kind, language, defaultValue) {
+        var values = languagePreferenceRule(kind).audio || []
+        if (!values || values.length === 0) {
+            return defaultValue
+        }
+        var needle = String(language || "").toLowerCase()
+        for (var i = 0; i < values.length; ++i) {
+            if (String(values[i] || "").toLowerCase() === needle) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function languageRuleHasProfile(kind, profile, defaultValue) {
+        var values = languagePreferenceRule(kind).profiles || []
+        if (!values || values.length === 0) {
+            return defaultValue
+        }
+        var needle = String(profile || "").toLowerCase()
+        for (var i = 0; i < values.length; ++i) {
+            if (String(values[i] || "").toLowerCase() === needle) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function languagePreferenceForSave() {
+        var modeValues = ["off", "prefer", "require_review"]
+        var mode = modeValues[Math.max(0, Math.min(languageModeCombo.currentIndex, modeValues.length - 1))]
+        var movieAudio = movieEnglishAudioCheck.checked ? ["en"] : []
+        var tvAudio = seriesEnglishAudioCheck.checked ? ["en"] : []
+        var animeProfiles = []
+        if (animeJaEnSubsCheck.checked) {
+            animeProfiles.push("ja_audio_en_subs")
+        }
+        if (animeDualAudioCheck.checked) {
+            animeProfiles.push("dual_audio")
+        }
+        if (animeEnglishAudioCheck.checked) {
+            animeProfiles.push("en_audio")
+        }
+        return {
+            mode: mode,
+            movie: { audio: movieAudio },
+            tv: { audio: tvAudio },
+            anime: { profiles: animeProfiles },
+            unknownLanguage: mode === "require_review" ? "require_review" : "allow_lower_priority"
+        }
+    }
+
     function sourceSuiteProviders() {
         return listValue(apiClient.mediaManagerPreferences, "source_suite_providers", "sourceSuiteProviders")
+    }
+
+    function sourceSuiteProviderCapability(provider) {
+        return String(fieldValue(provider, "capability", "capability") || "")
+    }
+
+    function sourceSuiteProviderLane(provider) {
+        return sourceSuiteProviderCapability(provider) === "acquisition.stream_candidate_provider"
+               ? "stream"
+               : "release"
+    }
+
+    function sourceSuiteProviderLaneLabel(provider) {
+        return sourceSuiteProviderLane(provider) === "stream" ? "stream source" : "release source"
+    }
+
+    function sourceSuiteProviderSummaryText() {
+        var providers = sourceSuiteProviders()
+        if (providers.length === 0) {
+            return "No suite providers are installed or registered."
+        }
+        var releaseCount = 0
+        var streamCount = 0
+        var moduleCount = 0
+        var healthyModules = 0
+        var enabledModules = 0
+        for (var i = 0; i < providers.length; ++i) {
+            if (sourceSuiteProviderLane(providers[i]) === "stream") {
+                streamCount += 1
+            } else {
+                releaseCount += 1
+            }
+            var modules = sourceSuiteProviderModules(providers[i])
+            moduleCount += modules.length
+            for (var j = 0; j < modules.length; ++j) {
+                if (fieldValue(modules[j], "enabled", "enabled") === true) {
+                    enabledModules += 1
+                }
+                if (String(fieldValue(modules[j], "health_state", "healthState") || "") === "healthy") {
+                    healthyModules += 1
+                }
+            }
+        }
+        var parts = []
+        parts.push(releaseCount + " release " + (releaseCount === 1 ? "provider" : "providers"))
+        parts.push(streamCount + " stream " + (streamCount === 1 ? "provider" : "providers"))
+        if (moduleCount > 0) {
+            parts.push(healthyModules + " healthy / " + enabledModules + " enabled source modules")
+        }
+        return parts.join(" | ")
     }
 
     function sourceSuiteProviderLabel(provider) {
@@ -226,6 +355,86 @@ Item {
 
     function sourceSuiteProviderLastError(provider) {
         return String(fieldValue(provider, "last_error", "lastError") || "")
+    }
+
+    function sourceSuiteProviderModules(provider) {
+        return listValue(provider, "source_modules", "sourceModules")
+    }
+
+    function sourceSuiteProviderModuleSummary(provider) {
+        var modules = sourceSuiteProviderModules(provider)
+        if (!modules || modules.length === 0) {
+            return ""
+        }
+        var enabled = 0
+        var healthy = 0
+        for (var i = 0; i < modules.length; i++) {
+            if (fieldValue(modules[i], "enabled", "enabled") === true) {
+                enabled += 1
+            }
+            if (String(fieldValue(modules[i], "health_state", "healthState") || "") === "healthy") {
+                healthy += 1
+            }
+        }
+        return "modules: " + healthy + " healthy / " + enabled + " enabled"
+    }
+
+    function sourceSuiteProviderModuleDetail(provider) {
+        var modules = sourceSuiteProviderModules(provider)
+        if (!modules || modules.length === 0) {
+            return ""
+        }
+        var labels = []
+        for (var i = 0; i < modules.length && i < 4; i++) {
+            var module = modules[i]
+            var name = String(fieldValue(module, "name", "name") ||
+                              fieldValue(module, "id", "id") || "Source")
+            var health = String(fieldValue(module, "health_state", "healthState") || "unknown")
+            labels.push(name + " (" + health + ")")
+        }
+        if (modules.length > labels.length) {
+            labels.push("+" + (modules.length - labels.length))
+        }
+        return "Modules: " + labels.join(", ")
+    }
+
+    function sourceSuiteModuleLabel(module) {
+        return String(fieldValue(module, "name", "name") ||
+                      fieldValue(module, "id", "id") ||
+                      "Source module")
+    }
+
+    function sourceSuiteModuleTypeLabel(module) {
+        var value = String(fieldValue(module, "module_type", "moduleType") || "")
+        return value === "" ? "source" : value.replace(/_/g, " ")
+    }
+
+    function sourceSuiteModuleHealth(module) {
+        return String(fieldValue(module, "health_state", "healthState") || "unknown")
+    }
+
+    function sourceSuiteModuleEnabled(module) {
+        return fieldValue(module, "enabled", "enabled") === true
+    }
+
+    function sourceSuiteModuleLastError(module) {
+        return String(fieldValue(module, "last_error", "lastError") ||
+                      fieldValue(module, "unsupported_reason", "unsupportedReason") ||
+                      "")
+    }
+
+    function sourceSuiteModuleBorderColor(module) {
+        var health = sourceSuiteModuleHealth(module)
+        if (!sourceSuiteModuleEnabled(module)) {
+            return Theme.border
+        }
+        if (health === "healthy") {
+            return Theme.accentSuccess
+        }
+        if (health === "missing_account" || health === "unsupported" || health === "unhealthy") {
+            return Theme.accent
+        }
+        return Theme.border
     }
 
     function sourceSuiteProviderInstanceId(provider) {
@@ -611,7 +820,8 @@ Item {
                     routeKind(seriesRoute) === "suite" ? suiteBackingSourceProviderFor("series")
                         : (routeKind(seriesRoute) === "source" ? routeProviderId(seriesRoute) : ""),
                     routeKind(animeRoute) === "suite" ? suiteBackingSourceProviderFor("anime")
-                        : (routeKind(animeRoute) === "source" ? routeProviderId(animeRoute) : ""))
+                        : (routeKind(animeRoute) === "source" ? routeProviderId(animeRoute) : ""),
+                    root.languagePreferenceForSave())
     }
 
     Component.onCompleted: {
@@ -2028,19 +2238,96 @@ Item {
                     onActivated: root.saveManagerPreferences()
                 }
 
+                Rectangle {
+                    height: 1
+                    color: Theme.border
+                    Layout.fillWidth: true
+                }
+
                 Label {
-                    text: "Extension Suite Providers"
+                    text: "Language preference"
+                    color: Theme.textPrimary
+                    font.pixelSize: 14
+                    font.family: Theme.fontDisplay
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: Theme.spacingLarge
+                    rowSpacing: Theme.spacingSmall
+
+                    Label {
+                        text: "Mode"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    ComboBox {
+                        id: languageModeCombo
+                        Layout.fillWidth: true
+                        model: [
+                            { label: "Off", value: "off" },
+                            { label: "Prefer", value: "prefer" },
+                            { label: "Require review", value: "require_review" }
+                        ]
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.languagePreferenceModeIndex()
+                        onActivated: root.saveManagerPreferences()
+                    }
+
+                    CheckBox {
+                        id: movieEnglishAudioCheck
+                        text: "Movie English audio"
+                        checked: root.languageRuleHasAudio("movie", "en", true)
+                        onToggled: root.saveManagerPreferences()
+                        Layout.columnSpan: 2
+                    }
+
+                    CheckBox {
+                        id: seriesEnglishAudioCheck
+                        text: "Series English audio"
+                        checked: root.languageRuleHasAudio("tv", "en", true)
+                        onToggled: root.saveManagerPreferences()
+                        Layout.columnSpan: 2
+                    }
+
+                    CheckBox {
+                        id: animeJaEnSubsCheck
+                        text: "Anime Japanese audio with English subtitles"
+                        checked: root.languageRuleHasProfile("anime", "ja_audio_en_subs", true)
+                        onToggled: root.saveManagerPreferences()
+                        Layout.columnSpan: 2
+                    }
+
+                    CheckBox {
+                        id: animeDualAudioCheck
+                        text: "Anime dual audio"
+                        checked: root.languageRuleHasProfile("anime", "dual_audio", true)
+                        onToggled: root.saveManagerPreferences()
+                        Layout.columnSpan: 2
+                    }
+
+                    CheckBox {
+                        id: animeEnglishAudioCheck
+                        text: "Anime English dub"
+                        checked: root.languageRuleHasProfile("anime", "en_audio", false)
+                        onToggled: root.saveManagerPreferences()
+                        Layout.columnSpan: 2
+                    }
+                }
+
+                Label {
+                    text: "Elixir Extension Suite"
                     color: Theme.textPrimary
                     font.pixelSize: 14
                     font.family: Theme.fontDisplay
                 }
 
                 Label {
-                    text: root.sourceSuiteProviders().length === 0
-                          ? "No suite providers are installed or registered."
-                          : (root.sourceSuiteProviders().length + " provider" +
-                             (root.sourceSuiteProviders().length === 1 ? "" : "s") +
-                             " can feed the Elixir resolver.")
+                    text: root.sourceSuiteProviderSummaryText()
                     color: Theme.textMuted
                     font.pixelSize: 11
                     font.family: Theme.fontBody
@@ -2052,12 +2339,14 @@ Item {
                     model: root.sourceSuiteProviders()
 
                     delegate: Rectangle {
+                        id: suiteProviderCard
                         required property var modelData
+                        readonly property var providerData: modelData
                         Layout.fillWidth: true
                         radius: Theme.radiusMedium
                         color: Theme.backgroundCardRaised
-                        border.color: root.sourceSuiteProviderEnabled(modelData)
-                                      ? (root.sourceSuiteProviderHealth(modelData) === "healthy"
+                        border.color: root.sourceSuiteProviderEnabled(providerData)
+                                      ? (root.sourceSuiteProviderHealth(providerData) === "healthy"
                                          ? Theme.accentSuccess
                                          : Theme.accent)
                                       : Theme.border
@@ -2077,7 +2366,7 @@ Item {
 
                                 Label {
                                     Layout.fillWidth: true
-                                    text: root.sourceSuiteProviderLabel(modelData)
+                                    text: root.sourceSuiteProviderLabel(suiteProviderCard.providerData)
                                     color: Theme.textPrimary
                                     font.pixelSize: 13
                                     font.family: Theme.fontDisplay
@@ -2087,19 +2376,102 @@ Item {
                                 Flow {
                                     Layout.fillWidth: true
                                     spacing: Theme.spacingSmall
-                                    PillTag { text: root.sourceSuiteProviderEnabled(modelData) ? "enabled" : "disabled" }
-                                    PillTag { text: "health: " + root.sourceSuiteProviderHealth(modelData) }
-                                    PillTag { text: root.sourceSuiteMediaLabel(modelData) }
+                                    PillTag { text: root.sourceSuiteProviderLaneLabel(suiteProviderCard.providerData) }
+                                    PillTag { text: root.sourceSuiteProviderEnabled(suiteProviderCard.providerData) ? "enabled" : "disabled" }
+                                    PillTag { text: "health: " + root.sourceSuiteProviderHealth(suiteProviderCard.providerData) }
+                                    PillTag { text: root.sourceSuiteMediaLabel(suiteProviderCard.providerData) }
+                                    PillTag {
+                                        visible: root.sourceSuiteProviderModuleSummary(suiteProviderCard.providerData) !== ""
+                                        text: root.sourceSuiteProviderModuleSummary(suiteProviderCard.providerData)
+                                    }
                                 }
 
                                 Label {
                                     Layout.fillWidth: true
-                                    text: root.sourceSuiteProviderLastError(modelData) !== ""
-                                          ? ("Last error: " + root.sourceSuiteProviderLastError(modelData))
+                                    text: root.sourceSuiteProviderLastError(suiteProviderCard.providerData) !== ""
+                                          ? ("Last error: " + root.sourceSuiteProviderLastError(suiteProviderCard.providerData))
                                           : "Last error: none"
-                                    color: root.sourceSuiteProviderLastError(modelData) !== ""
+                                    color: root.sourceSuiteProviderLastError(suiteProviderCard.providerData) !== ""
                                            ? Theme.textSecondary
                                            : Theme.textMuted
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 4
+                                    visible: root.sourceSuiteProviderModules(suiteProviderCard.providerData).length > 0
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: root.sourceSuiteProviderLane(suiteProviderCard.providerData) === "stream"
+                                              ? "Stream source modules"
+                                              : "Source modules"
+                                        color: Theme.textSecondary
+                                        font.pixelSize: 10
+                                        font.family: Theme.fontBody
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    Repeater {
+                                        model: root.sourceSuiteProviderModules(suiteProviderCard.providerData)
+
+                                        delegate: Rectangle {
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            radius: Theme.radiusSmall
+                                            color: Theme.backgroundCard
+                                            border.color: root.sourceSuiteModuleBorderColor(modelData)
+                                            implicitHeight: moduleColumn.implicitHeight + 8
+
+                                            ColumnLayout {
+                                                id: moduleColumn
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                anchors.top: parent.top
+                                                anchors.margins: 4
+                                                spacing: 3
+
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: Theme.spacingSmall
+
+                                                    Label {
+                                                        Layout.fillWidth: true
+                                                        text: root.sourceSuiteModuleLabel(modelData)
+                                                        color: Theme.textPrimary
+                                                        font.pixelSize: 11
+                                                        font.family: Theme.fontBody
+                                                        elide: Text.ElideRight
+                                                    }
+
+                                                    PillTag { text: root.sourceSuiteModuleEnabled(modelData) ? "enabled" : "disabled" }
+                                                    PillTag { text: root.sourceSuiteModuleTypeLabel(modelData) }
+                                                    PillTag { text: root.sourceSuiteModuleHealth(modelData) }
+                                                }
+
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    visible: root.sourceSuiteModuleLastError(modelData) !== ""
+                                                    text: root.sourceSuiteModuleLastError(modelData)
+                                                    color: Theme.textMuted
+                                                    font.pixelSize: 10
+                                                    font.family: Theme.fontBody
+                                                    wrapMode: Text.WordWrap
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    visible: root.sourceSuiteProviderModuleDetail(suiteProviderCard.providerData) !== ""
+                                             && root.sourceSuiteProviderModules(suiteProviderCard.providerData).length === 0
+                                    text: root.sourceSuiteProviderModuleDetail(suiteProviderCard.providerData)
+                                    color: Theme.textMuted
                                     font.pixelSize: 10
                                     font.family: Theme.fontBody
                                     wrapMode: Text.WordWrap
@@ -2107,12 +2479,12 @@ Item {
                             }
 
                             Button {
-                                text: root.sourceSuiteProviderEnabled(modelData) ? "Disable" : "Enable"
+                                text: root.sourceSuiteProviderEnabled(suiteProviderCard.providerData) ? "Disable" : "Enable"
                                 enabled: apiClient.authToken !== "" &&
-                                         root.sourceSuiteProviderInstanceId(modelData) !== ""
+                                         root.sourceSuiteProviderInstanceId(suiteProviderCard.providerData) !== ""
                                 onClicked: apiClient.setExtensionInstanceEnabled(
-                                               root.sourceSuiteProviderInstanceId(modelData),
-                                               !root.sourceSuiteProviderEnabled(modelData))
+                                               root.sourceSuiteProviderInstanceId(suiteProviderCard.providerData),
+                                               !root.sourceSuiteProviderEnabled(suiteProviderCard.providerData))
                                 background: Rectangle {
                                     radius: Theme.radiusSmall
                                     color: Theme.backgroundCard

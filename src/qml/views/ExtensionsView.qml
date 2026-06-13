@@ -34,6 +34,28 @@ Item {
     property string scopedFixState: ""
     property string scopedFixMessage: ""
     property int scopedFixAnimationFrame: 0
+    property string postInstallPollExtensionId: ""
+    property int postInstallPollAttempts: 0
+    property int postInstallPollMaxAttempts: 45
+
+    function refreshLiveExtensionState() {
+        if (apiClient.authToken === "") {
+            return
+        }
+        apiClient.fetchExtensionStatusSummary()
+        apiClient.fetchLatestReconcileRun()
+    }
+
+    function refreshExtensionsPage() {
+        if (apiClient.authToken === "") {
+            return
+        }
+        apiClient.refreshExtensionsCatalog()
+        apiClient.fetchExtensionInstances()
+        apiClient.fetchInstanceSecrets()
+        apiClient.fetchDesiredBlueprints()
+        refreshLiveExtensionState()
+    }
 
     function scopedFixMessageSummary(message) {
         var text = String(message || "").trim()
@@ -115,11 +137,103 @@ Item {
         return null
     }
 
+    function statusCodeForItem(item) {
+        if (!item) {
+            return ""
+        }
+        var nested = item.status || {}
+        return String(nested.code || item.statusCode || item.status_code || "")
+    }
+
+    function statusSeverityForItem(item) {
+        if (!item) {
+            return ""
+        }
+        var nested = item.status || {}
+        return String(nested.severity || item.severity || "")
+    }
+
+    function statusActionForItem(item) {
+        if (!item) {
+            return ""
+        }
+        var nested = item.status || {}
+        return String(nested.action || item.primaryAction || item.primary_action || "")
+    }
+
+    function stopPostInstallStatusPolling() {
+        postInstallStatusPollTimer.stop()
+        postInstallPollExtensionId = ""
+        postInstallPollAttempts = 0
+    }
+
+    function setupStatusMayStillConverge(item) {
+        if (!item) {
+            return true
+        }
+        var code = statusCodeForItem(item)
+        if (code === "ready") {
+            return false
+        }
+        if (code === "missing_instance" ||
+                code === "provider_registration_pending" ||
+                code === "provider_not_ready" ||
+                code === "runtime_status_stale" ||
+                code === "runtime_status_recovering") {
+            return true
+        }
+        var severity = statusSeverityForItem(item)
+        var action = statusActionForItem(item)
+        if (severity === "attention" && action === "finish_setup") {
+            return true
+        }
+        return false
+    }
+
+    function continuePostInstallStatusPolling() {
+        if (postInstallPollExtensionId === "") {
+            return
+        }
+        var item = statusItemForExtension(postInstallPollExtensionId)
+        if (!setupStatusMayStillConverge(item)) {
+            stopPostInstallStatusPolling()
+            return
+        }
+        if (postInstallPollAttempts >= postInstallPollMaxAttempts) {
+            stopPostInstallStatusPolling()
+            return
+        }
+        postInstallStatusPollTimer.restart()
+    }
+
+    function startPostInstallStatusPolling(extensionId) {
+        var normalized = String(extensionId || "")
+        if (normalized === "") {
+            return
+        }
+        postInstallPollExtensionId = normalized
+        postInstallPollAttempts = 0
+        apiClient.fetchExtensionStatusSummary()
+        postInstallStatusPollTimer.restart()
+    }
+
+    onVisibleChanged: {
+        if (visible) {
+            refreshLiveExtensionState()
+        }
+    }
+
     function extensionIdFor(entry) {
         if (!entry) {
             return ""
         }
-        return String(entry.extension_id !== undefined ? entry.extension_id : entry.id || "")
+        if (entry.extension_id !== undefined) {
+            return String(entry.extension_id || "")
+        }
+        if (entry.extensionId !== undefined) {
+            return String(entry.extensionId || "")
+        }
+        return String(entry.id || "")
     }
 
     function extensionName(entry) {
@@ -1114,6 +1228,7 @@ Item {
             return
         }
         apiClient.installExtensionSource(source.downloadUrl, source.packagePath)
+        startPostInstallStatusPolling(extensionId)
         actionToast.show("Installing " + String(entry.name || extensionId) + "...")
     }
 
@@ -1148,6 +1263,7 @@ Item {
                 pendingOptionalAddonId = ""
                 pendingOptionalAddonTargetInstanceId = ""
                 pendingOptionalAddonSecretKeys = []
+                stopPostInstallStatusPolling()
             }
         }
 
@@ -1181,6 +1297,10 @@ Item {
             }
             if (endpoint.indexOf("/api/v1/extensions/") === 0) {
                 actionToast.show(error)
+            }
+            if (endpoint === "/api/v1/extensions/install" &&
+                    postInstallPollExtensionId !== "") {
+                stopPostInstallStatusPolling()
             }
         }
 
@@ -1272,6 +1392,7 @@ Item {
                     clearScopedFixFeedback()
                 }
             }
+            continuePostInstallStatusPolling()
         }
 
         function onExtensionsCatalogChanged() {
@@ -1349,6 +1470,7 @@ Item {
             apiClient.fetchInstanceSecrets()
             apiClient.fetchDesiredBlueprints()
             apiClient.fetchExtensionStatusSummary()
+            apiClient.fetchLatestReconcileRun()
         }
     }
 
@@ -1357,6 +1479,27 @@ Item {
         interval: 120
         repeat: false
         onTriggered: apiClient.fetchExtensionStatusSummary()
+    }
+
+    Timer {
+        id: liveStatusMonitorTimer
+        interval: 5000
+        repeat: true
+        running: root.visible && apiClient.authToken !== ""
+        onTriggered: root.refreshLiveExtensionState()
+    }
+
+    Timer {
+        id: postInstallStatusPollTimer
+        interval: 2000
+        repeat: false
+        onTriggered: {
+            if (postInstallPollExtensionId === "") {
+                return
+            }
+            postInstallPollAttempts += 1
+            apiClient.fetchExtensionStatusSummary()
+        }
     }
 
     Timer {
@@ -1422,6 +1565,26 @@ Item {
                         color: attentionCards().length > 0 ? Theme.accent : Theme.textSecondary
                         font.pixelSize: 12
                         font.family: Theme.fontBody
+                    }
+                }
+
+                Button {
+                    id: extensionsRefreshButton
+                    text: "Refresh"
+                    enabled: apiClient.authToken !== ""
+                    onClicked: root.refreshExtensionsPage()
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                    }
+                    contentItem: Label {
+                        text: extensionsRefreshButton.text
+                        color: Theme.textPrimary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
                     }
                 }
 
@@ -2436,7 +2599,7 @@ Item {
                         Button {
                             text: "Refresh"
                             enabled: apiClient.authToken !== ""
-                            onClicked: apiClient.refreshExtensionsCatalog()
+                            onClicked: root.refreshExtensionsPage()
                             background: Rectangle {
                                 radius: Theme.radiusSmall
                                 color: Theme.backgroundCardRaised

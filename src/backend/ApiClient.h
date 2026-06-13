@@ -279,7 +279,8 @@ public:
         const QString &animeProviderId,
         const QString &movieSourceProviderId = QString(),
         const QString &seriesSourceProviderId = QString(),
-        const QString &animeSourceProviderId = QString());
+        const QString &animeSourceProviderId = QString(),
+        const QVariantMap &languagePreference = QVariantMap());
     Q_INVOKABLE void fetchMediaAcquisition(int limit = 12);
     Q_INVOKABLE void findAnotherRelease(const QString &intentId);
     Q_INVOKABLE void retryAcquisitionRequest(

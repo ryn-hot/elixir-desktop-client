@@ -377,7 +377,7 @@ Item {
             animeSourceId = kind === "suite" ? suiteBackingSourceProviderId()
                 : (kind === "source" ? target : "")
         }
-        apiClient.updateManagerPreferences(movieId, seriesId, animeId, movieSourceId, seriesSourceId, animeSourceId)
+        apiClient.updateManagerPreferences(movieId, seriesId, animeId, movieSourceId, seriesSourceId, animeSourceId, ({}))
     }
 
     function findResults() {
