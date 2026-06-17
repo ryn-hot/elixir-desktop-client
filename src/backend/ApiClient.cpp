@@ -167,6 +167,11 @@ QVariantMap normalizeFindMediaPreferencesPayload(const QVariantMap &payload) {
         pref.value(
             "languagePreference",
             pref.value("language_preference", QVariantMap())));
+    normalizedPref.insert(
+        "streamHttpEgressPolicy",
+        pref.value(
+            "streamHttpEgressPolicy",
+            pref.value("stream_http_egress_policy", QStringLiteral("auto_http_only"))));
 
     QVariantMap normalized;
     normalized.insert("preferences", normalizedPref);
@@ -3329,6 +3334,32 @@ void ApiClient::updateManagerPreferences(
                 emit requestFailed(
                     "/api/v1/find/preferences",
                     "Manager preferences update response was not an object.");
+                return;
+            }
+            const QVariantMap payload = normalizeFindMediaPreferencesPayload(doc.object().toVariantMap());
+            if (m_mediaManagerPreferences != payload) {
+                m_mediaManagerPreferences = payload;
+                emit mediaManagerPreferencesChanged();
+            }
+        });
+}
+
+void ApiClient::updateStreamHttpEgressPolicy(const QString &policy) {
+    const QString trimmed = policy.trimmed().toLower();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/find/preferences", "Stream HTTP egress policy is required.");
+        return;
+    }
+    QJsonObject body{{"streamHttpEgressPolicy", trimmed}};
+    sendRequest(
+        "PATCH",
+        "/api/v1/find/preferences",
+        body,
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/find/preferences",
+                    "Stream egress policy update response was not an object.");
                 return;
             }
             const QVariantMap payload = normalizeFindMediaPreferencesPayload(doc.object().toVariantMap());

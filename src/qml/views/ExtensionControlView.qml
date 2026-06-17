@@ -36,6 +36,67 @@ Item {
         apiClient.fetchInstanceSecrets()
     }
 
+    function textIndicatesControlWork(text) {
+        var value = String(text || "").toLowerCase()
+        var marker = "certification queued or running:"
+        var markerIndex = value.indexOf(marker)
+        if (markerIndex >= 0) {
+            var tail = value.slice(markerIndex + marker.length)
+            var match = tail.match(/[0-9]+/)
+            return match && parseInt(match[0], 10) > 0
+        }
+        return value.indexOf("certifying") >= 0
+                || value.indexOf("marketplace: queued") >= 0
+                || value.indexOf("marketplace: running") >= 0
+                || value.indexOf("marketplace state: certifying") >= 0
+    }
+
+    function listIndicatesControlWork(values) {
+        var items = values || []
+        for (var i = 0; i < items.length; ++i) {
+            if (textIndicatesControlWork(items[i])) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function surfaceNeedsPolling(surface) {
+        if (!surface) {
+            return false
+        }
+        var status = surface.status || {}
+        if (textIndicatesControlWork(status.summary) || listIndicatesControlWork(status.details)) {
+            return true
+        }
+        var sections = surface.sections || []
+        for (var sectionIndex = 0; sectionIndex < sections.length; ++sectionIndex) {
+            var section = sections[sectionIndex] || {}
+            if (listIndicatesControlWork(section.details)) {
+                return true
+            }
+            var entities = section.entities || []
+            for (var entityIndex = 0; entityIndex < entities.length; ++entityIndex) {
+                var entity = entities[entityIndex] || {}
+                if (textIndicatesControlWork(entity.subtitle)
+                        || listIndicatesControlWork(entity.details)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    function scheduleControlSurfacePolling() {
+        if (surfaceNeedsPolling(controlSurface())) {
+            if (!controlSurfacePollTimer.running) {
+                controlSurfacePollTimer.restart()
+            }
+        } else {
+            controlSurfacePollTimer.stop()
+        }
+    }
+
     function openControl(targetExtensionId) {
         var trimmed = String(targetExtensionId || "")
         if (!stackView || trimmed === "") {
@@ -656,7 +717,10 @@ Item {
     }
 
     Component.onCompleted: refreshSurface()
-    onExtensionIdChanged: refreshSurface()
+    onExtensionIdChanged: {
+        controlSurfacePollTimer.stop()
+        refreshSurface()
+    }
 
     Connections {
         target: apiClient
@@ -665,6 +729,10 @@ Item {
             if (apiClient.authToken !== "") {
                 root.refreshSurface()
             }
+        }
+
+        function onExtensionControlSurfaceChanged() {
+            root.scheduleControlSurfacePolling()
         }
 
         function onExtensionControlActionCompleted(targetExtensionId, actionId, message) {
@@ -681,6 +749,7 @@ Item {
             apiClient.fetchExtensionStatusSummary()
             postActionRefreshPassesRemaining = 4
             postActionRefreshTimer.restart()
+            root.scheduleControlSurfacePolling()
         }
 
         function onRequestFailed(endpoint, error) {
@@ -715,6 +784,25 @@ Item {
             if (postActionRefreshPassesRemaining > 0) {
                 postActionRefreshTimer.restart()
             }
+        }
+    }
+
+    Timer {
+        id: controlSurfacePollTimer
+        interval: 2500
+        repeat: false
+        onTriggered: {
+            if (root.extensionId === "" || apiClient.authToken === "") {
+                return
+            }
+            if (!root.surfaceNeedsPolling(root.controlSurface())) {
+                return
+            }
+            if (!apiClient.extensionControlLoading) {
+                root.refreshSurface()
+                apiClient.fetchExtensionStatusSummary()
+            }
+            controlSurfacePollTimer.restart()
         }
     }
 

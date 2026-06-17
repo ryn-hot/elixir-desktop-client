@@ -270,6 +270,29 @@ Item {
         }
     }
 
+    function streamHttpEgressPolicy() {
+        var pref = managerPreferenceState()
+        return String(pref.streamHttpEgressPolicy || pref.stream_http_egress_policy || "auto_http_only")
+    }
+
+    function streamHttpEgressPolicyIndex() {
+        var policy = streamHttpEgressPolicy()
+        if (policy === "always_protected") {
+            return 1
+        }
+        if (policy === "direct_only") {
+            return 2
+        }
+        return 0
+    }
+
+    function saveStreamHttpEgressPolicy() {
+        var policy = streamEgressCombo.currentValue !== undefined
+                   ? String(streamEgressCombo.currentValue)
+                   : "auto_http_only"
+        apiClient.updateStreamHttpEgressPolicy(policy)
+    }
+
     function sourceSuiteProviders() {
         return listValue(apiClient.mediaManagerPreferences, "source_suite_providers", "sourceSuiteProviders")
     }
@@ -1450,6 +1473,50 @@ Item {
 
                 Label {
                     text: "WARP protects privacy for managed downloader egress, but it does not provide torrent port forwarding or guarantee swarm reachability."
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: "Stream download egress"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: Theme.spacingSmall
+                    rowSpacing: Theme.spacingSmall
+
+                    Label {
+                        text: "HTTP stream downloads"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    ComboBox {
+                        id: streamEgressCombo
+                        Layout.fillWidth: true
+                        model: [
+                            { label: "Auto-protect HTTP", value: "auto_http_only" },
+                            { label: "Protect all streams", value: "always_protected" },
+                            { label: "Reject HTTP", value: "direct_only" }
+                        ]
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.streamHttpEgressPolicyIndex()
+                        onActivated: root.saveStreamHttpEgressPolicy()
+                    }
+                }
+
+                Label {
+                    text: "This applies only while acquisition materializes stream-source downloads. Imported-file playback and direct HTTPS debrid downloads keep their normal paths."
                     color: Theme.textMuted
                     font.pixelSize: 11
                     font.family: Theme.fontBody

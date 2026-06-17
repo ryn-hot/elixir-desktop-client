@@ -53,7 +53,7 @@ Item {
             return "Direct HTTPS debrid download"
         }
         if (text === "acquisition.http_stream.default") {
-            return "Direct HTTP stream download"
+            return "HTTP stream download"
         }
         return text
     }
@@ -391,7 +391,11 @@ Item {
 
     function routeDisplayLabel(item) {
         if (isHttpStreamRoute(item)) {
-            return "Direct HTTP stream download"
+            var evidenceLabel = routeEvidenceLabel(item)
+            if (evidenceLabel !== "") {
+                return evidenceLabel
+            }
+            return "HTTP stream download"
         }
         var routeProvider = String(fieldValue(item, "route_provider_label", "routeProviderLabel") || "")
         if (routeProvider.trim() !== "") {
@@ -402,6 +406,21 @@ Item {
             return displayText(downloader, "Route")
         }
         return displayText(routeLogicalId(item), "Route")
+    }
+
+    function routeEvidenceLabel(item) {
+        var evidence = (item && item.evidence) || []
+        for (var i = 0; i < evidence.length; ++i) {
+            if (normalizedStatusText(evidence[i].label) !== "route") {
+                continue
+            }
+            var value = displayText(evidence[i].value, "Route")
+            if (value !== "" && value !== "HTTP stream download") {
+                return value
+            }
+        }
+        var egress = fieldValue(fieldValue(item, "stream_runtime", "streamRuntime"), "egress", "egress")
+        return String(fieldValue(egress, "route_label", "routeLabel") || "")
     }
 
     function sourceSuiteDiagnosticsKey(item) {
