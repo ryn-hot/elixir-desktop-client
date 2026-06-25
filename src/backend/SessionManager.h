@@ -13,6 +13,7 @@ class SessionManager : public QObject {
     Q_PROPERTY(QString controlPlaneToken READ controlPlaneToken WRITE setControlPlaneToken NOTIFY controlPlaneTokenChanged)
     Q_PROPERTY(QString controlPlaneExpiresAt READ controlPlaneExpiresAt WRITE setControlPlaneExpiresAt NOTIFY controlPlaneExpiresAtChanged)
     Q_PROPERTY(QString selectedServerId READ selectedServerId WRITE setSelectedServerId NOTIFY selectedServerIdChanged)
+    Q_PROPERTY(QString playbackQualityMode READ playbackQualityMode WRITE setPlaybackQualityMode NOTIFY playbackQualityModeChanged)
     Q_PROPERTY(QString playbackMaxResolution READ playbackMaxResolution WRITE setPlaybackMaxResolution NOTIFY playbackMaxResolutionChanged)
     Q_PROPERTY(int playbackMaxBitrateBps READ playbackMaxBitrateBps WRITE setPlaybackMaxBitrateBps NOTIFY playbackMaxBitrateBpsChanged)
     Q_PROPERTY(QStringList playbackSupportedContainers READ playbackSupportedContainers WRITE setPlaybackSupportedContainers NOTIFY playbackSupportedContainersChanged)
@@ -50,6 +51,9 @@ public:
 
     QString selectedServerId() const;
     void setSelectedServerId(const QString &value);
+
+    QString playbackQualityMode() const;
+    void setPlaybackQualityMode(const QString &value);
 
     QString playbackMaxResolution() const;
     void setPlaybackMaxResolution(const QString &value);
@@ -93,6 +97,7 @@ signals:
     void controlPlaneTokenChanged();
     void controlPlaneExpiresAtChanged();
     void selectedServerIdChanged();
+    void playbackQualityModeChanged();
     void playbackMaxResolutionChanged();
     void playbackMaxBitrateBpsChanged();
     void playbackSupportedContainersChanged();
@@ -116,6 +121,7 @@ private:
     QString m_controlPlaneToken;
     QString m_controlPlaneExpiresAt;
     QString m_selectedServerId;
+    QString m_playbackQualityMode;
     QString m_playbackMaxResolution;
     int m_playbackMaxBitrateBps = 0;
     QStringList m_playbackSupportedContainers;

@@ -221,7 +221,7 @@ Item {
     }
 
     function requestSubtitleReload(reason) {
-        if (!playerController.active || playerController.mode !== "transcode") {
+        if (!playerController.active || !playerController.serverSeekRequired) {
             return
         }
         subtitleReloadPending = true
@@ -261,6 +261,77 @@ Item {
             }
         }
         return pos
+    }
+
+    function mapValue(map, key) {
+        if (!map || map[key] === undefined || map[key] === null) {
+            return ""
+        }
+        return String(map[key])
+    }
+
+    function joinParts(parts) {
+        var out = []
+        for (var i = 0; i < parts.length; i++) {
+            if (parts[i] !== "") {
+                out.push(parts[i])
+            }
+        }
+        return out.join(" · ")
+    }
+
+    function diagnosticJobState() {
+        var job = playerController.jobState || ({})
+        var state = mapValue(job, "state")
+        var errorKind = mapValue(job, "error_kind")
+        if (state !== "" && errorKind !== "") {
+            return state + " (" + errorKind + ")"
+        }
+        if (state !== "") {
+            return state
+        }
+        return errorKind
+    }
+
+    function structuredErrorSummary() {
+        var err = playerController.lastStructuredError || ({})
+        var message = mapValue(err, "message")
+        var code = mapValue(err, "code")
+        var status = mapValue(err, "status")
+        var parts = []
+        if (code !== "") {
+            parts.push(code)
+        }
+        if (status !== "") {
+            parts.push(status)
+        }
+        if (message !== "") {
+            parts.push(message)
+        }
+        return parts.join(" · ")
+    }
+
+    function errorDetailsText() {
+        var summary = structuredErrorSummary()
+        var logTail = playerController.ffmpegLogTail || ""
+        if (summary !== "" && logTail !== "") {
+            return summary + "\n\n" + logTail
+        }
+        return summary !== "" ? summary : logTail
+    }
+
+    function loadCurrentStream(reason) {
+        if (playerController.streamUrl === "") {
+            return
+        }
+        applyHeaders()
+        resetTrackState()
+        mpv.commandAsync(["loadfile", playerController.streamUrl, "replace"])
+        mpv.setPropertyAsync("pause", false)
+        trackRefreshTimer.interval = mpv.hlsDelivery ? 1200 : 500
+        trackRefreshTimer.restart()
+        showControls()
+        dumpTrackList(reason)
     }
 
     function refreshTracks() {
@@ -325,7 +396,7 @@ Item {
             }
         }
 
-        if (playerController.mode === "transcode") {
+        if (playerController.serverSeekRequired) {
             if (nextSubtitles.length === 0 && lastSubtitleTrackCount > 0) {
                 dumpTrackList("refresh-skip-empty", trackList)
                 return
@@ -383,6 +454,7 @@ Item {
         id: mpv
         anchors.fill: parent
         focus: true
+        delivery: playerController.delivery
     }
 
     MouseArea {
@@ -422,7 +494,7 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 80
+            height: 190
             gradient: Gradient {
                 GradientStop { position: 0.0; color: "#CC000000" }
                 GradientStop { position: 1.0; color: "#00000000" }
@@ -469,10 +541,48 @@ Item {
                     font.family: Theme.fontDisplay
                 }
                 Label {
-                    text: playerController.mode !== "" ? ("Mode: " + playerController.mode) : ""
+                    text: joinParts([
+                        playerController.mode !== "" ? ("Mode: " + playerController.mode) : "",
+                        playerController.delivery !== "" ? ("Delivery: " + playerController.delivery) : "",
+                        playerController.qualityLabel !== "" ? ("Quality: " + playerController.qualityLabel) : ""
+                    ])
+                    visible: text !== ""
                     color: Theme.textMuted
                     font.pixelSize: 11
                     font.family: Theme.fontBody
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Label {
+                    text: joinParts([
+                        playerController.mediaFileId !== "" ? ("File: " + playerController.mediaFileId) : "",
+                        playerController.selectedAudioTrack !== "" ? ("Audio: " + playerController.selectedAudioTrack) : "",
+                        playerController.selectedSubtitleTrack !== "" ? ("Subtitles: " + playerController.selectedSubtitleTrack) : ""
+                    ])
+                    visible: text !== ""
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Label {
+                    text: playerController.decisionReason !== "" ? ("Reason: " + playerController.decisionReason) : ""
+                    visible: text !== ""
+                    color: Theme.textMuted
+                    font.pixelSize: 10
+                    font.family: Theme.fontBody
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Label {
+                    text: diagnosticJobState() !== "" ? ("Job: " + diagnosticJobState()) : ""
+                    visible: text !== ""
+                    color: Theme.textMuted
+                    font.pixelSize: 10
+                    font.family: Theme.fontBody
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
                 }
             }
 
@@ -508,7 +618,7 @@ Item {
                 value: playerController.position
                 onPressedChanged: {
                     if (!pressed) {
-                        if (playerController.mode === "transcode") {
+                        if (playerController.serverSeekRequired) {
                             mpv.setPropertyAsync("pause", true)
                             playerController.setPaused(true)
                             playerController.seek(value)
@@ -627,14 +737,18 @@ Item {
     }
 
     Rectangle {
+        id: noticeCard
         anchors.centerIn: parent
-        width: parent.width * 0.55
+        width: Math.min(parent.width * 0.72, 760)
+        height: Math.min(parent.height * 0.78, noticeColumn.implicitHeight + Theme.spacingLarge * 2)
         radius: Theme.radiusLarge
         color: Theme.backgroundCard
         border.color: Theme.border
         visible: sessionMessage !== ""
+        clip: true
 
         ColumnLayout {
+            id: noticeColumn
             anchors.fill: parent
             anchors.margins: Theme.spacingLarge
             spacing: Theme.spacingSmall
@@ -652,12 +766,78 @@ Item {
                 font.pixelSize: 12
                 font.family: Theme.fontBody
                 wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+
+            Label {
+                text: errorDetailsText()
+                visible: text !== "" && text !== sessionMessage
+                color: Theme.textMuted
+                font.pixelSize: 11
+                font.family: Theme.fontBody
+                wrapMode: Text.Wrap
+                maximumLineCount: 12
+                elide: Text.ElideRight
+                Layout.fillWidth: true
             }
 
             RowLayout {
                 spacing: Theme.spacingMedium
                 Button {
-                    text: "Close"
+                    text: "Retry"
+                    visible: playerController.retryAvailable
+                    onClicked: playerController.retrySamePlan()
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.accent
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: "#FFFFFF"
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+                Button {
+                    text: "Retry from " + formatTime(playerController.position)
+                    visible: playerController.retryAvailable
+                    onClicked: playerController.retryFromCurrentPosition()
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+                Button {
+                    text: "Lower quality"
+                    visible: playerController.lowerQualityRetryAvailable
+                    onClicked: playerController.retryWithLowerQuality()
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+                Button {
+                    text: "Stop"
                     onClicked: {
                         playerController.endSession()
                         mpv.commandAsync(["stop"])
@@ -696,6 +876,10 @@ Item {
             if (paused !== undefined && paused !== null) {
                 playerController.setPaused(paused)
             }
+            var eofReached = mpv.getProperty("eof-reached")
+            if (eofReached === true && playerController.active) {
+                playerController.endSession()
+            }
         }
     }
 
@@ -705,7 +889,11 @@ Item {
         repeat: true
         onTriggered: {
             if (playerController.sessionId !== "") {
-                apiClient.pollSession(playerController.sessionId)
+                if (playerController.paused) {
+                    apiClient.heartbeatSession(playerController.sessionId)
+                } else {
+                    apiClient.pollSession(playerController.sessionId)
+                }
             }
         }
     }
@@ -762,14 +950,14 @@ Item {
     Component.onCompleted: {
         applyHeaders()
         if (playerController.streamUrl !== "") {
-            console.log("PlayerView ready", playerController.streamUrl, playerController.mode)
-            mpv.commandAsync(["loadfile", playerController.streamUrl, "replace"])
-            mpv.setPropertyAsync("pause", false)
-            resetTrackState()
-            trackRefreshTimer.restart()
-            dumpTrackList("on-load")
+            console.log("PlayerView ready", playerController.mode)
+            loadCurrentStream("on-load")
         }
         showControls()
+    }
+
+    Component.onDestruction: {
+        playerController.endSession()
     }
 
     Connections {
@@ -792,14 +980,9 @@ Item {
             if (playerController.streamUrl === "") {
                 return
             }
-            console.log("Stream URL changed", playerController.streamUrl, playerController.mode)
-            resetTrackState()
+            console.log("Stream URL changed", playerController.mode)
             mpv.commandAsync(["stop"])
-            mpv.commandAsync(["loadfile", playerController.streamUrl, "replace"])
-            mpv.setPropertyAsync("pause", false)
-            trackRefreshTimer.restart()
-            showControls()
-            dumpTrackList("stream-url-changed")
+            loadCurrentStream("stream-url-changed")
         }
         function onActiveChanged() {
             if (!playerController.active) {

@@ -2584,6 +2584,21 @@ Item {
                 }
 
                 Label {
+                    text: "Quality"
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    font.family: Theme.fontBody
+                }
+
+                ComboBox {
+                    id: qualityModeCombo
+                    property var modeValues: ["original", "automatic", "fixed"]
+                    model: ["Original", "Automatic", "Fixed"]
+                    currentIndex: Math.max(0, modeValues.indexOf(sessionManager.playbackQualityMode))
+                    onActivated: sessionManager.playbackQualityMode = modeValues[index]
+                }
+
+                Label {
                     text: "Max resolution"
                     color: Theme.textSecondary
                     font.pixelSize: 12

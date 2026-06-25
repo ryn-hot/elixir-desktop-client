@@ -166,9 +166,14 @@ public:
     Q_INVOKABLE void fetchEpisodes(const QString &seasonId);
     Q_INVOKABLE void startPlayback(const QString &mediaItemId, const QString &preferredFileId);
     Q_INVOKABLE void startEpisodePlayback(const QString &mediaItemId, const QString &episodeId);
+    Q_INVOKABLE void retryLastPlayback();
+    Q_INVOKABLE void retryLastPlaybackFrom(double seconds);
+    Q_INVOKABLE void retryLastPlaybackWithLowerQuality(double seconds, int maxBitrateBps);
     Q_INVOKABLE void seekPlayback(const QString &sessionId, double seconds);
     Q_INVOKABLE void pollSession(const QString &sessionId);
+    Q_INVOKABLE void heartbeatSession(const QString &sessionId);
     Q_INVOKABLE void endSession(const QString &sessionId);
+    bool endSessionBlocking(const QString &sessionId, int timeoutMs = 1500);
     Q_INVOKABLE void runScan(bool forceMetadata);
     Q_INVOKABLE void fetchReviewQueue(const QString &status, int limit, int offset);
     Q_INVOKABLE void fetchReviewQueueDetail(const QString &reviewId);
@@ -364,6 +369,7 @@ signals:
     void seasonDetailReceived(const QString &seasonId, const QVariantMap &detail);
     void episodesReceived(const QString &seasonId, const QVariantList &episodes);
     void playbackStarted(const QVariantMap &info);
+    void playbackFailed(const QVariantMap &error);
     void sessionPolled(const QVariantMap &info);
     void seekCompleted(const QString &sessionId, double positionSeconds);
     void seekFailed(const QString &sessionId, const QString &error);
@@ -372,6 +378,7 @@ signals:
     void reviewDetailReceived(const QVariantMap &detail);
     void reviewApplied(const QString &reviewId);
     void requestFailed(const QString &endpoint, const QString &error);
+    void requestFailedDetailed(const QString &endpoint, const QVariantMap &error);
 
 private:
     using SuccessHandler = std::function<void(const QJsonDocument &)>;
@@ -408,6 +415,7 @@ private:
         const SuccessHandler &onSuccess,
         const ErrorHandler &onError = ErrorHandler(),
         bool allowNonJson = false);
+    void sendPlaybackRequest(const QJsonObject &body);
 
     QNetworkAccessManager m_manager;
     QString m_baseUrl;
@@ -415,6 +423,7 @@ private:
     QString m_accessTokenExpiresAt;
     QVariantMap m_clientCapabilities;
     QString m_networkType;
+    QJsonObject m_lastPlaybackBody;
     QVariantList m_extensionsInstalled;
     QVariantList m_extensionsAvailable;
     QVariantList m_extensionsCore;

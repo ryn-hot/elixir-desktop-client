@@ -9,13 +9,14 @@ constexpr const char *kControlPlaneEmailKey = "session/controlPlaneEmail";
 constexpr const char *kControlPlaneTokenKey = "session/controlPlaneToken";
 constexpr const char *kControlPlaneExpiresAtKey = "session/controlPlaneExpiresAt";
 constexpr const char *kSelectedServerIdKey = "session/selectedServerId";
+constexpr const char *kPlaybackQualityModeKey = "playback/qualityMode";
 constexpr const char *kPlaybackMaxResolutionKey = "playback/maxResolution";
 constexpr const char *kPlaybackMaxBitrateKey = "playback/maxBitrateBps";
 constexpr const char *kPlaybackSupportedContainersKey = "playback/supportedContainers";
 constexpr const char *kPlaybackSupportedVideoCodecsKey = "playback/supportedVideoCodecs";
 constexpr const char *kPlaybackSupportedAudioCodecsKey = "playback/supportedAudioCodecs";
 constexpr const char *kPlaybackProfileVersionKey = "playback/profileVersion";
-constexpr int kNativeMpvPlaybackProfileVersion = 2;
+constexpr int kNativeMpvPlaybackProfileVersion = 3;
 constexpr const char *kSubtitleModeKey = "playback/subtitleMode";
 constexpr const char *kSubtitleLangKey = "playback/subtitleLang";
 constexpr const char *kSubtitleTitleKey = "playback/subtitleTitle";
@@ -33,6 +34,14 @@ QStringList nativeMpvVideoCodecs() {
 QStringList nativeMpvAudioCodecs() {
     return {"aac", "ac3", "eac3", "mp3", "opus", "dts", "truehd", "flac", "vorbis"};
 }
+
+QString normalizePlaybackQualityMode(const QString &value) {
+    const QString normalized = value.trimmed().toLower();
+    if (normalized == "automatic" || normalized == "fixed") {
+        return normalized;
+    }
+    return "original";
+}
 }
 
 SessionManager::SessionManager(QObject *parent)
@@ -45,6 +54,7 @@ SessionManager::SessionManager(QObject *parent)
       m_controlPlaneToken(m_settings.value(kControlPlaneTokenKey, "").toString()),
       m_controlPlaneExpiresAt(m_settings.value(kControlPlaneExpiresAtKey, "").toString()),
       m_selectedServerId(m_settings.value(kSelectedServerIdKey, "").toString()),
+      m_playbackQualityMode(normalizePlaybackQualityMode(m_settings.value(kPlaybackQualityModeKey, "original").toString())),
       m_playbackMaxResolution(m_settings.value(kPlaybackMaxResolutionKey, "unlimited").toString()),
       m_playbackMaxBitrateBps(m_settings.value(kPlaybackMaxBitrateKey, 0).toInt()),
       m_playbackSupportedContainers(m_settings.value(kPlaybackSupportedContainersKey, nativeMpvContainers()).toStringList()),
@@ -56,7 +66,7 @@ SessionManager::SessionManager(QObject *parent)
       m_email(m_settings.value(kEmailKey, "").toString()),
       m_networkType(m_settings.value(kNetworkTypeKey, "auto").toString()) {
     const int profileVersion = m_settings.value(kPlaybackProfileVersionKey, 0).toInt();
-    if (profileVersion < kNativeMpvPlaybackProfileVersion) {
+    if (profileVersion < 2) {
         m_playbackMaxResolution = "unlimited";
         m_playbackMaxBitrateBps = 0;
         m_playbackSupportedContainers = nativeMpvContainers();
@@ -67,6 +77,12 @@ SessionManager::SessionManager(QObject *parent)
         storeValue(kPlaybackSupportedContainersKey, m_playbackSupportedContainers);
         storeValue(kPlaybackSupportedVideoCodecsKey, m_playbackSupportedVideoCodecs);
         storeValue(kPlaybackSupportedAudioCodecsKey, m_playbackSupportedAudioCodecs);
+    }
+    if (profileVersion < 3) {
+        m_playbackQualityMode = normalizePlaybackQualityMode(m_playbackQualityMode);
+        storeValue(kPlaybackQualityModeKey, m_playbackQualityMode);
+    }
+    if (profileVersion < kNativeMpvPlaybackProfileVersion) {
         storeValue(kPlaybackProfileVersionKey, kNativeMpvPlaybackProfileVersion);
     }
 }
@@ -173,6 +189,20 @@ void SessionManager::setSelectedServerId(const QString &value) {
     m_selectedServerId = value;
     storeValue(kSelectedServerIdKey, m_selectedServerId);
     emit selectedServerIdChanged();
+}
+
+QString SessionManager::playbackQualityMode() const {
+    return m_playbackQualityMode;
+}
+
+void SessionManager::setPlaybackQualityMode(const QString &value) {
+    const QString normalized = normalizePlaybackQualityMode(value);
+    if (m_playbackQualityMode == normalized) {
+        return;
+    }
+    m_playbackQualityMode = normalized;
+    storeValue(kPlaybackQualityModeKey, m_playbackQualityMode);
+    emit playbackQualityModeChanged();
 }
 
 QString SessionManager::playbackMaxResolution() const {

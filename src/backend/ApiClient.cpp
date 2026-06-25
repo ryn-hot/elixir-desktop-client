@@ -8,9 +8,19 @@
 #include <QUrlQuery>
 #include <QDebug>
 #include <QDateTime>
+#include <QEventLoop>
 #include <QLocale>
+#include <QTimer>
+#include <algorithm>
+#include <cmath>
 
 namespace {
+QVariantMap parseApiErrorPayload(
+    const QByteArray &payload,
+    const QString &fallback,
+    int status,
+    const QString &path);
+
 QString formatRegistryError(const QJsonValue &errorValue) {
     if (!errorValue.isObject()) {
         return QString();
@@ -35,29 +45,78 @@ QString formatRegistryError(const QJsonValue &errorValue) {
 }
 
 QString formatApiErrorDetail(const QByteArray &payload, const QString &fallback) {
+    const QVariantMap error = parseApiErrorPayload(payload, fallback, 0, QString());
+    const QString message = error.value("message").toString().trimmed();
+    if (!message.isEmpty()) {
+        return message;
+    }
+    const QString rawText = error.value("rawText").toString().trimmed();
+    if (!rawText.isEmpty()) {
+        return rawText;
+    }
+    const QString trimmedFallback = fallback.trimmed();
+    return trimmedFallback.isEmpty() ? QString("Request failed.") : trimmedFallback;
+}
+
+QVariantMap parseApiErrorPayload(
+    const QByteArray &payload,
+    const QString &fallback,
+    int status,
+    const QString &path) {
+    QVariantMap result;
+    result.insert("endpoint", path);
+    if (status > 0) {
+        result.insert("status", status);
+    }
+
     if (!payload.isEmpty()) {
         QJsonParseError parseError;
         const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
         if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
             const QJsonObject obj = doc.object();
+            const QString code = obj.value("code").toString().trimmed();
+            if (!code.isEmpty()) {
+                result.insert("code", code);
+            }
             const QString message = obj.value("message").toString().trimmed();
             if (!message.isEmpty()) {
-                return message;
+                result.insert("message", message);
             }
             const QString error = obj.value("error").toString().trimmed();
-            if (!error.isEmpty()) {
-                return error;
+            if (!error.isEmpty() && !result.contains("message")) {
+                result.insert("message", error);
+            }
+            const QJsonValue details = obj.value("details");
+            if (details.isObject()) {
+                const QVariantMap detailsMap = details.toObject().toVariantMap();
+                result.insert("details", detailsMap);
+                const QVariant retry = detailsMap.value("retry");
+                if (retry.isValid()) {
+                    result.insert("retry", retry);
+                }
+                const QVariant fallbackDetail = detailsMap.value("fallback");
+                if (fallbackDetail.isValid()) {
+                    result.insert("fallback", fallbackDetail);
+                }
+            }
+            if (result.contains("message")) {
+                return result;
             }
         }
 
         const QString text = QString::fromUtf8(payload).trimmed();
         if (!text.isEmpty()) {
-            return text;
+            result.insert("rawText", text);
+            if (!result.contains("message")) {
+                result.insert("message", text);
+            }
+            return result;
         }
     }
 
     const QString trimmedFallback = fallback.trimmed();
-    return trimmedFallback.isEmpty() ? QString("Request failed.") : trimmedFallback;
+    result.insert("message", trimmedFallback.isEmpty() ? QString("Request failed.") : trimmedFallback);
+    return result;
 }
 
 QString normalizeMediaType(const QString &value) {
@@ -829,16 +888,17 @@ void ApiClient::startPlayback(const QString &mediaItemId, const QString &preferr
         body.insert("network_type", m_networkType);
     }
     if (!m_clientCapabilities.isEmpty()) {
-        body.insert("client_capabilities", QJsonObject::fromVariantMap(m_clientCapabilities));
+        const QJsonObject caps = QJsonObject::fromVariantMap(m_clientCapabilities);
+        body.insert("client_capabilities", caps);
+        if (caps.contains("profile_version")) {
+            body.insert("profile_version", caps.value("profile_version"));
+        }
+        if (caps.contains("app_version")) {
+            body.insert("app_version", caps.value("app_version"));
+        }
     }
-    sendRequest("POST", "/api/v1/play", body,
-                [this](const QJsonDocument &doc) {
-                    if (!doc.isObject()) {
-                        emit requestFailed("/api/v1/play", "Playback response was not an object.");
-                        return;
-                    }
-                    emit playbackStarted(doc.object().toVariantMap());
-                });
+    m_lastPlaybackBody = body;
+    sendPlaybackRequest(body);
 }
 
 void ApiClient::startEpisodePlayback(const QString &mediaItemId, const QString &episodeId) {
@@ -852,16 +912,60 @@ void ApiClient::startEpisodePlayback(const QString &mediaItemId, const QString &
         body.insert("network_type", m_networkType);
     }
     if (!m_clientCapabilities.isEmpty()) {
-        body.insert("client_capabilities", QJsonObject::fromVariantMap(m_clientCapabilities));
+        const QJsonObject caps = QJsonObject::fromVariantMap(m_clientCapabilities);
+        body.insert("client_capabilities", caps);
+        if (caps.contains("profile_version")) {
+            body.insert("profile_version", caps.value("profile_version"));
+        }
+        if (caps.contains("app_version")) {
+            body.insert("app_version", caps.value("app_version"));
+        }
     }
-    sendRequest("POST", "/api/v1/play", body,
-                [this](const QJsonDocument &doc) {
-                    if (!doc.isObject()) {
-                        emit requestFailed("/api/v1/play", "Playback response was not an object.");
-                        return;
-                    }
-                    emit playbackStarted(doc.object().toVariantMap());
-                });
+    m_lastPlaybackBody = body;
+    sendPlaybackRequest(body);
+}
+
+void ApiClient::retryLastPlayback() {
+    if (m_lastPlaybackBody.isEmpty()) {
+        QVariantMap error;
+        error.insert("endpoint", "/api/v1/play");
+        error.insert("message", "No playback request is available to retry.");
+        emit playbackFailed(error);
+        emit requestFailed("/api/v1/play", error.value("message").toString());
+        emit requestFailedDetailed("/api/v1/play", error);
+        return;
+    }
+    sendPlaybackRequest(m_lastPlaybackBody);
+}
+
+void ApiClient::retryLastPlaybackFrom(double seconds) {
+    if (m_lastPlaybackBody.isEmpty()) {
+        retryLastPlayback();
+        return;
+    }
+    QJsonObject body = m_lastPlaybackBody;
+    if (std::isfinite(seconds) && seconds > 0.0) {
+        body.insert("start_position_seconds", seconds);
+    }
+    sendPlaybackRequest(body);
+}
+
+void ApiClient::retryLastPlaybackWithLowerQuality(double seconds, int maxBitrateBps) {
+    if (m_lastPlaybackBody.isEmpty()) {
+        retryLastPlayback();
+        return;
+    }
+    QJsonObject body = m_lastPlaybackBody;
+    if (std::isfinite(seconds) && seconds > 0.0) {
+        body.insert("start_position_seconds", seconds);
+    }
+    QJsonObject caps = body.value("client_capabilities").toObject();
+    if (maxBitrateBps > 0) {
+        caps.insert("max_bitrate_bps", maxBitrateBps);
+    }
+    caps.insert("quality_mode", "fixed");
+    body.insert("client_capabilities", caps);
+    sendPlaybackRequest(body);
 }
 
 void ApiClient::seekPlayback(const QString &sessionId, double seconds) {
@@ -890,11 +994,81 @@ void ApiClient::pollSession(const QString &sessionId) {
                 });
 }
 
+void ApiClient::heartbeatSession(const QString &sessionId) {
+    if (sessionId.trimmed().isEmpty()) {
+        return;
+    }
+    sendRequest("POST", QString("/api/v1/sessions/%1/heartbeat").arg(sessionId), QJsonObject(),
+                [](const QJsonDocument &) {},
+                ErrorHandler(),
+                true);
+}
+
 void ApiClient::endSession(const QString &sessionId) {
     sendRequest("POST", QString("/api/v1/sessions/%1/end").arg(sessionId), QJsonObject(),
                 [](const QJsonDocument &) {},
                 ErrorHandler(),
                 true);
+}
+
+void ApiClient::sendPlaybackRequest(const QJsonObject &body) {
+    sendRequest("POST", "/api/v1/play", body,
+                [this](const QJsonDocument &doc) {
+                    if (!doc.isObject()) {
+                        QVariantMap error;
+                        error.insert("endpoint", "/api/v1/play");
+                        error.insert("message", "Playback response was not an object.");
+                        emit playbackFailed(error);
+                        emit requestFailed("/api/v1/play", error.value("message").toString());
+                        emit requestFailedDetailed("/api/v1/play", error);
+                        return;
+                    }
+                    emit playbackStarted(doc.object().toVariantMap());
+                });
+}
+
+bool ApiClient::endSessionBlocking(const QString &sessionId, int timeoutMs) {
+    if (sessionId.trimmed().isEmpty() || m_baseUrl.trimmed().isEmpty()) {
+        return false;
+    }
+
+    const QString path = QString("/api/v1/sessions/%1/end").arg(sessionId);
+    QNetworkRequest request(makeUrl(path));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    const QString locale = QLocale::system().name().replace('_', '-');
+    if (!locale.trimmed().isEmpty()) {
+        request.setRawHeader("Accept-Language", locale.toUtf8());
+    }
+    if (!m_authToken.isEmpty()) {
+        request.setRawHeader("Authorization", QByteArray("Bearer ") + m_authToken.toUtf8());
+    }
+
+    QNetworkReply *reply = m_manager.post(request, QJsonDocument(QJsonObject()).toJson());
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    QObject::connect(&timer, &QTimer::timeout, reply, &QNetworkReply::abort);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timer.start(std::max(1, timeoutMs));
+    loop.exec();
+
+    const bool timedOut = !timer.isActive();
+    if (!timedOut) {
+        timer.stop();
+    }
+    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const bool ok = !timedOut
+        && reply->error() == QNetworkReply::NoError
+        && status >= 200
+        && status < 300;
+    if (!ok) {
+        qWarning() << "Blocking session end failed" << sessionId
+                   << "status" << status
+                   << "error" << reply->errorString();
+    }
+    reply->deleteLater();
+    return ok;
 }
 
 void ApiClient::runScan(bool forceMetadata) {
@@ -3524,9 +3698,16 @@ void ApiClient::sendRequest(
     bool allowNonJson) {
     if (m_baseUrl.trimmed().isEmpty()) {
         const QString msg = "Base URL is not set.";
+        QVariantMap error;
+        error.insert("endpoint", path);
+        error.insert("message", msg);
         if (onError) {
             onError(msg);
         }
+        if (path == "/api/v1/play") {
+            emit playbackFailed(error);
+        }
+        emit requestFailedDetailed(path, error);
         emit requestFailed(path, msg);
         return;
     }
@@ -3562,13 +3743,19 @@ void ApiClient::sendRequest(
                 << "bytes" << payload.size() << "error" << reply->error();
 
         if (reply->error() != QNetworkReply::NoError || !okStatus) {
-            const QString detail = formatApiErrorDetail(payload, reply->errorString());
+            const QVariantMap errorDetail =
+                parseApiErrorPayload(payload, reply->errorString(), status, path);
+            const QString detail = errorDetail.value("message").toString();
             if (status == 401 && !path.startsWith("/api/v1/auth/")) {
                 expireAuth(detail.isEmpty() ? "Authentication expired." : detail);
             }
             if (onError) {
                 onError(detail);
             }
+            if (path == "/api/v1/play") {
+                emit playbackFailed(errorDetail);
+            }
+            emit requestFailedDetailed(path, errorDetail);
             emit requestFailed(path, detail);
             reply->deleteLater();
             return;
@@ -3589,9 +3776,16 @@ void ApiClient::sendRequest(
                 return;
             }
             const QString detail = QString("Invalid JSON: %1").arg(parseError.errorString());
+            QVariantMap errorDetail;
+            errorDetail.insert("endpoint", path);
+            errorDetail.insert("message", detail);
             if (onError) {
                 onError(detail);
             }
+            if (path == "/api/v1/play") {
+                emit playbackFailed(errorDetail);
+            }
+            emit requestFailedDetailed(path, errorDetail);
             emit requestFailed(path, detail);
             reply->deleteLater();
             return;

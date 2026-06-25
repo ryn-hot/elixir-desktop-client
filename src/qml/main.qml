@@ -266,8 +266,15 @@ ApplicationWindow {
         }
         function onPlaybackStarted(info) {
             Qt.callLater(function() {
-                console.log("playbackStarted", JSON.stringify(info))
+                console.log("playbackStarted", "session=" + String(info.session_id || ""), "mode=" + String(info.mode || ""))
                 playerController.beginPlayback(info)
+                if (!stackView.currentItem || stackView.currentItem.objectName !== "playerView") {
+                    stackView.push(Qt.resolvedUrl("views/PlayerView.qml"), { stackView: stackView })
+                }
+            })
+        }
+        function onPlaybackFailed(error) {
+            Qt.callLater(function() {
                 if (!stackView.currentItem || stackView.currentItem.objectName !== "playerView") {
                     stackView.push(Qt.resolvedUrl("views/PlayerView.qml"), { stackView: stackView })
                 }

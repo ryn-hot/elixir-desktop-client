@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QCoreApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QtQml>
@@ -12,7 +13,9 @@
 #include <QDir>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QRegularExpression>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QTextStream>
 
 #include "backend/ApiClient.h"
@@ -43,11 +46,26 @@ QString logLevelName(QtMsgType type) {
     return "LOG";
 }
 
+QString redactSensitiveLogText(QString text) {
+    static const QRegularExpression querySecret(
+        QStringLiteral(
+            "((?:[?&;]|\\b)(?:session|sid|token|access_token|x-plex-token)=)([^\\s&;\\\"']+)"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression bearerSecret(
+        QStringLiteral("(Bearer\\s+)([^\\s\\\"']+)"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    text.replace(querySecret, QStringLiteral("\\1[redacted]"));
+    text.replace(bearerSecret, QStringLiteral("\\1[redacted]"));
+    return text;
+}
+
 void logMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
     const QString timestamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
     const QString level = logLevelName(type);
     const QString category = QString::fromUtf8(context.category ? context.category : "");
-    QString line = QString("%1 [%2] %3: %4").arg(timestamp, level, category, msg);
+    QString line = redactSensitiveLogText(
+        QString("%1 [%2] %3: %4").arg(timestamp, level, category, msg));
     if (context.file && context.line > 0) {
         line.append(QString(" (%1:%2)").arg(context.file).arg(context.line));
     }
@@ -95,6 +113,7 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     QCoreApplication::setOrganizationName("ElixirMedia");
     QCoreApplication::setApplicationName("Elixir");
+    QCoreApplication::setApplicationVersion("0.1.0");
 
     QQuickStyle::setStyle("Fusion");
     initLogging();
@@ -140,13 +159,23 @@ int main(int argc, char *argv[]) {
 
     auto syncClientCapabilities = [&]() {
         QVariantMap caps;
+        caps.insert("profile_version", 3);
         caps.insert("client_kind", "native_mpv");
         caps.insert("direct_play_preferred", true);
+        caps.insert("quality_mode", sessionManager.playbackQualityMode());
         caps.insert("max_resolution", sessionManager.playbackMaxResolution());
         caps.insert("max_bitrate_bps", sessionManager.playbackMaxBitrateBps());
         caps.insert("supported_containers", sessionManager.playbackSupportedContainers());
         caps.insert("supported_video_codecs", sessionManager.playbackSupportedVideoCodecs());
         caps.insert("supported_audio_codecs", sessionManager.playbackSupportedAudioCodecs());
+        caps.insert("supported_subtitle_codecs", QStringList({"srt", "webvtt", "ass", "ssa", "mov_text", "pgs", "dvd_subtitle"}));
+        caps.insert("supported_hls_segment_types", QStringList({"mpegts", "fmp4"}));
+        caps.insert("supports_hdr", true);
+        caps.insert("supports_dolby_vision", false);
+        caps.insert("supports_server_side_hls_seek", true);
+        caps.insert("supports_auth_headers_for_media", true);
+        caps.insert("subtitle_burn_policy", "automatic");
+        caps.insert("app_version", QCoreApplication::applicationVersion());
         apiClient.setClientCapabilities(caps);
     };
     syncClientCapabilities();
@@ -184,6 +213,7 @@ int main(int argc, char *argv[]) {
     QObject::connect(&sessionManager, &SessionManager::networkTypeChanged, &serverDiscovery, [&]() {
         serverDiscovery.setPreferredNetworkType(sessionManager.networkType());
     });
+    QObject::connect(&sessionManager, &SessionManager::playbackQualityModeChanged, &apiClient, syncClientCapabilities);
     QObject::connect(&sessionManager, &SessionManager::playbackMaxResolutionChanged, &apiClient, syncClientCapabilities);
     QObject::connect(&sessionManager, &SessionManager::playbackMaxBitrateBpsChanged, &apiClient, syncClientCapabilities);
     QObject::connect(&sessionManager, &SessionManager::playbackSupportedContainersChanged, &apiClient, syncClientCapabilities);
@@ -206,6 +236,13 @@ int main(int argc, char *argv[]) {
     QObject::connect(&apiClient, &ApiClient::libraryReceived, &libraryModel, &LibraryModel::setItems);
 
     playerController.setApiClient(&apiClient);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&]() {
+        const QString sessionId = playerController.sessionId();
+        if (!sessionId.isEmpty()) {
+            qInfo() << "Ending playback session during shutdown" << sessionId;
+            apiClient.endSessionBlocking(sessionId, 1500);
+        }
+    });
 
     QQmlApplicationEngine engine;
     QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app,
