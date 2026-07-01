@@ -74,6 +74,7 @@ public:
     Q_INVOKABLE void retryFromCurrentPosition();
     Q_INVOKABLE void retryWithLowerQuality();
     Q_INVOKABLE void endSession();
+    Q_INVOKABLE void recordAutomationEvent(const QString &event, const QVariantMap &fields = QVariantMap());
     Q_INVOKABLE void reset();
 
 signals:
@@ -153,4 +154,5 @@ private:
     bool m_seekInFlight = false;
     double m_pendingSeekSeconds = 0.0;
     QString m_pendingStreamUrl;
+    double m_lastAutomationPositionEvent = -1.0;
 };

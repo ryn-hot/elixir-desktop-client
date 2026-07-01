@@ -21,6 +21,17 @@ Item {
     property int subtitleSwitchAttempts: 0
     property bool userSelectedSubtitle: false
     property bool subtitleReloadPending: false
+    property string automationActionsText: (typeof playbackAutomationActions === "string") ? playbackAutomationActions : ""
+    property var automationActions: []
+    property int automationActionIndex: 0
+    property int automationDefaultActionIntervalMs: 900
+    property bool automationStarted: false
+    property bool automationRetryIssued: false
+    property int automationResumeActionIndex: -1
+    property string automationCaptureDir: (typeof playbackAutomationCaptureDir === "string") ? playbackAutomationCaptureDir : ""
+    property real lastAutomationObservationPosition: -1
+    property bool automationFrameCaptureRequested: false
+    property bool videoSelectionRepairRequested: false
     property string sessionMessage: playerController.sessionState === "ended"
         ? "Session ended"
         : (playerController.sessionState === "error"
@@ -238,7 +249,367 @@ Item {
         lastTrackCount = -1
         lastAudioTrackCount = 0
         lastSubtitleTrackCount = 0
+        videoSelectionRepairRequested = false
         clearTracks()
+    }
+
+    function parseAutomationActions() {
+        var raw = automationActionsText || ""
+        var parts = raw.split(/[\s,;]+/)
+        var actions = []
+        for (var i = 0; i < parts.length; i++) {
+            var action = String(parts[i] || "").trim().toLowerCase()
+            if (action !== "") {
+                actions.push(action)
+            }
+        }
+        return actions
+    }
+
+    function automationActionName(action) {
+        var text = String(action || "").trim().toLowerCase()
+        var separator = text.indexOf(":")
+        if (separator < 0) {
+            separator = text.indexOf("=")
+        }
+        if (separator > 0) {
+            text = text.substring(0, separator)
+        }
+        return text
+    }
+
+    function automationActionDelayMs(action) {
+        var text = String(action || "").trim().toLowerCase()
+        var separator = text.indexOf(":")
+        if (separator < 0) {
+            separator = text.indexOf("=")
+        }
+        if (separator < 0) {
+            return automationDefaultActionIntervalMs
+        }
+        var seconds = Number(text.substring(separator + 1))
+        if (!isFinite(seconds) || seconds <= 0) {
+            return automationDefaultActionIntervalMs
+        }
+        return Math.max(automationDefaultActionIntervalMs, Math.min(120000, Math.round(seconds * 1000)))
+    }
+
+    function maybeStartAutomation() {
+        if (automationStarted || automationActionsText === "" || !playerController.active) {
+            return
+        }
+        automationActions = parseAutomationActions()
+        if (automationActions.length === 0) {
+            return
+        }
+        var startIndex = automationResumeActionIndex >= 0
+            ? Math.min(automationResumeActionIndex, automationActions.length)
+            : 0
+        if (startIndex >= automationActions.length) {
+            automationResumeActionIndex = -1
+            return
+        }
+        var firstAction = automationActions[startIndex]
+        var startsWithRecoveryRetry = firstAction === "retry_same" || firstAction === "retry_from_current"
+        if (!startsWithRecoveryRetry && playerController.position < 1.0 && playerController.duration > 3.0) {
+            return
+        }
+        var resumed = automationResumeActionIndex >= 0
+        automationStarted = true
+        automationActionIndex = startIndex
+        automationResumeActionIndex = -1
+        playerController.recordAutomationEvent("automation_started", {
+            actions: automationActions.join(","),
+            start_index: automationActionIndex,
+            resumed: resumed
+        })
+        automationActionTimer.restart()
+    }
+
+    function finishAutomation() {
+        playerController.recordAutomationEvent("automation_finished", {
+            action_count: automationActionIndex
+        })
+    }
+
+    function automationFileSafe(value) {
+        var text = String(value || "unknown")
+        text = text.replace(/[^A-Za-z0-9_.-]/g, "_")
+        if (text === "" || text === "_") {
+            return "unknown"
+        }
+        return text
+    }
+
+    function trackCounts() {
+        var counts = {
+            audio: 0,
+            subtitle: 0,
+            video: 0
+        }
+        var trackList = mpv.getProperty("track-list")
+        if (!trackList || trackList.length === undefined) {
+            return counts
+        }
+        for (var i = 0; i < trackList.length; i++) {
+            var track = trackList[i]
+            if (!track || !track.type) {
+                continue
+            }
+            if (track.type === "audio") {
+                counts.audio += 1
+            } else if (track.type === "sub") {
+                counts.subtitle += 1
+            } else if (track.type === "video") {
+                counts.video += 1
+            }
+        }
+        return counts
+    }
+
+    function hasObjectData(value) {
+        if (value === undefined || value === null) {
+            return false
+        }
+        if (typeof value !== "object") {
+            return true
+        }
+        for (var key in value) {
+            if (value[key] !== undefined && value[key] !== null && String(value[key]) !== "") {
+                return true
+            }
+        }
+        return false
+    }
+
+    function maybeCaptureAutomationFrame(videoReady) {
+        if (automationFrameCaptureRequested || automationCaptureDir === "" || !videoReady) {
+            return
+        }
+        if (playerController.position < 1.0 && playerController.duration > 3.0) {
+            return
+        }
+        automationFrameCaptureRequested = true
+        var path = automationCaptureDir + "/frame-" +
+            automationFileSafe(playerController.sessionId) + "-" +
+            automationFileSafe(playerController.mode) + "-" +
+            Math.max(0, Math.round(playerController.position * 1000)) + ".png"
+        mpv.captureVideoFrame(path)
+        playerController.recordAutomationEvent("video_frame_capture_requested", {
+            capture_path: path,
+            mode: playerController.mode,
+            delivery: playerController.delivery,
+            position_seconds: playerController.position
+        })
+    }
+
+    function recordAutomationObservation(force) {
+        if (!playerController.active) {
+            return
+        }
+        if (!force && automationActionsText === "" && automationCaptureDir === "") {
+            return
+        }
+        var current = playerController.position
+        if (!force && lastAutomationObservationPosition >= 0 &&
+                Math.abs(current - lastAutomationObservationPosition) < 1.5) {
+            return
+        }
+        lastAutomationObservationPosition = current
+
+        var counts = trackCounts()
+        var videoParams = mpv.getProperty("video-params") || ({})
+        var audioParams = mpv.getProperty("audio-params") || ({})
+        var videoReady = (mpv.getProperty("vo-configured") === true) ||
+            hasObjectData(videoParams) || counts.video > 0
+        var audioReady = hasObjectData(audioParams) || counts.audio > 0
+        var subtitleVisible = mpv.getProperty("sub-visibility") === true
+        var subtitleSid = mpv.getProperty("sid")
+        var audioAid = mpv.getProperty("aid")
+        var videoVid = mpv.getProperty("vid")
+        playerController.recordAutomationEvent("player_observation", {
+            session_id: playerController.sessionId,
+            mode: playerController.mode,
+            delivery: playerController.delivery,
+            position_seconds: current,
+            video_ready: videoReady,
+            audio_ready: audioReady,
+            audio_track_count: counts.audio,
+            video_track_count: counts.video,
+            subtitle_track_count: counts.subtitle,
+            selected_audio_id: String(audioAid),
+            selected_video_id: String(videoVid),
+            selected_subtitle_id: String(subtitleSid),
+            subtitle_visible: subtitleVisible,
+            server_seek_required: playerController.serverSeekRequired,
+            paused: playerController.paused,
+            decision_reason: playerController.decisionReason,
+            quality_label: playerController.qualityLabel,
+            video_params: videoParams,
+            audio_params: audioParams
+        })
+        maybeCaptureAutomationFrame(videoReady)
+    }
+
+    function automationSeekTarget(direction) {
+        var current = playerController.position
+        if (!isFinite(current)) {
+            current = 0
+        }
+        var duration = playerController.duration
+        if (!isFinite(duration) || duration <= 0) {
+            duration = current + 12
+        }
+        if (direction < 0) {
+            return Math.max(0, current - 2.0)
+        }
+        return Math.min(Math.max(0, duration - 1.0), current + 4.0)
+    }
+
+    function requestSeek(target) {
+        if (playerController.serverSeekRequired) {
+            mpv.setPropertyAsync("pause", true)
+            playerController.setPaused(true)
+            playerController.seek(target)
+        } else {
+            mpv.setPropertyAsync("time-pos", target)
+            playerController.seek(target)
+        }
+    }
+
+    function runAutomationAction(action) {
+        var actionName = automationActionName(action)
+        playerController.recordAutomationEvent("automation_action", {
+            action: actionName,
+            raw_action: action
+        })
+        if (actionName === "pause") {
+            mpv.setPropertyAsync("pause", true)
+            playerController.setPaused(true)
+            return
+        }
+        if (actionName === "resume") {
+            mpv.setPropertyAsync("pause", false)
+            playerController.setPaused(false)
+            return
+        }
+        if (actionName === "seek_forward") {
+            requestSeek(automationSeekTarget(1))
+            return
+        }
+        if (actionName === "seek_backward") {
+            requestSeek(automationSeekTarget(-1))
+            return
+        }
+        if (actionName === "audio_next") {
+            refreshTracks()
+            if (audioTracks.count <= 1) {
+                playerController.recordAutomationEvent("audio_track_switch_unavailable", {
+                    reason: "no_alternate_audio_tracks"
+                })
+                return
+            }
+            var nextAudioIndex = audioCombo.currentIndex + 1
+            if (nextAudioIndex >= audioTracks.count) {
+                nextAudioIndex = 0
+            }
+            var audioEntry = audioTracks.get(nextAudioIndex)
+            audioCombo.currentIndex = nextAudioIndex
+            if (audioEntry.trackId === "auto") {
+                preferredAudioLabel = ""
+                mpv.setPropertyAsync("aid", "auto")
+            } else {
+                preferredAudioLabel = audioEntry.label
+                mpv.setPropertyAsync("aid", Number(audioEntry.trackId))
+            }
+            playerController.recordAutomationEvent("audio_track_switch_requested", {
+                label: audioEntry.label,
+                track_id: String(audioEntry.trackId)
+            })
+            return
+        }
+        if (actionName === "subtitle_next") {
+            refreshTracks()
+            if (subtitleTracks.count <= 1) {
+                playerController.recordAutomationEvent("subtitle_track_switch_unavailable", {
+                    reason: "no_subtitle_tracks"
+                })
+                return
+            }
+            var nextSubtitleIndex = subtitleCombo.currentIndex + 1
+            if (nextSubtitleIndex >= subtitleTracks.count) {
+                nextSubtitleIndex = 0
+            }
+            var subtitleEntry = subtitleTracks.get(nextSubtitleIndex)
+            subtitleCombo.currentIndex = nextSubtitleIndex
+            if (subtitleEntry.trackId === "no") {
+                sessionManager.subtitleMode = "off"
+                sessionManager.subtitleLang = ""
+                sessionManager.subtitleTitle = ""
+                applySubtitleSid("no", "automation=off")
+            } else {
+                sessionManager.subtitleMode = "track"
+                sessionManager.subtitleLang = subtitleEntry.lang || ""
+                sessionManager.subtitleTitle = subtitleEntry.title || subtitleEntry.label || ""
+                applySubtitleSid(Number(subtitleEntry.trackId), "automation=track")
+                requestSubtitleReload("automation-switch")
+            }
+            userSelectedSubtitle = true
+            playerController.recordAutomationEvent("subtitle_track_switch_requested", {
+                label: subtitleEntry.label,
+                track_id: String(subtitleEntry.trackId)
+            })
+            return
+        }
+        if (actionName === "lower_quality") {
+            if (!playerController.lowerQualityRetryAvailable) {
+                playerController.recordAutomationEvent("lower_quality_unavailable", {
+                    reason: "no_lower_quality_retry"
+                })
+                return
+            }
+            playerController.recordAutomationEvent("lower_quality_requested", {})
+            playerController.retryWithLowerQuality()
+            return
+        }
+        if (actionName === "wait") {
+            automationActionTimer.interval = automationActionDelayMs(action)
+            playerController.recordAutomationEvent("automation_wait", {
+                position_seconds: playerController.position,
+                delay_ms: automationActionTimer.interval
+            })
+            return
+        }
+        if (actionName === "retry_same" || actionName === "retry_from_current") {
+            if (automationRetryIssued) {
+                playerController.recordAutomationEvent("retry_recovery_already_requested", {
+                    action: actionName
+                })
+                return
+            }
+            automationRetryIssued = true
+            automationResumeActionIndex = automationActionIndex
+            playerController.recordAutomationEvent("retry_recovery_requested", {
+                action: actionName,
+                position_seconds: playerController.position
+            })
+            if (actionName === "retry_from_current") {
+                playerController.retryFromCurrentPosition()
+            } else {
+                playerController.retrySamePlan()
+            }
+            return
+        }
+        if (actionName === "stop") {
+            playerController.recordAutomationEvent("stop_requested", {})
+            playerController.endSession()
+            mpv.commandAsync(["stop"])
+            return
+        }
+        playerController.recordAutomationEvent("automation_action_unknown", {
+            action: actionName,
+            raw_action: action
+        })
     }
 
     function toFiniteNumber(value) {
@@ -326,6 +697,7 @@ Item {
         }
         applyHeaders()
         resetTrackState()
+        mpv.setPropertyAsync("vid", "auto")
         mpv.commandAsync(["loadfile", playerController.streamUrl, "replace"])
         mpv.setPropertyAsync("pause", false)
         trackRefreshTimer.interval = mpv.hlsDelivery ? 1200 : 500
@@ -349,10 +721,21 @@ Item {
         var nextSubtitles = []
         var audioIndex = 0
         var subtitleIndex = 0
+        var videoTrackCount = 0
+        var selectedVideo = false
+        var firstVideoTrackId = -1
 
         for (var i = 0; i < trackList.length; i++) {
             var track = trackList[i]
             if (!track || !track.type) {
+                continue
+            }
+            if (track.type === "video") {
+                videoTrackCount += 1
+                if (firstVideoTrackId < 0) {
+                    firstVideoTrackId = Number(track.id)
+                }
+                selectedVideo = selectedVideo || track.selected === true
                 continue
             }
             if (track.type === "audio") {
@@ -394,6 +777,12 @@ Item {
                     subtitleIndex = nextSubtitles.length
                 }
             }
+        }
+
+        if (videoTrackCount > 0 && !selectedVideo && !videoSelectionRepairRequested) {
+            videoSelectionRepairRequested = true
+            console.log("VIDEO_SELECT", "repair vid=" + firstVideoTrackId)
+            mpv.selectVideoTrack(firstVideoTrackId)
         }
 
         if (playerController.serverSeekRequired) {
@@ -443,11 +832,7 @@ Item {
     }
 
     function applyHeaders() {
-        if (apiClient.authToken !== "") {
-            mpv.setPropertyAsync("http-header-fields", ["Authorization: Bearer " + apiClient.authToken])
-        } else {
-            mpv.setPropertyAsync("http-header-fields", [])
-        }
+        mpv.setAuthorizationHeader(apiClient.authToken)
     }
 
     MpvItem {
@@ -871,6 +1256,8 @@ Item {
             var pos = readPlaybackPosition()
             if (pos !== null) {
                 playerController.updateLocalPosition(pos)
+                recordAutomationObservation(false)
+                maybeStartAutomation()
             }
             var paused = mpv.getProperty("pause")
             if (paused !== undefined && paused !== null) {
@@ -903,6 +1290,27 @@ Item {
         interval: 900
         repeat: false
         onTriggered: refreshTracks()
+    }
+
+    Timer {
+        id: automationActionTimer
+        interval: automationDefaultActionIntervalMs
+        repeat: false
+        onTriggered: {
+            if (!automationStarted || automationActionIndex >= automationActions.length) {
+                finishAutomation()
+                return
+            }
+            var action = automationActions[automationActionIndex]
+            automationActionIndex += 1
+            interval = automationDefaultActionIntervalMs
+            runAutomationAction(action)
+            if (automationActionIndex < automationActions.length && playerController.active) {
+                restart()
+            } else {
+                finishAutomation()
+            }
+        }
     }
 
     Timer {
@@ -942,8 +1350,10 @@ Item {
                 return
             }
             subtitleReloadPending = false
-            var resumeAt = playerController.position
-            playerController.seek(resumeAt)
+            playerController.recordAutomationEvent("subtitle_replan_requested", {
+                position_seconds: playerController.position
+            })
+            playerController.retryFromCurrentPosition()
         }
     }
 
@@ -974,6 +1384,12 @@ Item {
         target: playerController
         function onSessionIdChanged() {
             userSelectedSubtitle = false
+            automationStarted = false
+            if (automationResumeActionIndex < 0) {
+                automationActionIndex = 0
+            }
+            lastAutomationObservationPosition = -1
+            automationFrameCaptureRequested = false
             ensureEnglishDefaultForSession()
         }
         function onStreamUrlChanged() {

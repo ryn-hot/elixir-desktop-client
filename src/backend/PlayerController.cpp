@@ -3,6 +3,11 @@
 #include "backend/ApiClient.h"
 
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QVariantList>
 #include <QStringList>
 #include <QUrl>
@@ -22,6 +27,44 @@ QString sanitizeUrlForLog(const QString &url) {
     parsed.setQuery(QString());
     parsed.setFragment(QString());
     return parsed.toString();
+}
+
+QString automationLogPath() {
+    return qEnvironmentVariable("ELIXIR_PLAYBACK_AUTOMATION_LOG").trimmed();
+}
+
+QJsonObject jsonObjectFromVariantMap(const QVariantMap &map) {
+    return QJsonObject::fromVariantMap(map);
+}
+
+void appendAutomationEvent(const QString &event, QVariantMap fields = {}) {
+    const QString path = automationLogPath();
+    if (path.isEmpty()) {
+        return;
+    }
+
+    fields.insert(QStringLiteral("event"), event);
+    fields.insert(
+        QStringLiteral("timestamp"),
+        QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    if (fields.contains(QStringLiteral("stream_url"))) {
+        fields.insert(
+            QStringLiteral("stream_url"),
+            sanitizeUrlForLog(fields.value(QStringLiteral("stream_url")).toString()));
+    }
+
+    const QFileInfo info(path);
+    if (!info.absolutePath().isEmpty()) {
+        QDir().mkpath(info.absolutePath());
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::Append | QIODevice::Text)) {
+        qWarning() << "Failed to open playback automation log" << path << file.errorString();
+        return;
+    }
+    const QJsonDocument doc(jsonObjectFromVariantMap(fields));
+    file.write(doc.toJson(QJsonDocument::Compact));
+    file.write("\n");
 }
 
 QVariantMap variantMapValue(const QVariant &value) {
@@ -400,6 +443,20 @@ void PlayerController::beginPlayback(const QVariantMap &info) {
     m_seekInFlight = false;
     m_pendingSeekSeconds = 0.0;
     m_pendingStreamUrl.clear();
+    m_lastAutomationPositionEvent = -1.0;
+    appendAutomationEvent(QStringLiteral("playback_started"), {
+        {QStringLiteral("session_id"), m_sessionId},
+        {QStringLiteral("mode"), m_mode},
+        {QStringLiteral("delivery"), m_delivery},
+        {QStringLiteral("media_file_id"), m_mediaFileId},
+        {QStringLiteral("stream_url"), m_streamUrl},
+        {QStringLiteral("server_seek_required"), m_serverSeekRequired},
+        {QStringLiteral("decision_reason"), m_decisionReason},
+        {QStringLiteral("quality_label"), m_qualityLabel},
+        {QStringLiteral("selected_audio_track"), m_selectedAudioTrack},
+        {QStringLiteral("selected_subtitle_track"), m_selectedSubtitleTrack},
+        {QStringLiteral("duration_seconds"), m_duration}
+    });
 }
 
 void PlayerController::applyPlaybackFailure(const QVariantMap &error) {
@@ -443,6 +500,13 @@ void PlayerController::applyPlaybackFailure(const QVariantMap &error) {
     if (!logTail.isEmpty()) {
         setFfmpegLogTail(redactSensitiveText(logTail));
     }
+    appendAutomationEvent(QStringLiteral("playback_failed"), {
+        {QStringLiteral("session_id"), m_sessionId},
+        {QStringLiteral("message"), message},
+        {QStringLiteral("mode"), m_mode},
+        {QStringLiteral("delivery"), m_delivery},
+        {QStringLiteral("decision_reason"), m_decisionReason}
+    });
 }
 
 void PlayerController::applySessionPoll(const QVariantMap &info) {
@@ -499,6 +563,18 @@ void PlayerController::updateLocalPosition(double seconds) {
         return;
     }
     setLocalPositionInternal(seconds);
+    const double absoluteSeconds = position();
+    if (m_lastAutomationPositionEvent < 0.0
+        || std::fabs(absoluteSeconds - m_lastAutomationPositionEvent) >= 2.0) {
+        m_lastAutomationPositionEvent = absoluteSeconds;
+        appendAutomationEvent(QStringLiteral("position"), {
+            {QStringLiteral("session_id"), m_sessionId},
+            {QStringLiteral("position_seconds"), absoluteSeconds},
+            {QStringLiteral("local_position_seconds"), m_localPosition},
+            {QStringLiteral("seek_offset_seconds"), m_seekOffset},
+            {QStringLiteral("paused"), m_paused}
+        });
+    }
 }
 
 void PlayerController::setPaused(bool paused) {
@@ -507,6 +583,10 @@ void PlayerController::setPaused(bool paused) {
     }
     m_paused = paused;
     emit pausedChanged();
+    appendAutomationEvent(paused ? QStringLiteral("paused") : QStringLiteral("resumed"), {
+        {QStringLiteral("session_id"), m_sessionId},
+        {QStringLiteral("position_seconds"), position()}
+    });
 }
 
 void PlayerController::seek(double seconds) {
@@ -519,6 +599,11 @@ void PlayerController::seek(double seconds) {
             m_pendingStreamUrl = cacheBustUrl(m_streamUrl);
             m_seekInFlight = true;
             qInfo() << "Seek request" << m_sessionId << seconds;
+            appendAutomationEvent(QStringLiteral("seek_requested"), {
+                {QStringLiteral("session_id"), m_sessionId},
+                {QStringLiteral("position_seconds"), seconds},
+                {QStringLiteral("server_seek_required"), true}
+            });
             m_apiClient->seekPlayback(m_sessionId, seconds);
         }
         setSeekOffsetInternal(seconds);
@@ -527,6 +612,11 @@ void PlayerController::seek(double seconds) {
     }
     setSeekOffsetInternal(0.0);
     setLocalPositionInternal(seconds);
+    appendAutomationEvent(QStringLiteral("seek_applied"), {
+        {QStringLiteral("session_id"), m_sessionId},
+        {QStringLiteral("position_seconds"), seconds},
+        {QStringLiteral("server_seek_required"), false}
+    });
 }
 
 void PlayerController::retrySamePlan() {
@@ -569,11 +659,33 @@ void PlayerController::retryWithLowerQuality() {
 }
 
 void PlayerController::endSession() {
+    if (!m_sessionId.isEmpty()) {
+        appendAutomationEvent(QStringLiteral("session_end_requested"), {
+            {QStringLiteral("session_id"), m_sessionId},
+            {QStringLiteral("position_seconds"), position()},
+            {QStringLiteral("mode"), m_mode},
+            {QStringLiteral("delivery"), m_delivery}
+        });
+    }
     if (m_apiClient && !m_sessionId.isEmpty()) {
         qInfo() << "Ending session" << m_sessionId;
         m_apiClient->endSession(m_sessionId);
     }
     reset();
+}
+
+void PlayerController::recordAutomationEvent(const QString &event, const QVariantMap &fields) {
+    if (event.trimmed().isEmpty()) {
+        return;
+    }
+    QVariantMap payload = fields;
+    if (!m_sessionId.isEmpty() && !payload.contains(QStringLiteral("session_id"))) {
+        payload.insert(QStringLiteral("session_id"), m_sessionId);
+    }
+    if (!payload.contains(QStringLiteral("position_seconds"))) {
+        payload.insert(QStringLiteral("position_seconds"), position());
+    }
+    appendAutomationEvent(event, payload);
 }
 
 void PlayerController::reset() {
@@ -602,6 +714,7 @@ void PlayerController::reset() {
     m_seekInFlight = false;
     m_pendingSeekSeconds = 0.0;
     m_pendingStreamUrl.clear();
+    m_lastAutomationPositionEvent = -1.0;
 }
 
 void PlayerController::setStreamUrl(const QString &value) {
@@ -921,6 +1034,11 @@ void PlayerController::handleSeekCompleted(const QString &sessionId, double seco
     m_seekInFlight = false;
     qInfo() << "Seek completed" << sessionId << seconds;
     setStreamUrl(m_pendingStreamUrl);
+    appendAutomationEvent(QStringLiteral("seek_completed"), {
+        {QStringLiteral("session_id"), sessionId},
+        {QStringLiteral("position_seconds"), seconds},
+        {QStringLiteral("stream_url"), m_streamUrl}
+    });
 }
 
 void PlayerController::handleSeekFailed(const QString &sessionId, const QString &error) {
@@ -932,6 +1050,10 @@ void PlayerController::handleSeekFailed(const QString &sessionId, const QString 
     if (!error.isEmpty()) {
         setSessionError(error);
     }
+    appendAutomationEvent(QStringLiteral("seek_failed"), {
+        {QStringLiteral("session_id"), sessionId},
+        {QStringLiteral("message"), error}
+    });
 }
 
 QString PlayerController::buildStreamUrl(const QString &baseUrl, const QString &path) const {

@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QNetworkAccessManager>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QUrl>
 #include <QVariant>
@@ -56,6 +57,9 @@ class ApiClient : public QObject {
     Q_PROPERTY(QVariantMap networkProtectionListenPortSyncPlan READ networkProtectionListenPortSyncPlan NOTIFY networkProtectionChanged)
     Q_PROPERTY(QVariantMap downloadBrokerRoutes READ downloadBrokerRoutes NOTIFY networkProtectionChanged)
     Q_PROPERTY(bool networkProtectionLoading READ networkProtectionLoading NOTIFY networkProtectionLoadingChanged)
+    Q_PROPERTY(QVariantMap playbackHardwareReadiness READ playbackHardwareReadiness NOTIFY playbackHardwareChanged)
+    Q_PROPERTY(QVariantList playbackHardwareWarnings READ playbackHardwareWarnings NOTIFY playbackHardwareChanged)
+    Q_PROPERTY(bool playbackHardwareLoading READ playbackHardwareLoading NOTIFY playbackHardwareLoadingChanged)
     Q_PROPERTY(QVariantMap mediaFindResult READ mediaFindResult NOTIFY mediaFindResultChanged)
     Q_PROPERTY(bool mediaFindLoading READ mediaFindLoading NOTIFY mediaFindLoadingChanged)
     Q_PROPERTY(QVariantMap mediaManagerPreferences READ mediaManagerPreferences NOTIFY mediaManagerPreferencesChanged)
@@ -133,6 +137,9 @@ public:
     QVariantMap networkProtectionListenPortSyncPlan() const;
     QVariantMap downloadBrokerRoutes() const;
     bool networkProtectionLoading() const;
+    QVariantMap playbackHardwareReadiness() const;
+    QVariantList playbackHardwareWarnings() const;
+    bool playbackHardwareLoading() const;
     QVariantMap mediaFindResult() const;
     bool mediaFindLoading() const;
     QVariantMap mediaManagerPreferences() const;
@@ -222,6 +229,9 @@ public:
     Q_INVOKABLE void fetchNetworkProtectionProviderPresets();
     Q_INVOKABLE void fetchNetworkProtectionListenPortSyncPlan();
     Q_INVOKABLE void applyNetworkProtectionListenPortSync();
+    Q_INVOKABLE void fetchPlaybackHardwareReadiness(bool diagnostics = false);
+    Q_INVOKABLE void fetchPlaybackHardwareWarnings();
+    Q_INVOKABLE void refreshPlaybackHardwareStatus(bool diagnostics = false);
     Q_INVOKABLE void applyFirstRunDownloadSetup(const QString &choice, bool acceptedWarpDisclosure = false);
     Q_INVOKABLE void createCloudflareWarpProfile(bool acceptedDisclosure);
     Q_INVOKABLE void resetCloudflareWarpProfile(bool recreate = true);
@@ -331,6 +341,8 @@ signals:
     void extensionsDownloaderSettingsChanged();
     void networkProtectionChanged();
     void networkProtectionLoadingChanged();
+    void playbackHardwareChanged();
+    void playbackHardwareLoadingChanged();
     void mediaFindResultChanged();
     void mediaFindLoadingChanged();
     void mediaManagerPreferencesChanged();
@@ -403,6 +415,9 @@ private:
     void updateNetworkProtectionProviderPresets(const QJsonObject &obj);
     void updateNetworkProtectionListenPortSyncPlan(const QJsonObject &obj);
     void updateDownloadBrokerRoutes(const QJsonObject &obj);
+    void setPlaybackHardwareLoading(bool loading);
+    void updatePlaybackHardwareReadiness(const QJsonObject &obj);
+    void updatePlaybackHardwareWarnings(const QJsonArray &warnings);
     void updateMediaAcquisitionState(const QJsonObject &obj);
     void updateAcquisitionReviewReleases(const QJsonObject &obj);
     void updateAcquisitionReviewDetail(const QJsonObject &obj);
@@ -415,6 +430,7 @@ private:
         const SuccessHandler &onSuccess,
         const ErrorHandler &onError = ErrorHandler(),
         bool allowNonJson = false);
+    void applyCurrentPlaybackContext(QJsonObject &body) const;
     void sendPlaybackRequest(const QJsonObject &body);
 
     QNetworkAccessManager m_manager;
@@ -464,6 +480,9 @@ private:
     QVariantMap m_networkProtectionListenPortSyncPlan;
     QVariantMap m_downloadBrokerRoutes;
     bool m_networkProtectionLoading = false;
+    QVariantMap m_playbackHardwareReadiness;
+    QVariantList m_playbackHardwareWarnings;
+    bool m_playbackHardwareLoading = false;
     QVariantMap m_mediaFindResult;
     bool m_mediaFindLoading = false;
     quint64 m_mediaFindRequestId = 0;

@@ -16,7 +16,7 @@ constexpr const char *kPlaybackSupportedContainersKey = "playback/supportedConta
 constexpr const char *kPlaybackSupportedVideoCodecsKey = "playback/supportedVideoCodecs";
 constexpr const char *kPlaybackSupportedAudioCodecsKey = "playback/supportedAudioCodecs";
 constexpr const char *kPlaybackProfileVersionKey = "playback/profileVersion";
-constexpr int kNativeMpvPlaybackProfileVersion = 3;
+constexpr int kNativeMpvPlaybackProfileVersion = 4;
 constexpr const char *kSubtitleModeKey = "playback/subtitleMode";
 constexpr const char *kSubtitleLangKey = "playback/subtitleLang";
 constexpr const char *kSubtitleTitleKey = "playback/subtitleTitle";
@@ -92,11 +92,21 @@ QString SessionManager::baseUrl() const {
 }
 
 void SessionManager::setBaseUrl(const QString &value) {
+    setBaseUrlInternal(value, true);
+}
+
+void SessionManager::setBaseUrlRuntimeOverride(const QString &value) {
+    setBaseUrlInternal(value, false);
+}
+
+void SessionManager::setBaseUrlInternal(const QString &value, bool persist) {
     if (m_baseUrl == value) {
         return;
     }
     m_baseUrl = value;
-    storeValue(kBaseUrlKey, m_baseUrl);
+    if (persist) {
+        storeValue(kBaseUrlKey, m_baseUrl);
+    }
     emit baseUrlChanged();
 }
 
@@ -105,11 +115,21 @@ QString SessionManager::registryUrl() const {
 }
 
 void SessionManager::setRegistryUrl(const QString &value) {
+    setRegistryUrlInternal(value, true);
+}
+
+void SessionManager::setRegistryUrlRuntimeOverride(const QString &value) {
+    setRegistryUrlInternal(value, false);
+}
+
+void SessionManager::setRegistryUrlInternal(const QString &value, bool persist) {
     if (m_registryUrl == value) {
         return;
     }
     m_registryUrl = value;
-    storeValue(kRegistryUrlKey, m_registryUrl);
+    if (persist) {
+        storeValue(kRegistryUrlKey, m_registryUrl);
+    }
     emit registryUrlChanged();
 }
 
@@ -118,11 +138,21 @@ QString SessionManager::authToken() const {
 }
 
 void SessionManager::setAuthToken(const QString &value) {
+    setAuthTokenInternal(value, true);
+}
+
+void SessionManager::setAuthTokenRuntimeOverride(const QString &value) {
+    setAuthTokenInternal(value, false);
+}
+
+void SessionManager::setAuthTokenInternal(const QString &value, bool persist) {
     if (m_authToken == value) {
         return;
     }
     m_authToken = value;
-    storeValue(kAuthTokenKey, m_authToken);
+    if (persist) {
+        storeValue(kAuthTokenKey, m_authToken);
+    }
     emit authTokenChanged();
 }
 
@@ -131,11 +161,21 @@ QString SessionManager::accessTokenExpiresAt() const {
 }
 
 void SessionManager::setAccessTokenExpiresAt(const QString &value) {
+    setAccessTokenExpiresAtInternal(value, true);
+}
+
+void SessionManager::setAccessTokenExpiresAtRuntimeOverride(const QString &value) {
+    setAccessTokenExpiresAtInternal(value, false);
+}
+
+void SessionManager::setAccessTokenExpiresAtInternal(const QString &value, bool persist) {
     if (m_accessTokenExpiresAt == value) {
         return;
     }
     m_accessTokenExpiresAt = value;
-    storeValue(kAccessTokenExpiresAtKey, m_accessTokenExpiresAt);
+    if (persist) {
+        storeValue(kAccessTokenExpiresAtKey, m_accessTokenExpiresAt);
+    }
     emit accessTokenExpiresAtChanged();
 }
 
@@ -327,11 +367,21 @@ QString SessionManager::networkType() const {
 }
 
 void SessionManager::setNetworkType(const QString &value) {
+    setNetworkTypeInternal(value, true);
+}
+
+void SessionManager::setNetworkTypeRuntimeOverride(const QString &value) {
+    setNetworkTypeInternal(value, false);
+}
+
+void SessionManager::setNetworkTypeInternal(const QString &value, bool persist) {
     if (m_networkType == value) {
         return;
     }
     m_networkType = value;
-    storeValue(kNetworkTypeKey, m_networkType);
+    if (persist) {
+        storeValue(kNetworkTypeKey, m_networkType);
+    }
     emit networkTypeChanged();
 }
 

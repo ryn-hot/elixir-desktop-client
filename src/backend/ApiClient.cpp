@@ -549,6 +549,18 @@ bool ApiClient::networkProtectionLoading() const {
     return m_networkProtectionLoading;
 }
 
+QVariantMap ApiClient::playbackHardwareReadiness() const {
+    return m_playbackHardwareReadiness;
+}
+
+QVariantList ApiClient::playbackHardwareWarnings() const {
+    return m_playbackHardwareWarnings;
+}
+
+bool ApiClient::playbackHardwareLoading() const {
+    return m_playbackHardwareLoading;
+}
+
 QVariantMap ApiClient::mediaFindResult() const {
     return m_mediaFindResult;
 }
@@ -884,19 +896,7 @@ void ApiClient::startPlayback(const QString &mediaItemId, const QString &preferr
     } else {
         body.insert("preferred_file_id", QJsonValue::Null);
     }
-    if (!m_networkType.isEmpty() && m_networkType != "auto") {
-        body.insert("network_type", m_networkType);
-    }
-    if (!m_clientCapabilities.isEmpty()) {
-        const QJsonObject caps = QJsonObject::fromVariantMap(m_clientCapabilities);
-        body.insert("client_capabilities", caps);
-        if (caps.contains("profile_version")) {
-            body.insert("profile_version", caps.value("profile_version"));
-        }
-        if (caps.contains("app_version")) {
-            body.insert("app_version", caps.value("app_version"));
-        }
-    }
+    applyCurrentPlaybackContext(body);
     m_lastPlaybackBody = body;
     sendPlaybackRequest(body);
 }
@@ -908,19 +908,7 @@ void ApiClient::startEpisodePlayback(const QString &mediaItemId, const QString &
     } else {
         body.insert("preferred_episode_id", QJsonValue::Null);
     }
-    if (!m_networkType.isEmpty() && m_networkType != "auto") {
-        body.insert("network_type", m_networkType);
-    }
-    if (!m_clientCapabilities.isEmpty()) {
-        const QJsonObject caps = QJsonObject::fromVariantMap(m_clientCapabilities);
-        body.insert("client_capabilities", caps);
-        if (caps.contains("profile_version")) {
-            body.insert("profile_version", caps.value("profile_version"));
-        }
-        if (caps.contains("app_version")) {
-            body.insert("app_version", caps.value("app_version"));
-        }
-    }
+    applyCurrentPlaybackContext(body);
     m_lastPlaybackBody = body;
     sendPlaybackRequest(body);
 }
@@ -935,7 +923,10 @@ void ApiClient::retryLastPlayback() {
         emit requestFailedDetailed("/api/v1/play", error);
         return;
     }
-    sendPlaybackRequest(m_lastPlaybackBody);
+    QJsonObject body = m_lastPlaybackBody;
+    applyCurrentPlaybackContext(body);
+    m_lastPlaybackBody = body;
+    sendPlaybackRequest(body);
 }
 
 void ApiClient::retryLastPlaybackFrom(double seconds) {
@@ -947,6 +938,8 @@ void ApiClient::retryLastPlaybackFrom(double seconds) {
     if (std::isfinite(seconds) && seconds > 0.0) {
         body.insert("start_position_seconds", seconds);
     }
+    applyCurrentPlaybackContext(body);
+    m_lastPlaybackBody = body;
     sendPlaybackRequest(body);
 }
 
@@ -959,12 +952,23 @@ void ApiClient::retryLastPlaybackWithLowerQuality(double seconds, int maxBitrate
     if (std::isfinite(seconds) && seconds > 0.0) {
         body.insert("start_position_seconds", seconds);
     }
+    applyCurrentPlaybackContext(body);
     QJsonObject caps = body.value("client_capabilities").toObject();
     if (maxBitrateBps > 0) {
         caps.insert("max_bitrate_bps", maxBitrateBps);
     }
     caps.insert("quality_mode", "fixed");
     body.insert("client_capabilities", caps);
+    if (caps.contains("profile_version")) {
+        body.insert("profile_version", caps.value("profile_version"));
+    }
+    if (caps.contains("app_version")) {
+        body.insert("app_version", caps.value("app_version"));
+    }
+    if (!m_networkType.isEmpty() && m_networkType != "auto") {
+        body.insert("network_type", m_networkType);
+    }
+    m_lastPlaybackBody = body;
     sendPlaybackRequest(body);
 }
 
@@ -1009,6 +1013,22 @@ void ApiClient::endSession(const QString &sessionId) {
                 [](const QJsonDocument &) {},
                 ErrorHandler(),
                 true);
+}
+
+void ApiClient::applyCurrentPlaybackContext(QJsonObject &body) const {
+    if (!m_networkType.isEmpty() && m_networkType != "auto") {
+        body.insert("network_type", m_networkType);
+    }
+    if (!m_clientCapabilities.isEmpty()) {
+        const QJsonObject caps = QJsonObject::fromVariantMap(m_clientCapabilities);
+        body.insert("client_capabilities", caps);
+        if (caps.contains("profile_version")) {
+            body.insert("profile_version", caps.value("profile_version"));
+        }
+        if (caps.contains("app_version")) {
+            body.insert("app_version", caps.value("app_version"));
+        }
+    }
 }
 
 void ApiClient::sendPlaybackRequest(const QJsonObject &body) {
@@ -2173,6 +2193,51 @@ void ApiClient::applyNetworkProtectionListenPortSync() {
         });
 }
 
+void ApiClient::fetchPlaybackHardwareReadiness(bool diagnostics) {
+    setPlaybackHardwareLoading(true);
+    const QString path = diagnostics
+        ? QStringLiteral("/api/v1/playback/hardware/readiness?diagnostics=true")
+        : QStringLiteral("/api/v1/playback/hardware/readiness");
+    sendRequest(
+        "GET",
+        path,
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setPlaybackHardwareLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/playback/hardware/readiness",
+                    "Playback hardware readiness response was not an object.");
+                return;
+            }
+            updatePlaybackHardwareReadiness(doc.object());
+        },
+        [this](const QString &) {
+            setPlaybackHardwareLoading(false);
+        });
+}
+
+void ApiClient::fetchPlaybackHardwareWarnings() {
+    sendRequest(
+        "GET",
+        "/api/v1/playback/hardware/warnings",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isArray()) {
+                emit requestFailed(
+                    "/api/v1/playback/hardware/warnings",
+                    "Playback hardware warning response was not a list.");
+                return;
+            }
+            updatePlaybackHardwareWarnings(doc.array());
+        });
+}
+
+void ApiClient::refreshPlaybackHardwareStatus(bool diagnostics) {
+    fetchPlaybackHardwareReadiness(diagnostics);
+    fetchPlaybackHardwareWarnings();
+}
+
 void ApiClient::applyFirstRunDownloadSetup(const QString &choice, bool acceptedWarpDisclosure) {
     const QString trimmedChoice = choice.trimmed();
     if (trimmedChoice.isEmpty()) {
@@ -2560,6 +2625,32 @@ void ApiClient::updateDownloadBrokerRoutes(const QJsonObject &obj) {
     }
     m_downloadBrokerRoutes = value;
     emit networkProtectionChanged();
+}
+
+void ApiClient::setPlaybackHardwareLoading(bool loading) {
+    if (m_playbackHardwareLoading == loading) {
+        return;
+    }
+    m_playbackHardwareLoading = loading;
+    emit playbackHardwareLoadingChanged();
+}
+
+void ApiClient::updatePlaybackHardwareReadiness(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_playbackHardwareReadiness == value) {
+        return;
+    }
+    m_playbackHardwareReadiness = value;
+    emit playbackHardwareChanged();
+}
+
+void ApiClient::updatePlaybackHardwareWarnings(const QJsonArray &warnings) {
+    const QVariantList value = warnings.toVariantList();
+    if (m_playbackHardwareWarnings == value) {
+        return;
+    }
+    m_playbackHardwareWarnings = value;
+    emit playbackHardwareChanged();
 }
 
 void ApiClient::updateMediaAcquisitionState(const QJsonObject &obj) {

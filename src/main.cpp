@@ -1,5 +1,8 @@
 #include <QGuiApplication>
 #include <QCoreApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QtQml>
@@ -17,6 +20,8 @@
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTextStream>
+#include <QTimer>
+#include <QtGlobal>
 
 #include "backend/ApiClient.h"
 #include "backend/ControlPlaneClient.h"
@@ -121,6 +126,37 @@ int main(int argc, char *argv[]) {
     qInfo() << "Elixir client starting" << QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
 
     SessionManager sessionManager;
+    const QString automationBaseUrl = qEnvironmentVariable("ELIXIR_CLIENT_BASE_URL").trimmed();
+    const QString automationAuthToken = qEnvironmentVariable("ELIXIR_CLIENT_AUTH_TOKEN").trimmed();
+    const QString automationAccessExpiresAt =
+        qEnvironmentVariable("ELIXIR_CLIENT_ACCESS_TOKEN_EXPIRES_AT").trimmed();
+    const QString automationNetworkType = qEnvironmentVariable("ELIXIR_CLIENT_NETWORK_TYPE").trimmed();
+    const QString automationAutoplayMediaId =
+        qEnvironmentVariable("ELIXIR_CLIENT_AUTOPLAY_MEDIA_ITEM_ID").trimmed();
+    const QString automationAutoplayFileId =
+        qEnvironmentVariable("ELIXIR_CLIENT_AUTOPLAY_MEDIA_FILE_ID").trimmed();
+    const QString automationAutoplayEpisodeId =
+        qEnvironmentVariable("ELIXIR_CLIENT_AUTOPLAY_EPISODE_ID").trimmed();
+    const QString automationActions =
+        qEnvironmentVariable("ELIXIR_CLIENT_AUTOMATION_ACTIONS").trimmed();
+    const QString automationCaptureDir =
+        qEnvironmentVariable("ELIXIR_PLAYBACK_AUTOMATION_CAPTURE_DIR").trimmed();
+    const QString automationCapabilitiesJson =
+        qEnvironmentVariable("ELIXIR_CLIENT_CAPABILITIES_JSON").trimmed();
+    if (!automationBaseUrl.isEmpty()) {
+        sessionManager.setBaseUrlRuntimeOverride(automationBaseUrl);
+        sessionManager.setRegistryUrlRuntimeOverride(automationBaseUrl);
+    }
+    if (!automationAuthToken.isEmpty()) {
+        sessionManager.setAuthTokenRuntimeOverride(automationAuthToken);
+    }
+    if (!automationAccessExpiresAt.isEmpty()) {
+        sessionManager.setAccessTokenExpiresAtRuntimeOverride(automationAccessExpiresAt);
+    }
+    if (!automationNetworkType.isEmpty()) {
+        sessionManager.setNetworkTypeRuntimeOverride(automationNetworkType);
+    }
+
     ApiClient apiClient;
     ControlPlaneClient controlPlaneClient;
     LibraryModel libraryModel;
@@ -159,7 +195,7 @@ int main(int argc, char *argv[]) {
 
     auto syncClientCapabilities = [&]() {
         QVariantMap caps;
-        caps.insert("profile_version", 3);
+        caps.insert("profile_version", 4);
         caps.insert("client_kind", "native_mpv");
         caps.insert("direct_play_preferred", true);
         caps.insert("quality_mode", sessionManager.playbackQualityMode());
@@ -171,11 +207,34 @@ int main(int argc, char *argv[]) {
         caps.insert("supported_subtitle_codecs", QStringList({"srt", "webvtt", "ass", "ssa", "mov_text", "pgs", "dvd_subtitle"}));
         caps.insert("supported_hls_segment_types", QStringList({"mpegts", "fmp4"}));
         caps.insert("supports_hdr", true);
+        caps.insert("supports_hdr10_plus", true);
         caps.insert("supports_dolby_vision", false);
         caps.insert("supports_server_side_hls_seek", true);
         caps.insert("supports_auth_headers_for_media", true);
         caps.insert("subtitle_burn_policy", "automatic");
+        caps.insert("subtitle_rendering", "native");
+        caps.insert("ass_complexity_support", "native");
+        caps.insert("image_subtitle_support", "native_or_burn_in");
+        caps.insert("forced_subtitle_policy", "matching_audio");
+        caps.insert("default_subtitle_policy", sessionManager.subtitleMode() == "off" ? "disabled" : "media_default");
+        caps.insert("subtitle_mode", sessionManager.subtitleMode());
+        caps.insert("preferred_subtitle_language", sessionManager.subtitleLang());
+        caps.insert("preferred_subtitle_title", sessionManager.subtitleTitle());
         caps.insert("app_version", QCoreApplication::applicationVersion());
+        if (!automationCapabilitiesJson.isEmpty()) {
+            QJsonParseError parseError;
+            const QJsonDocument doc =
+                QJsonDocument::fromJson(automationCapabilitiesJson.toUtf8(), &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                qWarning() << "Ignoring invalid ELIXIR_CLIENT_CAPABILITIES_JSON"
+                           << parseError.errorString();
+            } else {
+                const QJsonObject overrides = doc.object();
+                for (auto it = overrides.constBegin(); it != overrides.constEnd(); ++it) {
+                    caps.insert(it.key(), it.value().toVariant());
+                }
+            }
+        }
         apiClient.setClientCapabilities(caps);
     };
     syncClientCapabilities();
@@ -219,6 +278,9 @@ int main(int argc, char *argv[]) {
     QObject::connect(&sessionManager, &SessionManager::playbackSupportedContainersChanged, &apiClient, syncClientCapabilities);
     QObject::connect(&sessionManager, &SessionManager::playbackSupportedVideoCodecsChanged, &apiClient, syncClientCapabilities);
     QObject::connect(&sessionManager, &SessionManager::playbackSupportedAudioCodecsChanged, &apiClient, syncClientCapabilities);
+    QObject::connect(&sessionManager, &SessionManager::subtitleModeChanged, &apiClient, syncClientCapabilities);
+    QObject::connect(&sessionManager, &SessionManager::subtitleLangChanged, &apiClient, syncClientCapabilities);
+    QObject::connect(&sessionManager, &SessionManager::subtitleTitleChanged, &apiClient, syncClientCapabilities);
 
     QObject::connect(&apiClient, &ApiClient::authTokenChanged, &sessionManager, [&]() {
         sessionManager.setAuthToken(apiClient.authToken());
@@ -255,6 +317,8 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("controlPlaneClient", &controlPlaneClient);
     engine.rootContext()->setContextProperty("libraryModel", &libraryModel);
     engine.rootContext()->setContextProperty("playerController", &playerController);
+    engine.rootContext()->setContextProperty("playbackAutomationActions", automationActions);
+    engine.rootContext()->setContextProperty("playbackAutomationCaptureDir", automationCaptureDir);
     engine.rootContext()->setContextProperty("serverDiscovery", &serverDiscovery);
     engine.rootContext()->setContextProperty("sessionManager", &sessionManager);
 
@@ -270,6 +334,21 @@ int main(int argc, char *argv[]) {
         },
         Qt::QueuedConnection);
     engine.load(url);
+
+    if (!automationAutoplayMediaId.isEmpty()) {
+        QTimer::singleShot(0, &app, [&apiClient, automationAutoplayMediaId,
+                                    automationAutoplayFileId, automationAutoplayEpisodeId]() {
+            if (!automationAutoplayEpisodeId.isEmpty()) {
+                qInfo() << "Automation autoplay starting episode playback"
+                        << automationAutoplayMediaId << automationAutoplayEpisodeId;
+                apiClient.startEpisodePlayback(automationAutoplayMediaId, automationAutoplayEpisodeId);
+            } else {
+                qInfo() << "Automation autoplay starting media playback"
+                        << automationAutoplayMediaId << automationAutoplayFileId;
+                apiClient.startPlayback(automationAutoplayMediaId, automationAutoplayFileId);
+            }
+        });
+    }
 
     return app.exec();
 }

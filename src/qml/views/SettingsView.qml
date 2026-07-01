@@ -11,6 +11,7 @@ Item {
     property StackView stackView: null
     property bool warpDisclosureAccepted: false
     property string networkProtectionNotice: ""
+    property string playbackHardwareNotice: ""
     property string selectedProtectionProfileId: ""
     property int importProviderIndex: 0
     property int importProviderPresetIndex: 0
@@ -479,6 +480,118 @@ Item {
         return text.charAt(0).toUpperCase() + text.slice(1)
     }
 
+    function playbackHardwareReadiness() {
+        return apiClient.playbackHardwareReadiness || {}
+    }
+
+    function playbackHardwareCapabilities() {
+        var readiness = root.playbackHardwareReadiness()
+        return readiness.capabilities || {}
+    }
+
+    function playbackHardwareRecords() {
+        var readiness = root.playbackHardwareReadiness()
+        return readiness.records || []
+    }
+
+    function playbackHardwareWarnings() {
+        return apiClient.playbackHardwareWarnings || []
+    }
+
+    function playbackHardwareAvailableApis() {
+        var capabilities = root.playbackHardwareCapabilities()
+        return capabilities.available_apis || capabilities.availableApis || []
+    }
+
+    function playbackHardwareRecordKey(record) {
+        return root.valueOrDash(record.api) + " | " + root.valueOrDash(record.gpu_model || record.gpuModel)
+    }
+
+    function playbackHardwareStatusLabel(status) {
+        return root.titleLabel(status)
+    }
+
+    function playbackHardwareStatusColor(status) {
+        if (status === "available") {
+            return Theme.accentSuccess
+        }
+        if (status === "disabled_by_config" || status === "not_applicable") {
+            return Theme.textMuted
+        }
+        if (status === "driver_too_old" || status === "driver_runtime_incompatible" ||
+                status === "ffmpeg_missing_support" || status === "permission_denied") {
+            return Theme.accent
+        }
+        return Theme.accentDanger
+    }
+
+    function playbackHardwareMessage(item) {
+        var code = String(item.user_message_code || item.userMessageCode || "")
+        if (code === "hardware_acceleration_available") {
+            return "Hardware acceleration is ready on this accelerator."
+        }
+        if (code === "hardware_acceleration_disabled") {
+            return "Hardware acceleration is disabled in server configuration."
+        }
+        if (code === "nvidia_driver_update_required") {
+            return "Update the NVIDIA driver on this server, then let Elixir refresh hardware readiness."
+        }
+        if (code === "amd_driver_update_required") {
+            return "Update the AMD graphics driver on this server, then let Elixir refresh hardware readiness."
+        }
+        if (code === "hardware_driver_update_required") {
+            return "Update the graphics driver on this server, then let Elixir refresh hardware readiness."
+        }
+        if (code === "ffmpeg_hardware_support_missing") {
+            return "The server FFmpeg build does not include the required hardware encoder or decoder."
+        }
+        if (code === "linux_render_device_permission_denied" || code === "hardware_device_permission_denied") {
+            return "The server cannot access the hardware device. Check render-device permissions for the Elixir service account."
+        }
+        if (code === "hardware_acceleration_unsupported_gpu") {
+            return "This GPU does not expose a supported hardware video path."
+        }
+        if (code === "hardware_device_busy") {
+            return "The hardware encoder is busy or has reached its session limit."
+        }
+        if (code === "hardware_probe_timeout") {
+            return "The hardware probe timed out. Elixir will use software until the next successful readiness refresh."
+        }
+        if (code === "hardware_acceleration_not_applicable") {
+            return "This accelerator does not apply to the current OS and GPU combination."
+        }
+        var reason = String(item.status_reason || item.statusReason || "")
+        return reason === "" ? "Hardware readiness has not reported a detailed reason." : root.titleLabel(reason)
+    }
+
+    function playbackHardwareSummary() {
+        var readiness = root.playbackHardwareReadiness()
+        if (apiClient.playbackHardwareLoading && !readiness.host_fingerprint && !readiness.hostFingerprint) {
+            return "Checking server hardware acceleration."
+        }
+        if (readiness.enabled === false) {
+            return "Hardware acceleration is disabled on this server."
+        }
+        var records = root.playbackHardwareRecords()
+        if (records.length === 0) {
+            return "Hardware readiness has not completed yet. Playback will use software until checks finish."
+        }
+        var warnings = root.playbackHardwareWarnings()
+        if (warnings.length > 0) {
+            return root.playbackHardwareMessage(warnings[0])
+        }
+        var available = root.playbackHardwareAvailableApis()
+        if (available.length > 0) {
+            return "Hardware acceleration ready: " + available.join(", ") + "."
+        }
+        return "No hardware accelerator is currently available. Playback will use software."
+    }
+
+    function refreshPlaybackHardware() {
+        root.playbackHardwareNotice = ""
+        apiClient.refreshPlaybackHardwareStatus(false)
+    }
+
     function portForwardingLabel(value) {
         var mode = String(value || "")
         if (mode === "unsupported") {
@@ -852,6 +965,7 @@ Item {
             apiClient.fetchExtensionsCatalog()
             apiClient.fetchManagerPreferences()
             root.refreshNetworkProtection()
+            root.refreshPlaybackHardware()
         }
     }
 
@@ -862,6 +976,7 @@ Item {
                 apiClient.fetchExtensionsCatalog()
                 apiClient.fetchManagerPreferences()
                 root.refreshNetworkProtection()
+                root.refreshPlaybackHardware()
             }
         }
 
@@ -890,6 +1005,8 @@ Item {
             if (endpoint.indexOf("/api/v1/network/protection") === 0 ||
                     endpoint.indexOf("/api/v1/download-broker/routes") === 0) {
                 root.networkProtectionNotice = error
+            } else if (endpoint.indexOf("/api/v1/playback/hardware") === 0) {
+                root.playbackHardwareNotice = error
             }
         }
     }
@@ -2572,6 +2689,173 @@ Item {
 
                 Rectangle {
                     height: 1
+                    color: Theme.border
+                    Layout.fillWidth: true
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingMedium
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "Server hardware acceleration"
+                        color: Theme.textPrimary
+                        font.pixelSize: 16
+                        font.family: Theme.fontDisplay
+                    }
+
+                    Button {
+                        id: hardwareRefreshButton
+                        text: apiClient.playbackHardwareLoading ? "Checking" : "Refresh"
+                        enabled: apiClient.authToken !== "" && !apiClient.playbackHardwareLoading
+                        onClicked: root.refreshPlaybackHardware()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: hardwareRefreshButton.text
+                            color: hardwareRefreshButton.enabled ? Theme.textPrimary : Theme.textDisabled
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    radius: Theme.radiusMedium
+                    color: Theme.backgroundCardRaised
+                    border.color: root.playbackHardwareWarnings().length > 0 ? Theme.accent : Theme.border
+                    implicitHeight: hardwareColumn.implicitHeight + Theme.spacingMedium * 2
+
+                    ColumnLayout {
+                        id: hardwareColumn
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Theme.spacingMedium
+                        spacing: Theme.spacingSmall
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: root.playbackHardwareSummary()
+                            color: root.playbackHardwareWarnings().length > 0 ? Theme.accent : Theme.textSecondary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: root.playbackHardwareNotice !== ""
+                            text: root.playbackHardwareNotice
+                            color: Theme.accentDanger
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: Theme.spacingSmall
+                            PillTag {
+                                text: (root.playbackHardwareReadiness().enabled === false) ? "disabled" :
+                                      ((root.playbackHardwareReadiness().warmed === true) ? "ready" : "warming")
+                            }
+                            PillTag { text: "warnings: " + root.playbackHardwareWarnings().length }
+                            PillTag {
+                                visible: root.playbackHardwareAvailableApis().length > 0
+                                text: "apis: " + root.playbackHardwareAvailableApis().join(", ")
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: root.playbackHardwareRecords().length === 0
+                            text: apiClient.playbackHardwareLoading ? "Waiting for readiness results." : "No readiness records are available yet."
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Repeater {
+                            model: root.playbackHardwareRecords()
+
+                            delegate: Rectangle {
+                                id: hardwareRecordCard
+                                required property var modelData
+                                readonly property var hardwareRecord: modelData
+                                Layout.fillWidth: true
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCard
+                                border.color: root.playbackHardwareStatusColor(hardwareRecordCard.hardwareRecord.status)
+                                implicitHeight: hardwareRecordColumn.implicitHeight + Theme.spacingSmall * 2
+
+                                ColumnLayout {
+                                    id: hardwareRecordColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: Theme.spacingSmall
+                                    spacing: 5
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingSmall
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: root.playbackHardwareRecordKey(hardwareRecordCard.hardwareRecord)
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 12
+                                            font.family: Theme.fontBody
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Label {
+                                            text: root.playbackHardwareStatusLabel(hardwareRecordCard.hardwareRecord.status)
+                                            color: root.playbackHardwareStatusColor(hardwareRecordCard.hardwareRecord.status)
+                                            font.pixelSize: 11
+                                            font.family: Theme.fontBody
+                                        }
+                                    }
+
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingSmall
+                                        PillTag { text: "api: " + root.valueOrDash(hardwareRecordCard.hardwareRecord.api) }
+                                        PillTag {
+                                            visible: root.valueOrDash(hardwareRecordCard.hardwareRecord.gpu_vendor || hardwareRecordCard.hardwareRecord.gpuVendor) !== "-"
+                                            text: "vendor: " + root.valueOrDash(hardwareRecordCard.hardwareRecord.gpu_vendor || hardwareRecordCard.hardwareRecord.gpuVendor)
+                                        }
+                                        PillTag {
+                                            visible: root.valueOrDash(hardwareRecordCard.hardwareRecord.gpu_driver_version || hardwareRecordCard.hardwareRecord.gpuDriverVersion) !== "-"
+                                            text: "driver: " + root.valueOrDash(hardwareRecordCard.hardwareRecord.gpu_driver_version || hardwareRecordCard.hardwareRecord.gpuDriverVersion)
+                                        }
+                                    }
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: root.playbackHardwareMessage(hardwareRecordCard.hardwareRecord)
+                                        color: Theme.textSecondary
+                                        font.pixelSize: 11
+                                        font.family: Theme.fontBody
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.preferredHeight: 1
                     color: Theme.border
                     Layout.fillWidth: true
                 }

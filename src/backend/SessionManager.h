@@ -30,15 +30,19 @@ public:
 
     QString baseUrl() const;
     void setBaseUrl(const QString &value);
+    void setBaseUrlRuntimeOverride(const QString &value);
 
     QString registryUrl() const;
     void setRegistryUrl(const QString &value);
+    void setRegistryUrlRuntimeOverride(const QString &value);
 
     QString authToken() const;
     void setAuthToken(const QString &value);
+    void setAuthTokenRuntimeOverride(const QString &value);
 
     QString accessTokenExpiresAt() const;
     void setAccessTokenExpiresAt(const QString &value);
+    void setAccessTokenExpiresAtRuntimeOverride(const QString &value);
 
     QString controlPlaneEmail() const;
     void setControlPlaneEmail(const QString &value);
@@ -84,6 +88,7 @@ public:
 
     QString networkType() const;
     void setNetworkType(const QString &value);
+    void setNetworkTypeRuntimeOverride(const QString &value);
 
     Q_INVOKABLE void clearAuth();
     Q_INVOKABLE void clearControlPlaneAuth();
@@ -111,6 +116,11 @@ signals:
 
 private:
     void storeValue(const QString &key, const QVariant &value);
+    void setBaseUrlInternal(const QString &value, bool persist);
+    void setRegistryUrlInternal(const QString &value, bool persist);
+    void setAuthTokenInternal(const QString &value, bool persist);
+    void setAccessTokenExpiresAtInternal(const QString &value, bool persist);
+    void setNetworkTypeInternal(const QString &value, bool persist);
 
     QSettings m_settings;
     QString m_baseUrl;
