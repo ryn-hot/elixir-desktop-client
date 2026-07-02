@@ -418,6 +418,7 @@ NATIVE_EXPECTED_CAPS: dict[str, Any] = {
     "client_kind": "native_mpv",
     "direct_play_preferred": True,
     "quality_mode": "original",
+    "abr_support_type": "mpv",
     "supported_containers": ["mkv", "mp4", "matroska"],
     "supported_video_codecs": ["h264", "hevc", "vp9", "av1"],
     "supported_audio_codecs": ["aac", "ac3", "eac3", "opus", "mp3", "flac"],
@@ -438,6 +439,7 @@ BROWSER_CAPS: dict[str, Any] = {
     "client_kind": "web",
     "direct_play_preferred": False,
     "quality_mode": "fixed",
+    "abr_support_type": "hls.js",
     "supported_containers": ["mp4"],
     "supported_video_codecs": ["h264"],
     "supported_audio_codecs": ["aac"],
@@ -1381,6 +1383,7 @@ def manifest_cases(ids: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
     browser_low["max_bitrate_bps"] = 3_000_000
     browser_auto = dict(BROWSER_CAPS)
     browser_auto["quality_mode"] = "automatic"
+    browser_auto["abr_support_type"] = "hls.js"
     browser_auto["max_bitrate_bps"] = 20_000_000
     browser_ass_burn_in = dict(BROWSER_CAPS)
     browser_ass_burn_in["supported_containers"] = ["mkv", "mp4"]

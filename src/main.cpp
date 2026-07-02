@@ -199,6 +199,7 @@ int main(int argc, char *argv[]) {
         caps.insert("client_kind", "native_mpv");
         caps.insert("direct_play_preferred", true);
         caps.insert("quality_mode", sessionManager.playbackQualityMode());
+        caps.insert("abr_support_type", "mpv");
         caps.insert("max_resolution", sessionManager.playbackMaxResolution());
         caps.insert("max_bitrate_bps", sessionManager.playbackMaxBitrateBps());
         caps.insert("supported_containers", sessionManager.playbackSupportedContainers());
