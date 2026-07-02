@@ -682,13 +682,246 @@ Item {
         return parts.join(" · ")
     }
 
+    function objectValue(source, key) {
+        if (!source || source[key] === undefined || source[key] === null) {
+            return ({})
+        }
+        return (typeof source[key] === "object") ? source[key] : ({})
+    }
+
+    function arrayValue(source, key) {
+        if (!source || source[key] === undefined || source[key] === null) {
+            return []
+        }
+        var value = source[key]
+        return (value && value.length !== undefined) ? value : []
+    }
+
+    function firstMapValue(source, keys) {
+        if (!source) {
+            return ""
+        }
+        for (var i = 0; i < keys.length; i++) {
+            var value = source[keys[i]]
+            if (value !== undefined && value !== null && String(value) !== "") {
+                return value
+            }
+        }
+        return ""
+    }
+
+    function preferredRemediation() {
+        var err = playerController.lastStructuredError || ({})
+        var details = objectValue(err, "details")
+        var remediation = objectValue(details, "remediation")
+        if (hasObjectData(remediation)) {
+            return remediation
+        }
+        var plan = preferredPlanSummary(details)
+        remediation = objectValue(plan, "feasibility_remediation")
+        if (hasObjectData(remediation)) {
+            return remediation
+        }
+        return ({})
+    }
+
+    function actionLabel(action) {
+        var value = String(action || "")
+        if (value === "try_original_quality") {
+            return "Try Original Quality on this client."
+        }
+        if (value === "lower_quality") {
+            return "Retry at a lower quality."
+        }
+        if (value === "update_gpu_driver") {
+            return "Update the server GPU driver."
+        }
+        if (value === "allow_software_decode_or_lower_quality") {
+            return "Allow software decode or choose a lower quality."
+        }
+        if (value === "allow_software_encode") {
+            return "Allow software encode for this workload."
+        }
+        if (value === "use_software_filter_path") {
+            return "Use a software filter path for this playback."
+        }
+        if (value === "use_hdr_capable_client") {
+            return "Use an HDR-capable client or display."
+        }
+        if (value === "disable_subtitle_burn_in") {
+            return "Disable subtitle burn-in for this playback."
+        }
+        if (value === "choose_text_subtitles") {
+            return "Choose text subtitles instead of image subtitles."
+        }
+        if (value === "upgrade_server_hardware") {
+            return "Use faster server hardware for this transcode."
+        }
+        if (value === "enable_certification_seed_or_probe") {
+            return "Seed certification evidence or enable bounded server probes."
+        }
+        if (value === "retry_later") {
+            return "Retry after other transcodes finish."
+        }
+        if (value === "increase_transcode_capacity") {
+            return "Increase the server transcode capacity."
+        }
+        if (value === "check_server_playback_settings") {
+            return "Check server playback settings."
+        }
+        return titleCaseFromId(value)
+    }
+
+    function titleCaseFromId(value) {
+        var parts = String(value || "").split("_")
+        for (var i = 0; i < parts.length; i++) {
+            if (parts[i].length > 0) {
+                parts[i] = parts[i].charAt(0).toUpperCase() + parts[i].substring(1)
+            }
+        }
+        return parts.join(" ")
+    }
+
+    function remediationDetailsText() {
+        var remediation = preferredRemediation()
+        if (!hasObjectData(remediation)) {
+            return ""
+        }
+        var lines = []
+        var userMessage = String(firstMapValue(remediation, ["user_message", "userMessage"]) || "")
+        var adminMessage = String(firstMapValue(remediation, ["admin_message", "adminMessage"]) || "")
+        if (userMessage !== "" && userMessage !== sessionMessage) {
+            lines.push(userMessage)
+        }
+        var actions = arrayValue(remediation, "suggested_actions")
+        if (actions.length === 0) {
+            actions = arrayValue(remediation, "suggestedActions")
+        }
+        if (actions.length > 0) {
+            var labels = []
+            for (var i = 0; i < actions.length; i++) {
+                var label = actionLabel(actions[i])
+                if (label !== "") {
+                    labels.push(label)
+                }
+            }
+            if (labels.length > 0) {
+                lines.push("Actions: " + labels.join(" "))
+            }
+        }
+        if (adminMessage !== "") {
+            lines.push("Admin: " + adminMessage)
+        }
+        return lines.join("\n")
+    }
+
+    function joinArrayValues(value) {
+        if (!value || value.length === undefined) {
+            return ""
+        }
+        var out = []
+        for (var i = 0; i < value.length; i++) {
+            var text = String(value[i] || "")
+            if (text !== "") {
+                out.push(text)
+            }
+        }
+        return out.join(", ")
+    }
+
+    function feasibilityDiagnosticsText() {
+        var err = playerController.lastStructuredError || ({})
+        var details = objectValue(err, "details")
+        var plan = preferredPlanSummary(details)
+        if (!hasObjectData(plan)) {
+            return ""
+        }
+        var feasibility = objectValue(plan, "feasibility")
+        if (!hasObjectData(feasibility)) {
+            feasibility = objectValue(details, "feasibility")
+        }
+        if (!hasObjectData(feasibility)) {
+            return ""
+        }
+
+        var lines = []
+        var reason = String(firstMapValue(feasibility, ["reason"]) || "")
+        if (reason !== "") {
+            lines.push("Reason: " + reason)
+        }
+        var confidence = String(firstMapValue(feasibility, ["confidence"]) || "")
+        var performance = String(firstMapValue(feasibility, ["performance_decision", "performanceDecision"]) || "")
+        var support = String(firstMapValue(feasibility, ["support_decision", "supportDecision"]) || "")
+        var envelopeParts = []
+        if (support !== "") {
+            envelopeParts.push("support " + support)
+        }
+        if (performance !== "") {
+            envelopeParts.push("performance " + performance)
+        }
+        if (confidence !== "") {
+            envelopeParts.push("confidence " + confidence)
+        }
+        var sampleCount = firstMapValue(feasibility, ["selected_envelope_sample_count", "selectedEnvelopeSampleCount"])
+        var failureCount = firstMapValue(feasibility, ["selected_envelope_failure_count", "selectedEnvelopeFailureCount"])
+        if (sampleCount !== "") {
+            envelopeParts.push("samples " + sampleCount)
+        }
+        if (failureCount !== "") {
+            envelopeParts.push("failures " + failureCount)
+        }
+        if (envelopeParts.length > 0) {
+            lines.push("Envelope: " + envelopeParts.join(" · "))
+        }
+
+        var workload = objectValue(plan, "workload_class")
+        if (hasObjectData(workload)) {
+            var labels = joinArrayValues(workload.cost_labels || workload.costLabels)
+            if (labels !== "") {
+                lines.push("Workload: " + labels)
+            }
+            var stages = joinArrayValues(workload.pipeline_stages || workload.pipelineStages)
+            if (stages !== "") {
+                lines.push("Pipeline: " + stages)
+            }
+        }
+        if (feasibility.background_probe_queued === true || feasibility.backgroundProbeQueued === true) {
+            lines.push("Background probe: queued")
+        }
+        return lines.join("\n")
+    }
+
+    function preferredPlanSummary(details) {
+        var plan = playerController.planSummary || ({})
+        if (hasObjectData(plan)) {
+            return plan
+        }
+        plan = objectValue(details, "plan_summary")
+        if (hasObjectData(plan)) {
+            return plan
+        }
+        return objectValue(details, "planSummary")
+    }
+
     function errorDetailsText() {
         var summary = structuredErrorSummary()
+        var remediation = remediationDetailsText()
+        var feasibility = feasibilityDiagnosticsText()
         var logTail = playerController.ffmpegLogTail || ""
-        if (summary !== "" && logTail !== "") {
-            return summary + "\n\n" + logTail
+        var sections = []
+        if (summary !== "") {
+            sections.push(summary)
         }
-        return summary !== "" ? summary : logTail
+        if (remediation !== "") {
+            sections.push(remediation)
+        }
+        if (feasibility !== "") {
+            sections.push(feasibility)
+        }
+        if (logTail !== "") {
+            sections.push(logTail)
+        }
+        return sections.join("\n\n")
     }
 
     function loadCurrentStream(reason) {
