@@ -60,6 +60,8 @@ class ApiClient : public QObject {
     Q_PROPERTY(QVariantMap playbackHardwareReadiness READ playbackHardwareReadiness NOTIFY playbackHardwareChanged)
     Q_PROPERTY(QVariantList playbackHardwareWarnings READ playbackHardwareWarnings NOTIFY playbackHardwareChanged)
     Q_PROPERTY(bool playbackHardwareLoading READ playbackHardwareLoading NOTIFY playbackHardwareLoadingChanged)
+    Q_PROPERTY(QVariantMap playbackAdminDiagnostics READ playbackAdminDiagnostics NOTIFY playbackAdminDiagnosticsChanged)
+    Q_PROPERTY(bool playbackAdminDiagnosticsLoading READ playbackAdminDiagnosticsLoading NOTIFY playbackAdminDiagnosticsLoadingChanged)
     Q_PROPERTY(QVariantMap mediaFindResult READ mediaFindResult NOTIFY mediaFindResultChanged)
     Q_PROPERTY(bool mediaFindLoading READ mediaFindLoading NOTIFY mediaFindLoadingChanged)
     Q_PROPERTY(QVariantMap mediaManagerPreferences READ mediaManagerPreferences NOTIFY mediaManagerPreferencesChanged)
@@ -140,6 +142,8 @@ public:
     QVariantMap playbackHardwareReadiness() const;
     QVariantList playbackHardwareWarnings() const;
     bool playbackHardwareLoading() const;
+    QVariantMap playbackAdminDiagnostics() const;
+    bool playbackAdminDiagnosticsLoading() const;
     QVariantMap mediaFindResult() const;
     bool mediaFindLoading() const;
     QVariantMap mediaManagerPreferences() const;
@@ -232,6 +236,8 @@ public:
     Q_INVOKABLE void fetchPlaybackHardwareReadiness(bool diagnostics = false);
     Q_INVOKABLE void fetchPlaybackHardwareWarnings();
     Q_INVOKABLE void refreshPlaybackHardwareStatus(bool diagnostics = false);
+    Q_INVOKABLE void fetchPlaybackAdminDiagnostics();
+    Q_INVOKABLE void stopPlaybackAdminSession(const QString &sessionId);
     Q_INVOKABLE void applyFirstRunDownloadSetup(const QString &choice, bool acceptedWarpDisclosure = false);
     Q_INVOKABLE void createCloudflareWarpProfile(bool acceptedDisclosure);
     Q_INVOKABLE void resetCloudflareWarpProfile(bool recreate = true);
@@ -343,6 +349,8 @@ signals:
     void networkProtectionLoadingChanged();
     void playbackHardwareChanged();
     void playbackHardwareLoadingChanged();
+    void playbackAdminDiagnosticsChanged();
+    void playbackAdminDiagnosticsLoadingChanged();
     void mediaFindResultChanged();
     void mediaFindLoadingChanged();
     void mediaManagerPreferencesChanged();
@@ -418,6 +426,8 @@ private:
     void setPlaybackHardwareLoading(bool loading);
     void updatePlaybackHardwareReadiness(const QJsonObject &obj);
     void updatePlaybackHardwareWarnings(const QJsonArray &warnings);
+    void setPlaybackAdminDiagnosticsLoading(bool loading);
+    void updatePlaybackAdminDiagnostics(const QJsonObject &obj);
     void updateMediaAcquisitionState(const QJsonObject &obj);
     void updateAcquisitionReviewReleases(const QJsonObject &obj);
     void updateAcquisitionReviewDetail(const QJsonObject &obj);
@@ -483,6 +493,8 @@ private:
     QVariantMap m_playbackHardwareReadiness;
     QVariantList m_playbackHardwareWarnings;
     bool m_playbackHardwareLoading = false;
+    QVariantMap m_playbackAdminDiagnostics;
+    bool m_playbackAdminDiagnosticsLoading = false;
     QVariantMap m_mediaFindResult;
     bool m_mediaFindLoading = false;
     quint64 m_mediaFindRequestId = 0;

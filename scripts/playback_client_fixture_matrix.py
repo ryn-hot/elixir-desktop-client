@@ -414,7 +414,8 @@ PUBLIC_VISUAL_FIXTURES: dict[str, MediaFixture] = {
 
 
 NATIVE_EXPECTED_CAPS: dict[str, Any] = {
-    "profile_version": 4,
+    "profile_id": "native_mpv_desktop",
+    "profile_version": 5,
     "client_kind": "native_mpv",
     "direct_play_preferred": True,
     "quality_mode": "original",
@@ -431,11 +432,14 @@ NATIVE_EXPECTED_CAPS: dict[str, Any] = {
     "default_subtitle_policy": "media_default",
     "supports_auth_headers_for_media": True,
     "supports_server_side_hls_seek": True,
+    "supports_native_text_subtitles": True,
+    "strict_h264_profile_limits": False,
 }
 
 
 BROWSER_CAPS: dict[str, Any] = {
-    "profile_version": 4,
+    "profile_id": "web_chromium",
+    "profile_version": 5,
     "client_kind": "web",
     "direct_play_preferred": False,
     "quality_mode": "fixed",
@@ -452,6 +456,8 @@ BROWSER_CAPS: dict[str, Any] = {
     "default_subtitle_policy": "media_default",
     "supports_auth_headers_for_media": True,
     "supports_server_side_hls_seek": True,
+    "supports_native_text_subtitles": False,
+    "strict_h264_profile_limits": True,
     "supports_hdr": False,
     "supports_hdr10_plus": False,
     "supports_dolby_vision": False,

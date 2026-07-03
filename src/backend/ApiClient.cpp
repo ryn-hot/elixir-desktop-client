@@ -561,6 +561,14 @@ bool ApiClient::playbackHardwareLoading() const {
     return m_playbackHardwareLoading;
 }
 
+QVariantMap ApiClient::playbackAdminDiagnostics() const {
+    return m_playbackAdminDiagnostics;
+}
+
+bool ApiClient::playbackAdminDiagnosticsLoading() const {
+    return m_playbackAdminDiagnosticsLoading;
+}
+
 QVariantMap ApiClient::mediaFindResult() const {
     return m_mediaFindResult;
 }
@@ -2238,6 +2246,44 @@ void ApiClient::refreshPlaybackHardwareStatus(bool diagnostics) {
     fetchPlaybackHardwareWarnings();
 }
 
+void ApiClient::fetchPlaybackAdminDiagnostics() {
+    setPlaybackAdminDiagnosticsLoading(true);
+    sendRequest(
+        "GET",
+        "/api/v1/playback/admin/sessions",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setPlaybackAdminDiagnosticsLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/playback/admin/sessions",
+                    "Playback diagnostics response was not an object.");
+                return;
+            }
+            updatePlaybackAdminDiagnostics(doc.object());
+        },
+        [this](const QString &) {
+            setPlaybackAdminDiagnosticsLoading(false);
+        });
+}
+
+void ApiClient::stopPlaybackAdminSession(const QString &sessionId) {
+    const QString trimmed = sessionId.trimmed();
+    if (trimmed.isEmpty()) {
+        emit requestFailed("/api/v1/playback/admin/sessions", "Playback session id is required.");
+        return;
+    }
+    sendRequest(
+        "POST",
+        QString("/api/v1/sessions/%1/end").arg(trimmed),
+        QJsonObject(),
+        [this](const QJsonDocument &) {
+            fetchPlaybackAdminDiagnostics();
+        },
+        ErrorHandler(),
+        true);
+}
+
 void ApiClient::applyFirstRunDownloadSetup(const QString &choice, bool acceptedWarpDisclosure) {
     const QString trimmedChoice = choice.trimmed();
     if (trimmedChoice.isEmpty()) {
@@ -2651,6 +2697,23 @@ void ApiClient::updatePlaybackHardwareWarnings(const QJsonArray &warnings) {
     }
     m_playbackHardwareWarnings = value;
     emit playbackHardwareChanged();
+}
+
+void ApiClient::setPlaybackAdminDiagnosticsLoading(bool loading) {
+    if (m_playbackAdminDiagnosticsLoading == loading) {
+        return;
+    }
+    m_playbackAdminDiagnosticsLoading = loading;
+    emit playbackAdminDiagnosticsLoadingChanged();
+}
+
+void ApiClient::updatePlaybackAdminDiagnostics(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_playbackAdminDiagnostics == value) {
+        return;
+    }
+    m_playbackAdminDiagnostics = value;
+    emit playbackAdminDiagnosticsChanged();
 }
 
 void ApiClient::updateMediaAcquisitionState(const QJsonObject &obj) {

@@ -195,7 +195,8 @@ int main(int argc, char *argv[]) {
 
     auto syncClientCapabilities = [&]() {
         QVariantMap caps;
-        caps.insert("profile_version", 4);
+        caps.insert("profile_id", "native_mpv_desktop");
+        caps.insert("profile_version", 5);
         caps.insert("client_kind", "native_mpv");
         caps.insert("direct_play_preferred", true);
         caps.insert("quality_mode", sessionManager.playbackQualityMode());
@@ -212,6 +213,8 @@ int main(int argc, char *argv[]) {
         caps.insert("supports_dolby_vision", false);
         caps.insert("supports_server_side_hls_seek", true);
         caps.insert("supports_auth_headers_for_media", true);
+        caps.insert("supports_native_text_subtitles", true);
+        caps.insert("strict_h264_profile_limits", false);
         caps.insert("subtitle_burn_policy", "automatic");
         caps.insert("subtitle_rendering", "native");
         caps.insert("ass_complexity_support", "native");

@@ -38,7 +38,8 @@ KODI_HDR10PLUS_VISUAL_CASES = {
 
 PROFILE_CAPABILITIES: dict[str, dict[str, Any]] = {
     "native_mpv": {
-        "profile_version": 4,
+        "profile_id": "native_mpv_desktop",
+        "profile_version": 5,
         "client_kind": "native_mpv",
         "direct_play_preferred": True,
         "quality_mode": "original",
@@ -53,6 +54,8 @@ PROFILE_CAPABILITIES: dict[str, dict[str, Any]] = {
         "supports_dolby_vision": False,
         "supports_server_side_hls_seek": True,
         "supports_auth_headers_for_media": True,
+        "supports_native_text_subtitles": True,
+        "strict_h264_profile_limits": False,
         "subtitle_burn_policy": "automatic",
         "subtitle_rendering": "native",
         "ass_complexity_support": "native",
@@ -61,7 +64,8 @@ PROFILE_CAPABILITIES: dict[str, dict[str, Any]] = {
         "default_subtitle_policy": "media_default",
     },
     "browser_like": {
-        "profile_version": 4,
+        "profile_id": "web_chromium",
+        "profile_version": 5,
         "client_kind": "web",
         "direct_play_preferred": False,
         "quality_mode": "fixed",
@@ -79,6 +83,8 @@ PROFILE_CAPABILITIES: dict[str, dict[str, Any]] = {
         "supports_dolby_vision": False,
         "supports_server_side_hls_seek": True,
         "supports_auth_headers_for_media": True,
+        "supports_native_text_subtitles": False,
+        "strict_h264_profile_limits": True,
         "subtitle_burn_policy": "automatic",
         "subtitle_rendering": "hls_webvtt",
         "ass_complexity_support": "burn_in",

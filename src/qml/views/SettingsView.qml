@@ -12,6 +12,7 @@ Item {
     property bool warpDisclosureAccepted: false
     property string networkProtectionNotice: ""
     property string playbackHardwareNotice: ""
+    property string playbackDiagnosticsNotice: ""
     property string selectedProtectionProfileId: ""
     property int importProviderIndex: 0
     property int importProviderPresetIndex: 0
@@ -592,6 +593,73 @@ Item {
         apiClient.refreshPlaybackHardwareStatus(false)
     }
 
+    function refreshPlaybackDiagnostics() {
+        root.playbackDiagnosticsNotice = ""
+        apiClient.fetchPlaybackAdminDiagnostics()
+    }
+
+    function playbackAdminSessions() {
+        var diagnostics = apiClient.playbackAdminDiagnostics || {}
+        return diagnostics.sessions || []
+    }
+
+    function playbackSessionSelectedTracks(session) {
+        var tracks = session.selected_tracks || session.selectedTracks || {}
+        return "v:" + root.valueOrDash(tracks.video) +
+               " a:" + root.valueOrDash(tracks.audio) +
+               " s:" + root.valueOrDash(tracks.subtitle)
+    }
+
+    function playbackSessionHardwareLabel(session) {
+        var hardware = session.hardware || {}
+        if (hardware.enabled === true) {
+            return root.valueOrDash(hardware.api || "hardware")
+        }
+        return "software"
+    }
+
+    function playbackSessionBandwidthLabel(session) {
+        var value = Number(session.bandwidth_estimate_bps || session.bandwidthEstimateBps || 0)
+        if (!isFinite(value) || value <= 0) {
+            return "-"
+        }
+        if (value >= 1000000) {
+            return (value / 1000000).toFixed(value >= 10000000 ? 0 : 1) + " Mbps"
+        }
+        if (value >= 1000) {
+            return (value / 1000).toFixed(0) + " Kbps"
+        }
+        return value.toFixed(0) + " bps"
+    }
+
+    function playbackSessionSpeedLabel(session) {
+        var value = Number(session.transcode_speed || session.transcodeSpeed || 0)
+        if (!isFinite(value) || value <= 0) {
+            return "-"
+        }
+        return value.toFixed(2) + "x"
+    }
+
+    function playbackSessionLastError(session) {
+        var error = String(session.last_error || session.lastError || "")
+        if (error !== "") {
+            return error
+        }
+        var taxonomy = String(session.error_taxonomy || session.errorTaxonomy || "")
+        return taxonomy === "" ? "none" : root.titleLabel(taxonomy)
+    }
+
+    function playbackSessionStatusColor(session) {
+        var state = String(session.state || "")
+        if (state === "active") {
+            return Theme.accentSuccess
+        }
+        if (state === "error") {
+            return Theme.accentDanger
+        }
+        return Theme.textMuted
+    }
+
     function portForwardingLabel(value) {
         var mode = String(value || "")
         if (mode === "unsupported") {
@@ -966,6 +1034,7 @@ Item {
             apiClient.fetchManagerPreferences()
             root.refreshNetworkProtection()
             root.refreshPlaybackHardware()
+            root.refreshPlaybackDiagnostics()
         }
     }
 
@@ -977,6 +1046,7 @@ Item {
                 apiClient.fetchManagerPreferences()
                 root.refreshNetworkProtection()
                 root.refreshPlaybackHardware()
+                root.refreshPlaybackDiagnostics()
             }
         }
 
@@ -1007,6 +1077,9 @@ Item {
                 root.networkProtectionNotice = error
             } else if (endpoint.indexOf("/api/v1/playback/hardware") === 0) {
                 root.playbackHardwareNotice = error
+            } else if (endpoint.indexOf("/api/v1/playback/admin") === 0 ||
+                       endpoint.indexOf("/api/v1/sessions/") === 0) {
+                root.playbackDiagnosticsNotice = error
             }
         }
     }
@@ -2849,6 +2922,147 @@ Item {
                                         wrapMode: Text.WordWrap
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingMedium
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "Playback diagnostics"
+                        color: Theme.textPrimary
+                        font.pixelSize: 16
+                        font.family: Theme.fontDisplay
+                    }
+
+                    Button {
+                        id: playbackDiagnosticsRefreshButton
+                        text: apiClient.playbackAdminDiagnosticsLoading ? "Refreshing" : "Refresh"
+                        enabled: apiClient.authToken !== "" && !apiClient.playbackAdminDiagnosticsLoading
+                        onClicked: root.refreshPlaybackDiagnostics()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: playbackDiagnosticsRefreshButton.text
+                            color: playbackDiagnosticsRefreshButton.enabled ? Theme.textPrimary : Theme.textDisabled
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.playbackDiagnosticsNotice !== ""
+                    text: root.playbackDiagnosticsNotice
+                    color: Theme.accentDanger
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.playbackAdminSessions().length === 0
+                    text: apiClient.playbackAdminDiagnosticsLoading ? "Refreshing playback sessions." : "No active or failed playback sessions."
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                }
+
+                Repeater {
+                    model: root.playbackAdminSessions()
+
+                    delegate: Rectangle {
+                        id: playbackSessionCard
+                        required property var modelData
+                        readonly property var playbackSession: modelData
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: root.playbackSessionStatusColor(playbackSessionCard.playbackSession)
+                        implicitHeight: playbackSessionColumn.implicitHeight + Theme.spacingSmall * 2
+
+                        ColumnLayout {
+                            id: playbackSessionColumn
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: Theme.spacingSmall
+                            spacing: 5
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.valueOrDash(playbackSessionCard.playbackSession.media_file_id ||
+                                                           playbackSessionCard.playbackSession.mediaFileId)
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 12
+                                    font.family: Theme.fontBody
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    text: root.titleLabel(playbackSessionCard.playbackSession.state)
+                                    color: root.playbackSessionStatusColor(playbackSessionCard.playbackSession)
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                }
+
+                                Button {
+                                    id: playbackSessionStopButton
+                                    text: "Stop"
+                                    enabled: String(playbackSessionCard.playbackSession.id || "") !== ""
+                                    onClicked: apiClient.stopPlaybackAdminSession(String(playbackSessionCard.playbackSession.id || ""))
+                                    background: Rectangle {
+                                        radius: Theme.radiusSmall
+                                        color: Theme.backgroundCard
+                                        border.color: Theme.border
+                                    }
+                                    contentItem: Label {
+                                        text: playbackSessionStopButton.text
+                                        color: parent.enabled ? Theme.textPrimary : Theme.textDisabled
+                                        font.pixelSize: 11
+                                        font.family: Theme.fontBody
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                }
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+                                PillTag { text: root.valueOrDash(playbackSessionCard.playbackSession.mode) }
+                                PillTag { text: root.valueOrDash(playbackSessionCard.playbackSession.delivery) }
+                                PillTag { text: "tracks " + root.playbackSessionSelectedTracks(playbackSessionCard.playbackSession) }
+                                PillTag { text: "speed " + root.playbackSessionSpeedLabel(playbackSessionCard.playbackSession) }
+                                PillTag { text: root.playbackSessionHardwareLabel(playbackSessionCard.playbackSession) }
+                                PillTag { text: "bandwidth " + root.playbackSessionBandwidthLabel(playbackSessionCard.playbackSession) }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Last error: " + root.playbackSessionLastError(playbackSessionCard.playbackSession)
+                                color: Theme.textMuted
+                                font.pixelSize: 10
+                                font.family: Theme.fontBody
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
                             }
                         }
                     }

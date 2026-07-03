@@ -664,6 +664,68 @@ Item {
         return errorKind
     }
 
+    function planReasonIncludes(plan, needle) {
+        var reasons = plan.decision_reasons || plan.decisionReasons || []
+        for (var i = 0; i < reasons.length; i++) {
+            if (String(reasons[i] || "").indexOf(needle) >= 0) {
+                return true
+            }
+        }
+        var reason = String(plan.decision_reason || plan.decisionReason || playerController.decisionReason || "")
+        return reason.indexOf(needle) >= 0
+    }
+
+    function addDiagnosticLabel(labels, label) {
+        for (var i = 0; i < labels.length; i++) {
+            if (labels[i] === label) {
+                return
+            }
+        }
+        labels.push(label)
+    }
+
+    function playbackDiagnosticLabels() {
+        var plan = playerController.planSummary || ({})
+        var labels = []
+        var mode = String(plan.mode || playerController.mode || "")
+        var videoAction = String(plan.video_action || plan.videoAction || "")
+        var audioAction = String(plan.audio_action || plan.audioAction || "")
+        var subtitleAction = String(plan.subtitle_action || plan.subtitleAction || "")
+        var hdrAction = String(plan.hdr_action || plan.hdrAction || "")
+
+        if (mode === "direct_play") {
+            addDiagnosticLabel(labels, "Original quality")
+        }
+        if (mode === "direct_stream") {
+            addDiagnosticLabel(labels, "Direct Stream")
+        }
+        if (audioAction === "transcode" || mode === "audio_transcode") {
+            addDiagnosticLabel(labels, "Converting audio")
+        }
+        if (subtitleAction === "convert_text_to_webvtt" || mode === "subtitle_transcode") {
+            addDiagnosticLabel(labels, "Converting subtitles")
+        }
+        if (videoAction === "transcode" || mode === "video_transcode" || mode === "adaptive_transcode") {
+            addDiagnosticLabel(labels, "Converting video")
+        }
+        if (mode === "adaptive_transcode" ||
+                planReasonIncludes(plan, "bandwidth") ||
+                planReasonIncludes(plan, "bitrate")) {
+            addDiagnosticLabel(labels, "Reducing quality for bandwidth")
+        }
+        if (subtitleAction === "burn_in") {
+            addDiagnosticLabel(labels, "Burning subtitles")
+        }
+        if (hdrAction === "tone_map_to_sdr" || hasObjectData(plan.tone_map || plan.toneMap)) {
+            addDiagnosticLabel(labels, "Tone mapping HDR to SDR")
+        }
+        return labels
+    }
+
+    function playbackDiagnosticsText() {
+        return playbackDiagnosticLabels().join(" · ")
+    }
+
     function structuredErrorSummary() {
         var err = playerController.lastStructuredError || ({})
         var message = mapValue(err, "message")
@@ -1166,6 +1228,15 @@ Item {
                     ])
                     visible: text !== ""
                     color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Label {
+                    text: playbackDiagnosticsText()
+                    visible: text !== ""
+                    color: Theme.textSecondary
                     font.pixelSize: 11
                     font.family: Theme.fontBody
                     elide: Text.ElideRight
