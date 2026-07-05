@@ -10,6 +10,7 @@ struct MediaItem {
     int year = 0;
     QString updatedAt;
     int runtimeSeconds = 0;
+    QString lastPlayedAt;
     QString posterUrl;
     QString backdropUrl;
     QString overview;

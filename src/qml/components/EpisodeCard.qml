@@ -16,16 +16,25 @@ Rectangle {
     property bool canDelete: false
     property bool canRestore: false
     property bool canAcquire: false
+    property string watchStateText: ""
+    property bool watchStateWatched: false
+    property bool canMarkWatched: false
+    property bool canMarkUnwatched: false
+    property bool canResetProgress: false
     property bool selectionMode: false
     property bool selectable: false
     property bool selected: false
     property string acquireText: "Get episode"
     property bool busy: false
+    property string busyAction: ""
     readonly property int verticalPadding: Theme.space10
     signal playRequested()
     signal deleteRequested()
     signal restoreRequested()
     signal acquireRequested()
+    signal markWatchedRequested()
+    signal markUnwatchedRequested()
+    signal resetProgressRequested()
     signal selectionToggled(bool selected)
 
     function showStatusChrome() {
@@ -172,6 +181,26 @@ Rectangle {
                     }
                 }
 
+                Rectangle {
+                    Layout.preferredWidth: 96
+                    Layout.preferredHeight: 24
+                    visible: root.watchStateText !== ""
+                    radius: Theme.radiusSmall
+                    color: root.watchStateWatched ? Theme.accentSuccessSoft : Theme.panelSoft
+                    border.color: root.watchStateWatched ? Theme.accentSuccess : Theme.borderSubtle
+
+                    Label {
+                        anchors.centerIn: parent
+                        text: root.watchStateText
+                        color: Theme.textPrimary
+                        font.family: Theme.fontBody
+                        font.pixelSize: 11
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                    }
+                }
+
                 Label {
                     Layout.fillWidth: true
                     text: root.showStatusChrome() ? root.statusMessage : ""
@@ -214,6 +243,43 @@ Rectangle {
                     visible: root.canRestore
                     enabled: !root.busy
                     onClicked: root.restoreRequested()
+                }
+            }
+
+            RowLayout {
+                visible: root.canMarkWatched || root.canMarkUnwatched || root.canResetProgress
+                spacing: Theme.space8
+
+                Item { Layout.fillWidth: true }
+
+                ActionButton {
+                    text: root.busy && root.busyAction === "watched" ? "Saving..." : "Watched"
+                    compact: true
+                    variant: "ghost"
+                    Layout.preferredWidth: 104
+                    visible: root.canMarkWatched
+                    enabled: !root.busy
+                    onClicked: root.markWatchedRequested()
+                }
+
+                ActionButton {
+                    text: root.busy && root.busyAction === "unwatched" ? "Saving..." : "Unwatched"
+                    compact: true
+                    variant: "ghost"
+                    Layout.preferredWidth: 112
+                    visible: root.canMarkUnwatched
+                    enabled: !root.busy
+                    onClicked: root.markUnwatchedRequested()
+                }
+
+                ActionButton {
+                    text: root.busy && root.busyAction === "reset" ? "Saving..." : "Reset"
+                    compact: true
+                    variant: "ghost"
+                    Layout.preferredWidth: 92
+                    visible: root.canResetProgress
+                    enabled: !root.busy
+                    onClicked: root.resetProgressRequested()
                 }
             }
         }

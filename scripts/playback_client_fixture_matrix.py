@@ -93,7 +93,11 @@ class MediaFixture:
     subtitle: SubtitleFixture | None = None
     external_subtitle: SubtitleFixture | None = None
     episode: bool = False
+    episode_count: int = 1
     alternate_audio: bool = False
+    midm_segment_type: str = ""
+    midm_segment_start_seconds: float = 0.0
+    midm_segment_end_seconds: float = 8.0
     source_media_rel: str | None = None
 
 
@@ -118,6 +122,40 @@ FIXTURES: dict[str, MediaFixture] = {
         height=720,
         bitrate_bps=2_000_000,
         episode=True,
+    ),
+    "midm_skip_prompt": MediaFixture(
+        name="midm_skip_prompt",
+        file_name="MIDM.Skip.Prompt.2026.mkv",
+        container="mkv",
+        video_codec="h264",
+        audio_codec="aac",
+        width=1280,
+        height=720,
+        bitrate_bps=2_000_000,
+        midm_segment_type="intro",
+    ),
+    "midm_auto_skip": MediaFixture(
+        name="midm_auto_skip",
+        file_name="MIDM.Auto.Skip.2026.mkv",
+        container="mkv",
+        video_codec="h264",
+        audio_codec="aac",
+        width=1280,
+        height=720,
+        bitrate_bps=2_000_000,
+        midm_segment_type="credits",
+    ),
+    "midm_up_next": MediaFixture(
+        name="midm_up_next",
+        file_name="MIDM.Up.Next.S01E01.2026.mkv",
+        container="mkv",
+        video_codec="h264",
+        audio_codec="aac",
+        width=1280,
+        height=720,
+        bitrate_bps=2_000_000,
+        episode=True,
+        episode_count=2,
     ),
     "direct_play_audio_switch": MediaFixture(
         name="direct_play_audio_switch",
@@ -1186,12 +1224,12 @@ def seed_fixture(db_path: Path, media_dir: Path, fixture: MediaFixture) -> dict[
     path = media_dir / fixture.file_name
     item_id = str(uuid.uuid4())
     file_id = str(uuid.uuid4())
+    episode_ids: list[str] = []
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         if fixture.episode:
             series_id = item_id
             season_id = str(uuid.uuid4())
-            episode_id = str(uuid.uuid4())
             conn.execute(
                 "INSERT INTO media_items (id, type, external_ids, title, year, runtime_seconds) VALUES (?, 'series', '{}', ?, 2026, ?)",
                 (series_id, "Phase 16 Fixture Series", fixture.duration_seconds),
@@ -1204,12 +1242,21 @@ def seed_fixture(db_path: Path, media_dir: Path, fixture: MediaFixture) -> dict[
                 "INSERT INTO seasons (id, series_id, season_number, title) VALUES (?, ?, 1, 'Season 1')",
                 (season_id, series_id),
             )
-            conn.execute(
-                "INSERT INTO episodes (id, series_id, season_id, season_number, episode_number, title, runtime_seconds, has_file) VALUES (?, ?, ?, 1, 1, ?, ?, 1)",
-                (episode_id, series_id, season_id, "Direct Play Episode", fixture.duration_seconds),
-            )
+            for episode_number in range(1, max(1, fixture.episode_count) + 1):
+                episode_id = str(uuid.uuid4())
+                episode_ids.append(episode_id)
+                conn.execute(
+                    "INSERT INTO episodes (id, series_id, season_id, season_number, episode_number, title, runtime_seconds, has_file) VALUES (?, ?, ?, 1, ?, ?, ?, 1)",
+                    (
+                        episode_id,
+                        series_id,
+                        season_id,
+                        episode_number,
+                        f"Direct Play Episode {episode_number}",
+                        fixture.duration_seconds,
+                    ),
+                )
         else:
-            episode_id = ""
             conn.execute(
                 "INSERT INTO media_items (id, type, external_ids, title, year, runtime_seconds) VALUES (?, 'movie', '{}', ?, 2026, ?)",
                 (item_id, f"Phase 16 {fixture.name.replace('_', ' ').title()}", fixture.duration_seconds),
@@ -1240,10 +1287,11 @@ def seed_fixture(db_path: Path, media_dir: Path, fixture: MediaFixture) -> dict[
             ),
         )
         if fixture.episode:
-            conn.execute(
-                "INSERT INTO episode_files (episode_id, media_file_id) VALUES (?, ?)",
-                (episode_id, file_id),
-            )
+            for episode_id in episode_ids:
+                conn.execute(
+                    "INSERT INTO episode_files (episode_id, media_file_id) VALUES (?, ?)",
+                    (episode_id, file_id),
+                )
         else:
             conn.execute(
                 "INSERT INTO movie_files (movie_id, media_file_id) VALUES (?, ?)",
@@ -1285,8 +1333,57 @@ def seed_fixture(db_path: Path, media_dir: Path, fixture: MediaFixture) -> dict[
                     int(fixture.external_subtitle.is_forced),
                 ),
             )
+        if fixture.midm_segment_type:
+            segment_id = str(uuid.uuid4())
+            candidate_id = str(uuid.uuid4())
+            segment_item_type = "episode" if fixture.episode else "movie"
+            segment_item_id = episode_ids[0] if fixture.episode else item_id
+            conn.execute(
+                """
+                INSERT INTO media_segment_candidates
+                    (id, media_file_id, item_type, item_id, segment_type, start_seconds,
+                     end_seconds, provider_kind, provider_id, provider_version, confidence,
+                     validation_state, validation_reason, identity_strength, source_payload_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'fixture', 'client_automation', '1',
+                        0.99, 'accepted', 'fixture_seeded', 'file_fingerprint', '{}')
+                """,
+                (
+                    candidate_id,
+                    file_id,
+                    segment_item_type,
+                    segment_item_id,
+                    fixture.midm_segment_type,
+                    fixture.midm_segment_start_seconds,
+                    fixture.midm_segment_end_seconds,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO media_segments
+                    (id, media_file_id, item_type, item_id, segment_type, start_seconds,
+                     end_seconds, canonical_candidate_id, source_label, confidence, locked,
+                     status, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'MIDM client automation fixture',
+                        0.99, 0, 'active', '{}')
+                """,
+                (
+                    segment_id,
+                    file_id,
+                    segment_item_type,
+                    segment_item_id,
+                    fixture.midm_segment_type,
+                    fixture.midm_segment_start_seconds,
+                    fixture.midm_segment_end_seconds,
+                    candidate_id,
+                ),
+            )
         conn.commit()
-    return {"item_id": item_id, "file_id": file_id, "episode_id": episode_id}
+    return {
+        "item_id": item_id,
+        "file_id": file_id,
+        "episode_id": episode_ids[0] if episode_ids else "",
+        "next_episode_id": episode_ids[1] if len(episode_ids) > 1 else "",
+    }
 
 
 def signup(base_url: str) -> str:
@@ -1304,6 +1401,52 @@ def signup(base_url: str) -> str:
     if not token:
         raise RuntimeError(f"signup response missing token: {body}")
     return str(token)
+
+
+def seed_midhm_user_preferences(db_path: Path) -> None:
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT id FROM users LIMIT 1").fetchone()
+        if row is None:
+            raise RuntimeError("MIDM fixture preferences require a seeded user")
+        user_id = str(row[0])
+        conn.execute(
+            """
+            INSERT INTO user_playback_preferences
+                (user_id, skip_intro_behavior, skip_recap_behavior, skip_preview_behavior,
+                 skip_credits_behavior, skip_outro_behavior, autoplay_enabled,
+                 autoplay_countdown_seconds, autoplay_max_consecutive,
+                 autoplay_max_elapsed_minutes, segment_provider_settings_json,
+                 created_at, updated_at)
+            VALUES (?, 'prompt', 'prompt', 'prompt', 'auto', 'prompt', 1, 1, 3, 180,
+                    ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                skip_intro_behavior = excluded.skip_intro_behavior,
+                skip_recap_behavior = excluded.skip_recap_behavior,
+                skip_preview_behavior = excluded.skip_preview_behavior,
+                skip_credits_behavior = excluded.skip_credits_behavior,
+                skip_outro_behavior = excluded.skip_outro_behavior,
+                autoplay_enabled = excluded.autoplay_enabled,
+                autoplay_countdown_seconds = excluded.autoplay_countdown_seconds,
+                autoplay_max_consecutive = excluded.autoplay_max_consecutive,
+                autoplay_max_elapsed_minutes = excluded.autoplay_max_elapsed_minutes,
+                segment_provider_settings_json = excluded.segment_provider_settings_json,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                user_id,
+                json.dumps(
+                    {
+                        "theintrodb": {"enabled": False},
+                        "aniskip": {"enabled": False},
+                        "local_audio_recurring": {"enabled": False},
+                        "local_visual_recurring": {"enabled": False},
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            ),
+        )
+        conn.commit()
 
 
 def play_request_for_case(case: dict[str, Any]) -> dict[str, Any]:
@@ -1437,6 +1580,108 @@ def manifest_cases(ids: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
                 "video_action": "passthrough",
                 "audio_action": "passthrough",
             },
+        },
+        {
+            "name": "midm-skip-prompt-native-mpv",
+            "profile": "native_mpv",
+            "media_item_id": ids["midm_skip_prompt"]["item_id"],
+            "media_file_id": ids["midm_skip_prompt"]["file_id"],
+            "expect_mode": "direct_play",
+            "expect_delivery": "direct_file",
+            "network_type": "lan",
+            "client_capabilities": native,
+            "expect_server": {
+                "server_seek_required": False,
+                "selected_audio_track": 1,
+                "video_action": "passthrough",
+                "audio_action": "passthrough",
+                "subtitle_action": "disabled",
+            },
+            "automation_actions": "wait:2,skip_active_segment,stop",
+        },
+        {
+            "name": "midm-auto-skip-native-mpv",
+            "profile": "native_mpv",
+            "media_item_id": ids["midm_auto_skip"]["item_id"],
+            "media_file_id": ids["midm_auto_skip"]["file_id"],
+            "expect_mode": "direct_play",
+            "expect_delivery": "direct_file",
+            "network_type": "lan",
+            "client_capabilities": native,
+            "expect_server": {
+                "server_seek_required": False,
+                "selected_audio_track": 1,
+                "video_action": "passthrough",
+                "audio_action": "passthrough",
+                "subtitle_action": "disabled",
+            },
+            "automation_actions": "wait:2,stop",
+            "expect_event": ["segment_skip_requested"],
+        },
+        {
+            "name": "midm-up-next-cancel-native-mpv",
+            "profile": "native_mpv",
+            "media_item_id": ids["midm_up_next"]["item_id"],
+            "episode_id": ids["midm_up_next"]["episode_id"],
+            "expect_mode": "direct_play",
+            "expect_delivery": "direct_file",
+            "network_type": "lan",
+            "client_capabilities": native,
+            "expect_server": {
+                "server_seek_required": False,
+                "selected_audio_track": 1,
+                "video_action": "passthrough",
+                "audio_action": "passthrough",
+            },
+            "automation_actions": "wait:1,up_next_cancel,stop",
+            "expect_event": [
+                "up_next_countdown_started",
+                "automation_up_next_cancel",
+                "up_next_cancelled",
+            ],
+        },
+        {
+            "name": "midm-up-next-play-now-native-mpv",
+            "profile": "native_mpv",
+            "media_item_id": ids["midm_up_next"]["item_id"],
+            "episode_id": ids["midm_up_next"]["episode_id"],
+            "expect_mode": "direct_play",
+            "expect_delivery": "direct_file",
+            "network_type": "lan",
+            "client_capabilities": native,
+            "expect_server": {
+                "server_seek_required": False,
+                "selected_audio_track": 1,
+                "video_action": "passthrough",
+                "audio_action": "passthrough",
+            },
+            "automation_actions": "wait:1,up_next_play_now,wait:1,stop",
+            "expect_event": [
+                "up_next_countdown_started",
+                "automation_up_next_play_now",
+                "up_next_play_now",
+            ],
+        },
+        {
+            "name": "midm-up-next-autoplay-native-mpv",
+            "profile": "native_mpv",
+            "media_item_id": ids["midm_up_next"]["item_id"],
+            "episode_id": ids["midm_up_next"]["episode_id"],
+            "expect_mode": "direct_play",
+            "expect_delivery": "direct_file",
+            "network_type": "lan",
+            "client_capabilities": native,
+            "expect_server": {
+                "server_seek_required": False,
+                "selected_audio_track": 1,
+                "video_action": "passthrough",
+                "audio_action": "passthrough",
+            },
+            "automation_actions": "wait:3,stop",
+            "expect_event": [
+                "up_next_countdown_started",
+                "up_next_autoplay_starting",
+            ],
         },
         {
             "name": "direct-play-native-mpv-audio-track-switch",
@@ -1855,6 +2100,9 @@ def write_manifest(
             "subtitle_next",
             "lower_quality",
             "retry_from_current",
+            "skip_active_segment",
+            "up_next_cancel",
+            "up_next_play_now",
             "stop",
         ],
         "required_recovery_scenarios": [
@@ -1934,6 +2182,7 @@ def main() -> int:
         )
         token = signup(base_url)
         ids = {name: seed_fixture(db_path, media_dir, fixture) for name, fixture in fixtures.items()}
+        seed_midhm_user_preferences(db_path)
         manifest_path = write_manifest(
             artifact_dir,
             client_bin,

@@ -287,6 +287,139 @@ int retryBitrateFromMap(const QVariantMap &map) {
     }
     return 0;
 }
+
+double numberFromKeys(const QVariantMap &source, const QStringList &keys, double fallback = 0.0) {
+    for (const QString &key : keys) {
+        const QVariant value = source.value(key);
+        if (!value.isValid() || value.isNull()) {
+            continue;
+        }
+        bool ok = false;
+        const double number = value.toDouble(&ok);
+        if (ok && std::isfinite(number)) {
+            return number;
+        }
+    }
+    return fallback;
+}
+
+QString stringFromKeys(const QVariantMap &source, const QStringList &keys) {
+    for (const QString &key : keys) {
+        const QString value = source.value(key).toString().trimmed();
+        if (!value.isEmpty()) {
+            return value;
+        }
+    }
+    return {};
+}
+
+QString segmentType(const QVariantMap &segment) {
+    return stringFromKeys(segment, {"segment_type", "segmentType", "type"}).toLower();
+}
+
+QString segmentIdentity(const QVariantMap &segment) {
+    const QString id = stringFromKeys(segment, {"id", "segment_id", "segmentId"});
+    if (!id.isEmpty()) {
+        return id;
+    }
+    return QStringLiteral("%1:%2:%3")
+        .arg(segmentType(segment))
+        .arg(numberFromKeys(segment, {"start_seconds", "startSeconds"}), 0, 'f', 3)
+        .arg(numberFromKeys(segment, {"end_seconds", "endSeconds"}), 0, 'f', 3);
+}
+
+QString skipLabelForSegment(const QVariantMap &segment) {
+    const QString type = segmentType(segment);
+    if (type == QStringLiteral("intro")) {
+        return QStringLiteral("Skip Intro");
+    }
+    if (type == QStringLiteral("recap")) {
+        return QStringLiteral("Skip Recap");
+    }
+    if (type == QStringLiteral("preview")) {
+        return QStringLiteral("Skip Preview");
+    }
+    if (type == QStringLiteral("credits")) {
+        return QStringLiteral("Skip Credits");
+    }
+    if (type == QStringLiteral("outro")) {
+        return QStringLiteral("Skip Outro");
+    }
+    return QStringLiteral("Skip");
+}
+
+bool segmentStatusAllowsSkip(const QVariantMap &segment) {
+    const QString status = stringFromKeys(segment, {"status"}).toLower();
+    return status.isEmpty() || status == QStringLiteral("active");
+}
+
+QString skipBehaviorForSegment(const QVariantMap &segment, const QVariantMap &preferences) {
+    const QString type = segmentType(segment);
+    QStringList keys;
+    if (type == QStringLiteral("intro")) {
+        keys = {QStringLiteral("skip_intro_behavior"), QStringLiteral("skipIntroBehavior")};
+    } else if (type == QStringLiteral("recap")) {
+        keys = {QStringLiteral("skip_recap_behavior"), QStringLiteral("skipRecapBehavior")};
+    } else if (type == QStringLiteral("preview")) {
+        keys = {QStringLiteral("skip_preview_behavior"), QStringLiteral("skipPreviewBehavior")};
+    } else if (type == QStringLiteral("credits")) {
+        keys = {QStringLiteral("skip_credits_behavior"), QStringLiteral("skipCreditsBehavior")};
+    } else if (type == QStringLiteral("outro")) {
+        keys = {QStringLiteral("skip_outro_behavior"), QStringLiteral("skipOutroBehavior")};
+    } else {
+        return QStringLiteral("prompt");
+    }
+
+    const QString value = stringFromKeys(preferences, keys).toLower().replace(u'-', u'_');
+    if (value == QStringLiteral("disabled")
+        || value == QStringLiteral("prompt")
+        || value == QStringLiteral("auto")
+        || value == QStringLiteral("ask_each_time")) {
+        return value;
+    }
+    return QStringLiteral("prompt");
+}
+
+bool boolFromKeys(const QVariantMap &source, const QStringList &keys, bool fallback = false) {
+    for (const QString &key : keys) {
+        const QVariant value = source.value(key);
+        if (!value.isValid() || value.isNull()) {
+            continue;
+        }
+        return value.toBool();
+    }
+    return fallback;
+}
+
+int intFromKeys(const QVariantMap &source, const QStringList &keys, int fallback = 0) {
+    for (const QString &key : keys) {
+        const QVariant value = source.value(key);
+        if (!value.isValid() || value.isNull()) {
+            continue;
+        }
+        bool ok = false;
+        const int number = value.toInt(&ok);
+        if (ok) {
+            return number;
+        }
+    }
+    return fallback;
+}
+
+bool segmentCanTriggerUpNext(const QVariantMap &segment, double duration) {
+    const QString type = segmentType(segment);
+    if (type != QStringLiteral("credits") && type != QStringLiteral("outro")) {
+        return false;
+    }
+    const double start = numberFromKeys(segment, {"start_seconds", "startSeconds"}, -1.0);
+    if (!std::isfinite(start) || start < 0.0) {
+        return false;
+    }
+    if (duration <= 0.0) {
+        return true;
+    }
+    return start >= duration * 0.5 || start >= duration - 600.0;
+}
 } // namespace
 
 PlayerController::PlayerController(QObject *parent)
@@ -419,7 +552,54 @@ bool PlayerController::lowerQualityRetryAvailable() const {
     return lowerQualityRetryBitrate() > 0;
 }
 
+QVariantList PlayerController::mediaSegments() const {
+    return m_mediaSegments;
+}
+
+QVariantMap PlayerController::playbackState() const {
+    return m_playbackState;
+}
+
+QVariantMap PlayerController::playbackPreferences() const {
+    return m_playbackPreferences;
+}
+
+QVariantMap PlayerController::activeSkipSegment() const {
+    return m_activeSkipSegment;
+}
+
+QString PlayerController::activeSkipLabel() const {
+    if (m_activeSkipSegment.isEmpty()) {
+        return {};
+    }
+    const QString behavior = skipBehaviorForSegment(m_activeSkipSegment, m_playbackPreferences);
+    if (behavior == QStringLiteral("disabled") || behavior == QStringLiteral("auto")) {
+        return {};
+    }
+    return skipLabelForSegment(m_activeSkipSegment);
+}
+
+QVariantMap PlayerController::upNext() const {
+    return m_upNext;
+}
+
+bool PlayerController::upNextPromptVisible() const {
+    return m_upNextPromptVisible;
+}
+
+int PlayerController::upNextCountdownRemaining() const {
+    return m_upNextCountdownRemaining;
+}
+
 void PlayerController::beginPlayback(const QVariantMap &info) {
+    const bool automaticUpNextStart = m_pendingAutomaticUpNextPlayback;
+    m_pendingAutomaticUpNextPlayback = false;
+    if (automaticUpNextStart) {
+        m_autoplayConsecutiveCount += 1;
+    } else {
+        m_autoplayConsecutiveCount = 0;
+    }
+
     const QString baseUrl = m_apiClient ? m_apiClient->baseUrl() : QString();
     const QString path = info.value("stream_url").toString();
     qInfo() << "Playback start"
@@ -436,14 +616,21 @@ void PlayerController::beginPlayback(const QVariantMap &info) {
     setDuration(info.value("duration_seconds").toDouble());
     setSeekOffsetInternal(info.value("logical_start_seconds").toDouble());
     setServerSeekRequired(info.value("server_seek_required").toBool());
+    setPlaybackState(mapFromKeys(info, {"playback_state", "playbackState"}));
+    setPlaybackPreferences(mapFromKeys(info, {"playback_preferences", "playbackPreferences"}));
+    setUpNext(mapFromKeys(info, {"up_next", "upNext"}));
+    setMediaSegments(variantListValue(valueFromKeys(info, {"segments", "media_segments", "mediaSegments"})));
     updatePlaybackDiagnostics(info);
     setLocalPositionInternal(0.0);
     setPaused(false);
     setActive(true);
+    updateActiveSkipSegment();
     m_seekInFlight = false;
     m_pendingSeekSeconds = 0.0;
     m_pendingStreamUrl.clear();
     m_lastAutomationPositionEvent = -1.0;
+    m_lastProgressReportPosition = -1.0;
+    m_lastProgressReportMs = -1;
     appendAutomationEvent(QStringLiteral("playback_started"), {
         {QStringLiteral("session_id"), m_sessionId},
         {QStringLiteral("mode"), m_mode},
@@ -455,7 +642,10 @@ void PlayerController::beginPlayback(const QVariantMap &info) {
         {QStringLiteral("quality_label"), m_qualityLabel},
         {QStringLiteral("selected_audio_track"), m_selectedAudioTrack},
         {QStringLiteral("selected_subtitle_track"), m_selectedSubtitleTrack},
-        {QStringLiteral("duration_seconds"), m_duration}
+        {QStringLiteral("duration_seconds"), m_duration},
+        {QStringLiteral("segment_count"), m_mediaSegments.size()},
+        {QStringLiteral("automatic_up_next_start"), automaticUpNextStart},
+        {QStringLiteral("autoplay_consecutive_count"), m_autoplayConsecutiveCount}
     });
 }
 
@@ -563,6 +753,9 @@ void PlayerController::updateLocalPosition(double seconds) {
         return;
     }
     setLocalPositionInternal(seconds);
+    updateActiveSkipSegment();
+    updateUpNextState();
+    maybeReportProgress();
     const double absoluteSeconds = position();
     if (m_lastAutomationPositionEvent < 0.0
         || std::fabs(absoluteSeconds - m_lastAutomationPositionEvent) >= 2.0) {
@@ -587,6 +780,8 @@ void PlayerController::setPaused(bool paused) {
         {QStringLiteral("session_id"), m_sessionId},
         {QStringLiteral("position_seconds"), position()}
     });
+    updateUpNextState();
+    maybeReportProgress(paused ? QStringLiteral("pause") : QStringLiteral("resume"), true);
 }
 
 void PlayerController::seek(double seconds) {
@@ -608,10 +803,16 @@ void PlayerController::seek(double seconds) {
         }
         setSeekOffsetInternal(seconds);
         setLocalPositionInternal(0.0);
+        updateActiveSkipSegment();
+        updateUpNextState();
+        maybeReportProgress(QStringLiteral("seek"), true);
         return;
     }
     setSeekOffsetInternal(0.0);
     setLocalPositionInternal(seconds);
+    updateActiveSkipSegment();
+    updateUpNextState();
+    maybeReportProgress(QStringLiteral("seek"), true);
     appendAutomationEvent(QStringLiteral("seek_applied"), {
         {QStringLiteral("session_id"), m_sessionId},
         {QStringLiteral("position_seconds"), seconds},
@@ -658,6 +859,90 @@ void PlayerController::retryWithLowerQuality() {
     m_apiClient->retryLastPlaybackWithLowerQuality(retryPosition, bitrateBps);
 }
 
+void PlayerController::skipActiveSegment() {
+    if (!m_active || m_activeSkipSegment.isEmpty()) {
+        return;
+    }
+    const double target = numberFromKeys(m_activeSkipSegment, {"end_seconds", "endSeconds"}, -1.0);
+    if (!std::isfinite(target) || target <= position()) {
+        setActiveSkipSegment(QVariantMap());
+        return;
+    }
+    const QString segmentId = segmentIdentity(m_activeSkipSegment);
+    if (!segmentId.isEmpty()) {
+        m_skippedSegmentIds.insert(segmentId);
+    }
+    const QString type = segmentType(m_activeSkipSegment);
+    const QString behavior = skipBehaviorForSegment(m_activeSkipSegment, m_playbackPreferences);
+    appendAutomationEvent(QStringLiteral("segment_skip_requested"), {
+        {QStringLiteral("session_id"), m_sessionId},
+        {QStringLiteral("segment_id"), segmentId},
+        {QStringLiteral("segment_type"), type},
+        {QStringLiteral("segment_behavior"), behavior},
+        {QStringLiteral("position_seconds"), position()},
+        {QStringLiteral("target_seconds"), target}
+    });
+    seek(target);
+    if (m_apiClient) {
+        m_apiClient->reportPlaybackProgress(
+            m_sessionId,
+            position(),
+            m_duration,
+            m_paused,
+            QStringLiteral("segment_skip"),
+            {
+                {QStringLiteral("segmentType"), type},
+                {QStringLiteral("segmentBehavior"), behavior},
+            });
+        m_lastProgressReportPosition = position();
+        m_lastProgressReportMs = QDateTime::currentMSecsSinceEpoch();
+    }
+    updateActiveSkipSegment();
+}
+
+void PlayerController::cancelUpNextAutoplay() {
+    if (!m_upNextPromptVisible && m_upNextAutoplayCancelled) {
+        return;
+    }
+    m_upNextAutoplayCancelled = true;
+    if (m_apiClient && !m_sessionId.isEmpty()) {
+        m_apiClient->reportPlaybackProgress(
+            m_sessionId,
+            position(),
+            m_duration,
+            m_paused,
+            QStringLiteral("autoplay_cancelled"));
+    }
+    appendAutomationEvent(QStringLiteral("up_next_cancelled"), {
+        {QStringLiteral("session_id"), m_sessionId},
+        {QStringLiteral("position_seconds"), position()},
+        {QStringLiteral("autoplay_consecutive_count"), m_autoplayConsecutiveCount}
+    });
+    setUpNextPromptVisible(false);
+    setUpNextCountdownRemaining(-1);
+}
+
+void PlayerController::playUpNextNow() {
+    playUpNextInternal(false);
+}
+
+void PlayerController::tickUpNextCountdown() {
+    if (!m_active || !m_upNextPromptVisible || m_paused || !canAutoplayUpNext()) {
+        return;
+    }
+    if (m_upNextCountdownRemaining < 0) {
+        return;
+    }
+    if (m_upNextCountdownRemaining <= 0) {
+        playUpNextInternal(true);
+        return;
+    }
+    setUpNextCountdownRemaining(m_upNextCountdownRemaining - 1);
+    if (m_upNextCountdownRemaining <= 0) {
+        playUpNextInternal(true);
+    }
+}
+
 void PlayerController::endSession() {
     if (!m_sessionId.isEmpty()) {
         appendAutomationEvent(QStringLiteral("session_end_requested"), {
@@ -669,7 +954,7 @@ void PlayerController::endSession() {
     }
     if (m_apiClient && !m_sessionId.isEmpty()) {
         qInfo() << "Ending session" << m_sessionId;
-        m_apiClient->endSession(m_sessionId);
+        m_apiClient->endSession(m_sessionId, position(), m_duration, QStringLiteral("ended"));
     }
     reset();
 }
@@ -710,11 +995,21 @@ void PlayerController::reset() {
     setJobState(QVariantMap());
     setFfmpegLogTail(QString());
     setLastStructuredError(QVariantMap());
+    setPlaybackState(QVariantMap());
+    setPlaybackPreferences(QVariantMap());
+    setUpNext(QVariantMap());
+    setMediaSegments(QVariantList());
+    setActiveSkipSegment(QVariantMap());
     setPaused(false);
     m_seekInFlight = false;
     m_pendingSeekSeconds = 0.0;
     m_pendingStreamUrl.clear();
     m_lastAutomationPositionEvent = -1.0;
+    m_lastProgressReportPosition = -1.0;
+    m_lastProgressReportMs = -1;
+    m_upNextAutoplayCancelled = false;
+    m_pendingAutomaticUpNextPlayback = false;
+    m_autoplayConsecutiveCount = 0;
 }
 
 void PlayerController::setStreamUrl(const QString &value) {
@@ -807,6 +1102,7 @@ void PlayerController::setActive(bool value) {
     }
     m_active = value;
     emit activeChanged();
+    updateUpNextState();
 }
 
 void PlayerController::setServerSeekRequired(bool value) {
@@ -891,6 +1187,226 @@ void PlayerController::setLastStructuredError(const QVariantMap &value) {
     }
     m_lastStructuredError = safeValue;
     emit recoveryChanged();
+}
+
+void PlayerController::setPlaybackState(const QVariantMap &value) {
+    if (m_playbackState == value) {
+        return;
+    }
+    m_playbackState = value;
+    emit mediaInteractionsChanged();
+}
+
+void PlayerController::setPlaybackPreferences(const QVariantMap &value) {
+    if (m_playbackPreferences == value) {
+        return;
+    }
+    m_playbackPreferences = value;
+    emit mediaInteractionsChanged();
+    emit activeSkipSegmentChanged();
+    updateActiveSkipSegment();
+    updateUpNextState();
+}
+
+void PlayerController::setMediaSegments(const QVariantList &value) {
+    if (m_mediaSegments == value) {
+        return;
+    }
+    m_mediaSegments = value;
+    m_skippedSegmentIds.clear();
+    emit mediaInteractionsChanged();
+    updateActiveSkipSegment();
+    updateUpNextState();
+}
+
+void PlayerController::setActiveSkipSegment(const QVariantMap &value) {
+    if (m_activeSkipSegment == value) {
+        return;
+    }
+    m_activeSkipSegment = value;
+    emit activeSkipSegmentChanged();
+}
+
+void PlayerController::setUpNext(const QVariantMap &value) {
+    if (m_upNext == value) {
+        return;
+    }
+    m_upNext = value;
+    m_upNextAutoplayCancelled = false;
+    setUpNextPromptVisible(false);
+    setUpNextCountdownRemaining(-1);
+    emit upNextChanged();
+    updateUpNextState();
+}
+
+void PlayerController::setUpNextPromptVisible(bool value) {
+    if (m_upNextPromptVisible == value) {
+        return;
+    }
+    m_upNextPromptVisible = value;
+    emit upNextChanged();
+}
+
+void PlayerController::setUpNextCountdownRemaining(int value) {
+    if (m_upNextCountdownRemaining == value) {
+        return;
+    }
+    m_upNextCountdownRemaining = value;
+    emit upNextChanged();
+}
+
+void PlayerController::updateActiveSkipSegment() {
+    if (!m_active || m_mediaSegments.isEmpty()) {
+        setActiveSkipSegment(QVariantMap());
+        return;
+    }
+    const double current = position();
+    if (!std::isfinite(current)) {
+        setActiveSkipSegment(QVariantMap());
+        return;
+    }
+
+    for (const QVariant &entry : m_mediaSegments) {
+        const QVariantMap segment = variantMapValue(entry);
+        if (segment.isEmpty() || !segmentStatusAllowsSkip(segment)) {
+            continue;
+        }
+        const double start = numberFromKeys(segment, {"start_seconds", "startSeconds"}, -1.0);
+        const double end = numberFromKeys(segment, {"end_seconds", "endSeconds"}, -1.0);
+        if (!std::isfinite(start) || !std::isfinite(end) || end <= start) {
+            continue;
+        }
+        const QString id = segmentIdentity(segment);
+        if (!id.isEmpty() && m_skippedSegmentIds.contains(id)) {
+            continue;
+        }
+        if (current >= start && current < end) {
+            const QString behavior = skipBehaviorForSegment(segment, m_playbackPreferences);
+            if (behavior == QStringLiteral("disabled")) {
+                continue;
+            }
+            setActiveSkipSegment(segment);
+            if (behavior == QStringLiteral("auto")) {
+                skipActiveSegment();
+            }
+            return;
+        }
+    }
+
+    setActiveSkipSegment(QVariantMap());
+}
+
+void PlayerController::updateUpNextState() {
+    if (!m_active || !upNextAvailable() || m_upNextAutoplayCancelled) {
+        setUpNextPromptVisible(false);
+        setUpNextCountdownRemaining(-1);
+        return;
+    }
+    const double current = position();
+    const double trigger = upNextTriggerSeconds();
+    if (!std::isfinite(current) || current < trigger) {
+        setUpNextPromptVisible(false);
+        setUpNextCountdownRemaining(-1);
+        return;
+    }
+
+    const bool wasVisible = m_upNextPromptVisible;
+    setUpNextPromptVisible(true);
+
+    if (!canAutoplayUpNext()) {
+        if (!wasVisible && boolFromKeys(m_playbackPreferences, {"autoplay_enabled", "autoplayEnabled"}, true)) {
+            appendAutomationEvent(QStringLiteral("up_next_autoplay_blocked"), {
+                {QStringLiteral("session_id"), m_sessionId},
+                {QStringLiteral("position_seconds"), current},
+                {QStringLiteral("autoplay_consecutive_count"), m_autoplayConsecutiveCount},
+                {QStringLiteral("autoplay_max_consecutive"), intFromKeys(m_playbackPreferences, {"autoplay_max_consecutive", "autoplayMaxConsecutive"}, 3)}
+            });
+        }
+        setUpNextCountdownRemaining(-1);
+        return;
+    }
+
+    if (!wasVisible || m_upNextCountdownRemaining < 0) {
+        const int countdown = configuredUpNextCountdownSeconds();
+        setUpNextCountdownRemaining(countdown);
+        appendAutomationEvent(QStringLiteral("up_next_countdown_started"), {
+            {QStringLiteral("session_id"), m_sessionId},
+            {QStringLiteral("position_seconds"), current},
+            {QStringLiteral("countdown_seconds"), countdown},
+            {QStringLiteral("episode_id"), stringFromKeys(m_upNext, {"episode_id", "episodeId"})},
+            {QStringLiteral("media_item_id"), stringFromKeys(m_upNext, {"media_item_id", "mediaItemId"})},
+            {QStringLiteral("autoplay_consecutive_count"), m_autoplayConsecutiveCount}
+        });
+        if (countdown <= 0) {
+            playUpNextInternal(true);
+        }
+    }
+}
+
+void PlayerController::maybeReportProgress(const QString &eventType, bool force) {
+    if (!m_apiClient || !m_active || m_sessionId.isEmpty()) {
+        return;
+    }
+    const double current = position();
+    if (!std::isfinite(current) || current < 0.0) {
+        return;
+    }
+
+    QString event = eventType.trimmed();
+    if (event.isEmpty()) {
+        event = QStringLiteral("progress");
+    }
+    const bool milestone = event != QStringLiteral("progress");
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const bool elapsed = m_lastProgressReportMs < 0 || nowMs - m_lastProgressReportMs >= 10000;
+    const bool moved =
+        m_lastProgressReportPosition < 0.0 || std::fabs(current - m_lastProgressReportPosition) >= 15.0;
+    if (!force && !milestone && (!elapsed || !moved)) {
+        return;
+    }
+
+    m_apiClient->reportPlaybackProgress(m_sessionId, current, m_duration, m_paused, event);
+    m_lastProgressReportPosition = current;
+    m_lastProgressReportMs = nowMs;
+}
+
+void PlayerController::playUpNextInternal(bool automatic) {
+    if (!m_apiClient || !m_active || !upNextAvailable()) {
+        return;
+    }
+    if (automatic && !canAutoplayUpNext()) {
+        updateUpNextState();
+        return;
+    }
+
+    const QString mediaItemId = stringFromKeys(m_upNext, {"media_item_id", "mediaItemId", "series_id", "seriesId"});
+    const QString episodeId = stringFromKeys(m_upNext, {"episode_id", "episodeId"});
+    if (mediaItemId.isEmpty() || episodeId.isEmpty()) {
+        return;
+    }
+
+    const QString previousSessionId = m_sessionId;
+    const double previousPosition = position();
+    const double previousDuration = m_duration;
+    const QString eventType = automatic ? QStringLiteral("autoplay_next") : QStringLiteral("play_next");
+    const int consecutiveBefore = m_autoplayConsecutiveCount;
+
+    appendAutomationEvent(automatic ? QStringLiteral("up_next_autoplay_starting") : QStringLiteral("up_next_play_now"), {
+        {QStringLiteral("session_id"), previousSessionId},
+        {QStringLiteral("position_seconds"), previousPosition},
+        {QStringLiteral("episode_id"), episodeId},
+        {QStringLiteral("media_item_id"), mediaItemId},
+        {QStringLiteral("autoplay_consecutive_count"), consecutiveBefore}
+    });
+
+    if (!previousSessionId.isEmpty()) {
+        m_apiClient->endSession(previousSessionId, previousPosition, previousDuration, eventType);
+    }
+
+    reset();
+    m_autoplayConsecutiveCount = automatic ? consecutiveBefore : 0;
+    m_pendingAutomaticUpNextPlayback = automatic;
+    m_apiClient->startEpisodePlayback(mediaItemId, episodeId);
 }
 
 void PlayerController::updatePlaybackDiagnostics(const QVariantMap &info) {
@@ -1010,7 +1526,7 @@ void PlayerController::updatePlaybackDiagnostics(const QVariantMap &info) {
 void PlayerController::releaseSessionBeforeRetry() {
     if (m_apiClient && !m_sessionId.isEmpty()) {
         qInfo() << "Releasing session before retry" << m_sessionId;
-        m_apiClient->endSession(m_sessionId);
+        m_apiClient->endSession(m_sessionId, position(), m_duration, QStringLiteral("stopped"));
     }
     setActive(false);
     setSessionId(QString());
@@ -1022,6 +1538,96 @@ void PlayerController::releaseSessionBeforeRetry() {
 
 int PlayerController::lowerQualityRetryBitrate() const {
     return retryBitrateFromMap(m_lastStructuredError);
+}
+
+bool PlayerController::upNextAvailable() const {
+    if (m_upNext.isEmpty()) {
+        return false;
+    }
+    if (!boolFromKeys(m_upNext, {"available"}, false)) {
+        return false;
+    }
+    const QString episodeId = stringFromKeys(m_upNext, {"episode_id", "episodeId"});
+    const QString mediaItemId = stringFromKeys(m_upNext, {"media_item_id", "mediaItemId", "series_id", "seriesId"});
+    return !episodeId.isEmpty() && !mediaItemId.isEmpty();
+}
+
+bool PlayerController::canAutoplayUpNext() const {
+    if (!upNextAvailable()) {
+        return false;
+    }
+    const QVariantMap serverAutoplay = mapFromKeys(m_upNext, {"autoplay"});
+    if (!serverAutoplay.isEmpty()) {
+        if (!boolFromKeys(serverAutoplay, {"enabled"}, true)) {
+            return false;
+        }
+        if (!boolFromKeys(serverAutoplay, {"allowed"}, true)) {
+            return false;
+        }
+    }
+    if (!boolFromKeys(m_upNext, {"autoplay_allowed", "autoplayAllowed"}, true)) {
+        return false;
+    }
+    if (!boolFromKeys(m_playbackPreferences, {"autoplay_enabled", "autoplayEnabled"}, true)) {
+        return false;
+    }
+    const int preferenceMaxConsecutive = intFromKeys(
+        m_playbackPreferences,
+        {"autoplay_max_consecutive", "autoplayMaxConsecutive"},
+        3);
+    const int maxConsecutive = intFromKeys(
+        serverAutoplay,
+        {"max_consecutive", "maxConsecutive"},
+        preferenceMaxConsecutive);
+    if (maxConsecutive <= 0) {
+        return false;
+    }
+    const int serverConsecutive = intFromKeys(
+        serverAutoplay,
+        {"consecutive_count", "consecutiveCount"},
+        m_autoplayConsecutiveCount);
+    return qMax(m_autoplayConsecutiveCount, serverConsecutive) < maxConsecutive;
+}
+
+double PlayerController::upNextTriggerSeconds() const {
+    double trigger = numberFromKeys(m_upNext, {"start_after_seconds", "startAfterSeconds"}, -1.0);
+    if (!std::isfinite(trigger) || trigger < 0.0) {
+        trigger = m_duration > 0.0 ? qMax(0.0, m_duration - 30.0) : 0.0;
+    }
+
+    for (const QVariant &entry : m_mediaSegments) {
+        const QVariantMap segment = variantMapValue(entry);
+        if (segment.isEmpty() || !segmentStatusAllowsSkip(segment)) {
+            continue;
+        }
+        if (!segmentCanTriggerUpNext(segment, m_duration)) {
+            continue;
+        }
+        const double start = numberFromKeys(segment, {"start_seconds", "startSeconds"}, -1.0);
+        if (std::isfinite(start) && start >= 0.0) {
+            trigger = qMin(trigger, start);
+        }
+    }
+
+    return qMax(0.0, trigger);
+}
+
+int PlayerController::configuredUpNextCountdownSeconds() const {
+    const QVariantMap serverAutoplay = mapFromKeys(m_upNext, {"autoplay"});
+    const int preference = intFromKeys(
+        m_playbackPreferences,
+        {"autoplay_countdown_seconds", "autoplayCountdownSeconds"},
+        -1);
+    const int serverCountdown = intFromKeys(
+        serverAutoplay,
+        {"countdown_seconds", "countdownSeconds"},
+        -1);
+    const int raw = preference >= 0
+        ? preference
+        : serverCountdown >= 0
+        ? serverCountdown
+        : intFromKeys(m_upNext, {"countdown_seconds", "countdownSeconds"}, 10);
+    return qBound(0, raw, 120);
 }
 
 void PlayerController::handleSeekCompleted(const QString &sessionId, double seconds) {

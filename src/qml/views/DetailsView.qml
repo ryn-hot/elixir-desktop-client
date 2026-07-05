@@ -28,8 +28,18 @@ Item {
     property string deleteStatusText: ""
     property string deleteResultText: ""
     property string episodeActionBusyId: ""
+    property string episodeActionBusyAction: ""
     property string episodeStatusText: ""
     property string blockedEpisodesStatusText: ""
+    property bool mediaSegmentAnalysisBusy: false
+    property string mediaSegmentAnalysisStatusText: ""
+    property var mediaSegmentDiagnostics: ({})
+    property bool mediaSegmentDiagnosticsLoading: false
+    property string mediaSegmentDiagnosticsStatusText: ""
+    property string mediaSegmentActionBusyId: ""
+    readonly property bool mediaSegmentSupportToolsEnabled: false
+    property bool watchStateBusy: false
+    property string watchStateStatusText: ""
     property var pendingEpisode: null
     property string selectedSourceProviderId: ""
     property string acquisitionStatusText: ""
@@ -142,6 +152,178 @@ Item {
         return libraryItem && (libraryItem.type === "series" || libraryItem.type === "anime")
     }
 
+    function mediaSegmentItemType() {
+        if (details && details.type) {
+            return String(details.type)
+        }
+        return libraryItem && libraryItem.type ? String(libraryItem.type) : ""
+    }
+
+    function mediaSegmentFileCount() {
+        return details && details.files ? details.files.length : 0
+    }
+
+    function mediaSegmentAnalysisSubtitle() {
+        var count = mediaSegmentFileCount()
+        if (count === 0) {
+            return "No linked files"
+        }
+        return count + " linked " + (count === 1 ? "file" : "files")
+    }
+
+    function detailRuntimeSeconds() {
+        var seconds = details && details.runtime_seconds ? details.runtime_seconds
+                    : (details && details.runtimeSeconds ? details.runtimeSeconds
+                       : (libraryItem && libraryItem.runtime ? libraryItem.runtime : 0))
+        seconds = Number(seconds)
+        return isNaN(seconds) || seconds <= 0 ? 0 : Math.round(seconds)
+    }
+
+    function watchStateItemType() {
+        var type = mediaSegmentItemType()
+        if (type === "movie") {
+            return "movie"
+        }
+        return ""
+    }
+
+    function canUseWatchStateActions() {
+        return details !== null && mediaId !== "" && watchStateItemType() !== ""
+    }
+
+    function runWatchStateAction(action) {
+        if (watchStateBusy || !canUseWatchStateActions()) {
+            return
+        }
+        watchStateBusy = true
+        watchStateStatusText = ""
+        apiClient.updateMediaItemWatchState(
+            mediaId,
+            watchStateItemType(),
+            action,
+            detailRuntimeSeconds())
+    }
+
+    function watchStateActionResultText(action, state) {
+        if (action === "watched") {
+            return "Marked watched."
+        }
+        if (action === "unwatched") {
+            return "Marked unwatched."
+        }
+        return "Progress reset."
+    }
+
+    function runMediaSegmentAnalysis(force) {
+        if (!mediaSegmentSupportToolsEnabled) {
+            return
+        }
+        if (mediaSegmentAnalysisBusy || mediaId === "" || mediaSegmentFileCount() === 0) {
+            return
+        }
+        mediaSegmentAnalysisBusy = true
+        mediaSegmentAnalysisStatusText = ""
+        apiClient.analyzeMediaSegments(mediaId, mediaSegmentItemType(), force)
+    }
+
+    function mediaSegmentAnalysisResultText(summary) {
+        var jobs = summary && summary.jobs ? summary.jobs.length : 0
+        var failures = summary && summary.failures ? summary.failures.length : 0
+        var files = summary ? (summary.media_files_seen || summary.mediaFilesSeen || 0) : 0
+        var mode = summary && summary.force ? "Reanalysis" : "Analysis"
+        var text = mode + " queued " + jobs + " " + (jobs === 1 ? "job" : "jobs") +
+                   " for " + files + " " + (files === 1 ? "file" : "files") + "."
+        if (failures > 0) {
+            text += " " + failures + " failed to queue."
+        }
+        return text
+    }
+
+    function refreshMediaSegmentDiagnostics(preserveStatus) {
+        if (!mediaSegmentSupportToolsEnabled ||
+                mediaId === "" || mediaSegmentItemType() === "" || mediaSegmentFileCount() === 0) {
+            mediaSegmentDiagnostics = ({})
+            mediaSegmentDiagnosticsLoading = false
+            mediaSegmentDiagnosticsStatusText = ""
+            return
+        }
+        mediaSegmentDiagnosticsLoading = true
+        if (!preserveStatus) {
+            mediaSegmentDiagnosticsStatusText = ""
+        }
+        apiClient.fetchItemMediaSegments(mediaId, mediaSegmentItemType())
+    }
+
+    function mediaSegmentActiveList() {
+        if (!mediaSegmentDiagnostics) {
+            return []
+        }
+        return mediaSegmentDiagnostics.active || []
+    }
+
+    function mediaSegmentField(segment, snakeName, camelName, fallback) {
+        if (!segment) {
+            return fallback
+        }
+        if (segment[snakeName] !== undefined && segment[snakeName] !== null) {
+            return segment[snakeName]
+        }
+        if (segment[camelName] !== undefined && segment[camelName] !== null) {
+            return segment[camelName]
+        }
+        return fallback
+    }
+
+    function mediaSegmentTypeLabel(segment) {
+        var type = String(mediaSegmentField(segment, "segment_type", "segmentType", "segment")).replace(/_/g, " ")
+        if (type.length === 0) {
+            return "Segment"
+        }
+        return type.charAt(0).toUpperCase() + type.slice(1)
+    }
+
+    function mediaSegmentTimestamp(seconds) {
+        seconds = Math.max(0, Math.round(Number(seconds) || 0))
+        var h = Math.floor(seconds / 3600)
+        var m = Math.floor((seconds % 3600) / 60)
+        var s = seconds % 60
+        var mm = h > 0 && m < 10 ? "0" + m : String(m)
+        var ss = s < 10 ? "0" + s : String(s)
+        return h > 0 ? h + ":" + mm + ":" + ss : m + ":" + ss
+    }
+
+    function mediaSegmentRangeText(segment) {
+        var start = mediaSegmentField(segment, "start_seconds", "startSeconds", 0)
+        var end = mediaSegmentField(segment, "end_seconds", "endSeconds", start)
+        return mediaSegmentTimestamp(start) + " - " + mediaSegmentTimestamp(end)
+    }
+
+    function mediaSegmentSourceText(segment) {
+        var source = String(mediaSegmentField(segment, "source_label", "sourceLabel", "") || "")
+        var confidence = Number(mediaSegmentField(segment, "confidence", "confidence", -1))
+        var parts = []
+        if (source !== "") {
+            parts.push(source)
+        }
+        if (!isNaN(confidence) && confidence >= 0) {
+            parts.push(Math.round(confidence * 100) + "%")
+        }
+        return parts.length > 0 ? parts.join(" / ") : "Unknown source"
+    }
+
+    function disableMediaSegmentMarker(segment) {
+        if (!mediaSegmentSupportToolsEnabled) {
+            return
+        }
+        var segmentId = String(mediaSegmentField(segment, "id", "id", "") || "")
+        if (segmentId === "" || mediaSegmentActionBusyId !== "") {
+            return
+        }
+        mediaSegmentActionBusyId = segmentId
+        mediaSegmentDiagnosticsStatusText = ""
+        apiClient.disableMediaSegment(segmentId, "bad_marker")
+    }
+
     function lifecycleInfo() {
         return details && details.lifecycle ? details.lifecycle : {}
     }
@@ -235,6 +417,57 @@ Item {
 
     function episodeAcquisitionInfo(episode) {
         return episode && episode.acquisition ? episode.acquisition : ({})
+    }
+
+    function episodePlaybackState(episode) {
+        if (!episode) {
+            return {}
+        }
+        return episode.playback_state || episode.playbackState || {}
+    }
+
+    function episodeWatched(episode) {
+        return episodePlaybackState(episode).watched === true
+    }
+
+    function episodeResumeSeconds(episode) {
+        var state = episodePlaybackState(episode)
+        var value = state.resume_seconds !== undefined ? state.resume_seconds : state.resumeSeconds
+        value = Number(value)
+        return isNaN(value) ? 0 : Math.max(0, value)
+    }
+
+    function episodeWatchStateText(episode) {
+        if (episodeWatched(episode)) {
+            return "Watched"
+        }
+        var resume = episodeResumeSeconds(episode)
+        if (resume >= 30) {
+            return "In progress"
+        }
+        return ""
+    }
+
+    function episodeRuntimeSeconds(episode) {
+        var value = episode && episode.runtime_seconds !== undefined ? episode.runtime_seconds
+                  : (episode && episode.runtimeSeconds !== undefined ? episode.runtimeSeconds : 0)
+        value = Number(value)
+        return isNaN(value) || value <= 0 ? 0 : Math.round(value)
+    }
+
+    function runEpisodeWatchStateAction(episode, action) {
+        var id = episodeId(episode)
+        if (id === "" || episodeActionBusyId !== "") {
+            return
+        }
+        episodeActionBusyId = id
+        episodeActionBusyAction = action
+        episodeStatusText = ""
+        apiClient.updateMediaItemWatchState(
+            id,
+            "episode",
+            action,
+            episodeRuntimeSeconds(episode))
     }
 
     function stringValue(obj, snake, camel) {
@@ -1441,6 +1674,16 @@ Item {
 
     onMediaIdChanged: {
         if (mediaId !== "") {
+            mediaSegmentAnalysisBusy = false
+            mediaSegmentAnalysisStatusText = ""
+            mediaSegmentDiagnostics = ({})
+            mediaSegmentDiagnosticsLoading = false
+            mediaSegmentDiagnosticsStatusText = ""
+            mediaSegmentActionBusyId = ""
+            watchStateBusy = false
+            watchStateStatusText = ""
+            episodeActionBusyId = ""
+            episodeActionBusyAction = ""
             apiClient.fetchManagerPreferences()
             apiClient.fetchMediaDetails(mediaId)
             refreshReviewQueue()
@@ -1491,6 +1734,209 @@ Item {
                 onBackRequested: {
                     if (root.stackView) {
                         root.stackView.pop()
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.leftMargin: Theme.space32
+                Layout.rightMargin: Theme.space32
+                implicitHeight: mediaSegmentPanel.implicitHeight + Theme.space20
+                radius: Theme.radius8
+                color: Theme.surface
+                border.color: Theme.borderSubtle
+                visible: root.canUseWatchStateActions()
+
+                ColumnLayout {
+                    id: mediaSegmentPanel
+                    anchors.fill: parent
+                    anchors.margins: Theme.space10
+                    spacing: Theme.space10
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.space12
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Watch state"
+                                color: Theme.textPrimary
+                                font.pixelSize: 14
+                                font.family: Theme.fontDisplay
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.watchStateStatusText !== ""
+                                      ? root.watchStateStatusText
+                                      : "Update this title without opening the player."
+                                color: root.watchStateStatusText !== ""
+                                       ? Theme.textSecondary
+                                       : Theme.textMuted
+                                font.pixelSize: 12
+                                font.family: Theme.fontBody
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        ActionButton {
+                            text: root.mediaSegmentAnalysisBusy ? "Queuing..." : "Analyze"
+                            compact: true
+                            visible: root.mediaSegmentSupportToolsEnabled
+                            enabled: !root.mediaSegmentAnalysisBusy
+                            onClicked: root.runMediaSegmentAnalysis(false)
+                        }
+
+                        ActionButton {
+                            text: "Reanalyze"
+                            compact: true
+                            variant: "ghost"
+                            visible: root.mediaSegmentSupportToolsEnabled
+                            enabled: !root.mediaSegmentAnalysisBusy
+                            onClicked: root.runMediaSegmentAnalysis(true)
+                        }
+
+                        ActionButton {
+                            text: root.watchStateBusy ? "Saving..." : "Watched"
+                            compact: true
+                            variant: "ghost"
+                            visible: root.canUseWatchStateActions()
+                            enabled: !root.watchStateBusy
+                            onClicked: root.runWatchStateAction("watched")
+                        }
+
+                        ActionButton {
+                            text: "Unwatched"
+                            compact: true
+                            variant: "ghost"
+                            visible: root.canUseWatchStateActions()
+                            enabled: !root.watchStateBusy
+                            onClicked: root.runWatchStateAction("unwatched")
+                        }
+
+                        ActionButton {
+                            text: "Reset"
+                            compact: true
+                            variant: "ghost"
+                            visible: root.canUseWatchStateActions()
+                            enabled: !root.watchStateBusy
+                            onClicked: root.runWatchStateAction("reset")
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.borderSubtle
+                        visible: false
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.space8
+                        visible: root.mediaSegmentSupportToolsEnabled
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Theme.space8
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Active skip markers"
+                                color: Theme.textPrimary
+                                font.pixelSize: 13
+                                font.family: Theme.fontDisplay
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+
+                            Label {
+                                text: root.mediaSegmentActiveList().length + " active"
+                                color: Theme.textMuted
+                                font.pixelSize: 11
+                                font.family: Theme.fontBody
+                                visible: !root.mediaSegmentDiagnosticsLoading
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: root.mediaSegmentDiagnosticsLoading
+                                  ? "Loading markers..."
+                                  : (root.mediaSegmentDiagnosticsStatusText !== ""
+                                     ? root.mediaSegmentDiagnosticsStatusText
+                                     : "No active skip markers.")
+                            color: root.mediaSegmentDiagnosticsStatusText !== ""
+                                   ? Theme.textSecondary
+                                   : Theme.textMuted
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            wrapMode: Text.Wrap
+                            visible: root.mediaSegmentDiagnosticsLoading ||
+                                     root.mediaSegmentDiagnosticsStatusText !== "" ||
+                                     root.mediaSegmentActiveList().length === 0
+                        }
+
+                        Repeater {
+                            model: root.mediaSegmentActiveList()
+
+                            delegate: Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: mediaSegmentMarkerRow.implicitHeight + Theme.space8
+                                radius: Theme.radius6
+                                color: Theme.surfaceRaised
+                                border.color: Theme.borderSubtle
+
+                                RowLayout {
+                                    id: mediaSegmentMarkerRow
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.space6
+                                    spacing: Theme.space10
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: root.mediaSegmentTypeLabel(modelData) + "  " +
+                                                  root.mediaSegmentRangeText(modelData)
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 12
+                                            font.family: Theme.fontBody
+                                            font.weight: Font.DemiBold
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: root.mediaSegmentSourceText(modelData)
+                                            color: Theme.textMuted
+                                            font.pixelSize: 11
+                                            font.family: Theme.fontBody
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    ActionButton {
+                                        text: root.mediaSegmentActionBusyId === String(modelData.id || "")
+                                              ? "Saving..."
+                                              : "Disable"
+                                        compact: true
+                                        variant: "danger"
+                                        enabled: root.mediaSegmentActionBusyId === ""
+                                        onClicked: root.disableMediaSegmentMarker(modelData)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1727,20 +2173,35 @@ Item {
                         canAcquire: root.episodeCanUsePrimaryAction(modelData)
                                     && root.episodeRecoveryState(modelData) !== "available"
                                     && root.episodeRecoveryState(modelData) !== "blocked"
+                        watchStateText: root.episodeWatchStateText(modelData)
+                        watchStateWatched: root.episodeWatched(modelData)
+                        canMarkWatched: root.episodeRecoveryState(modelData) === "available"
+                                        && !root.episodeWatched(modelData)
+                        canMarkUnwatched: root.episodeRecoveryState(modelData) === "available"
+                                          && root.episodeWatched(modelData)
+                        canResetProgress: root.episodeRecoveryState(modelData) === "available"
+                                          && root.episodeResumeSeconds(modelData) >= 30
                         selectable: root.episodeCanRequeue(modelData)
                         selected: root.episodeSelected(modelData)
                         acquireText: root.episodePrimaryActionText(modelData)
                         busy: root.episodeActionBusyId === modelData.id
                               || root.acquisitionBusyKey === root.targetKeyForEpisode(modelData)
                               || root.targetKeyPending(modelData)
+                        busyAction: root.episodeActionBusyId === modelData.id
+                                    ? root.episodeActionBusyAction
+                                    : ""
                         onPlayRequested: apiClient.startEpisodePlayback(mediaId, modelData.id)
                         onDeleteRequested: root.openEpisodeDeleteDialog(modelData)
                         onRestoreRequested: {
                             episodeActionBusyId = modelData.id
+                            episodeActionBusyAction = ""
                             episodeStatusText = ""
                             apiClient.restoreEpisode(modelData.id)
                         }
                         onAcquireRequested: root.handleEpisodePrimaryAction(modelData)
+                        onMarkWatchedRequested: root.runEpisodeWatchStateAction(modelData, "watched")
+                        onMarkUnwatchedRequested: root.runEpisodeWatchStateAction(modelData, "unwatched")
+                        onResetProgressRequested: root.runEpisodeWatchStateAction(modelData, "reset")
                         onSelectionToggled: function(selected) {
                             root.setEpisodeSelected(modelData, selected)
                         }
@@ -2303,6 +2764,7 @@ Item {
                             return
                         }
                         episodeActionBusyId = pendingEpisode.id
+                        episodeActionBusyAction = ""
                         episodeStatusText = ""
                         apiClient.deleteEpisode(pendingEpisode.id, false)
                     }
@@ -2330,6 +2792,7 @@ Item {
                             return
                         }
                         episodeActionBusyId = pendingEpisode.id
+                        episodeActionBusyAction = ""
                         episodeStatusText = ""
                         apiClient.deleteEpisode(pendingEpisode.id, true)
                     }
@@ -2734,6 +3197,54 @@ Item {
                 }
             }
         }
+        function onMediaSegmentAnalysisCompleted(itemId, summary) {
+            if (itemId !== mediaId) {
+                return
+            }
+            mediaSegmentAnalysisBusy = false
+            mediaSegmentAnalysisStatusText = root.mediaSegmentAnalysisResultText(summary)
+            refreshMediaSegmentDiagnostics()
+        }
+        function onItemMediaSegmentsReceived(itemId, itemType, segments) {
+            if (itemId !== mediaId) {
+                return
+            }
+            mediaSegmentDiagnostics = segments || ({})
+            mediaSegmentDiagnosticsLoading = false
+            if (mediaSegmentDiagnosticsStatusText.indexOf("Skip marker") !== 0) {
+                mediaSegmentDiagnosticsStatusText = ""
+            }
+        }
+        function onMediaSegmentDisabled(segmentId, result) {
+            if (segmentId !== mediaSegmentActionBusyId) {
+                return
+            }
+            mediaSegmentActionBusyId = ""
+            mediaSegmentDiagnosticsStatusText = result && result.disabled
+                                                ? "Skip marker disabled."
+                                                : "Skip marker was already inactive."
+            refreshMediaSegmentDiagnostics(true)
+        }
+        function onMediaWatchStateUpdated(itemId, itemType, action, playbackState) {
+            if (itemType === "episode") {
+                if (episodeActionBusyId !== "" && itemId !== episodeActionBusyId) {
+                    return
+                }
+                episodeActionBusyId = ""
+                episodeActionBusyAction = ""
+                episodeStatusText = root.watchStateActionResultText(action, playbackState)
+                refreshEpisodeState()
+                apiClient.fetchLibrary()
+                return
+            }
+            if (itemId !== mediaId) {
+                return
+            }
+            watchStateBusy = false
+            watchStateStatusText = root.watchStateActionResultText(action, playbackState)
+            apiClient.fetchLibrary()
+            apiClient.fetchMediaDetails(mediaId)
+        }
         function onMediaItemDeleted(deletedId, result) {
             if (deletedId !== mediaId) {
                 return
@@ -2745,6 +3256,7 @@ Item {
         }
         function onEpisodeDeleted(episodeId, result) {
             episodeActionBusyId = ""
+            episodeActionBusyAction = ""
             episodeDeleteDialog.close()
             pendingEpisode = null
             episodeStatusText = result && result.message ? result.message : "Episode deleted."
@@ -2752,6 +3264,7 @@ Item {
         }
         function onEpisodeRestored(episodeId, result) {
             episodeActionBusyId = ""
+            episodeActionBusyAction = ""
             episodeStatusText = result && result.message ? result.message : "Episode restored."
             refreshEpisodeState()
         }
@@ -2840,11 +3353,42 @@ Item {
             }
             if (endpoint.indexOf("/api/v1/library/episodes/") === 0) {
                 episodeActionBusyId = ""
+                episodeActionBusyAction = ""
                 episodeStatusText = "Episode action failed: " + error
                 return
             }
             if (endpoint === "/api/v1/library/items/" + mediaId + "/restore-blocked-episodes") {
                 blockedEpisodesStatusText = "Restore failed: " + error
+                return
+            }
+            if (endpoint.indexOf("/api/v1/items/") === 0 &&
+                    endpoint.indexOf("/media-segment-jobs/analyze") > 0) {
+                mediaSegmentAnalysisBusy = false
+                mediaSegmentAnalysisStatusText = "Analysis failed: " + error
+                return
+            }
+            if (endpoint.indexOf("/api/v1/items/") === 0 &&
+                    endpoint.indexOf("/segments") > 0) {
+                mediaSegmentDiagnosticsLoading = false
+                mediaSegmentDiagnosticsStatusText = "Marker load failed: " + error
+                return
+            }
+            if (endpoint.indexOf("/api/v1/media-segments/") === 0 &&
+                    endpoint.indexOf("/disable") > 0) {
+                mediaSegmentActionBusyId = ""
+                mediaSegmentDiagnosticsStatusText = "Disable failed: " + error
+                return
+            }
+            if (endpoint.indexOf("/api/v1/items/") === 0 &&
+                    endpoint.indexOf("/watch-state") > 0) {
+                if (endpoint.indexOf("/api/v1/items/episode/") === 0) {
+                    episodeActionBusyId = ""
+                    episodeActionBusyAction = ""
+                    episodeStatusText = "Watch state failed: " + error
+                } else {
+                    watchStateBusy = false
+                    watchStateStatusText = "Watch state failed: " + error
+                }
                 return
             }
             if (endpoint === "/api/v1/find/acquisition") {

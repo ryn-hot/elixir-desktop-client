@@ -109,6 +109,9 @@ class PlaybackClientFixtureMatrixTests(unittest.TestCase):
                 "subtitle_next",
                 "lower_quality",
                 "retry_from_current",
+                "skip_active_segment",
+                "up_next_cancel",
+                "up_next_play_now",
                 "stop",
             ],
             "required_recovery_scenarios": [
@@ -146,6 +149,39 @@ class PlaybackClientFixtureMatrixTests(unittest.TestCase):
         self.assertTrue(retry_case["require_session_restart"])
         self.assertTrue(retry_case["invalidate_session_before_retry"])
         self.assertEqual(retry_case["automation_actions"], "wait:2,retry_from_current,wait,stop")
+
+        skip_case = next(
+            case for case in manifest["cases"] if case["name"] == "midm-skip-prompt-native-mpv"
+        )
+        self.assertEqual(skip_case["automation_actions"], "wait:2,skip_active_segment,stop")
+        self.assertEqual(skip_case["expect_mode"], "direct_play")
+
+        auto_skip_case = next(
+            case for case in manifest["cases"] if case["name"] == "midm-auto-skip-native-mpv"
+        )
+        self.assertEqual(auto_skip_case["expect_event"], ["segment_skip_requested"])
+
+        up_next_cancel_case = next(
+            case for case in manifest["cases"] if case["name"] == "midm-up-next-cancel-native-mpv"
+        )
+        self.assertEqual(up_next_cancel_case["automation_actions"], "wait:1,up_next_cancel,stop")
+        self.assertIn("up_next_countdown_started", up_next_cancel_case["expect_event"])
+        self.assertIn("up_next_cancelled", up_next_cancel_case["expect_event"])
+
+        up_next_play_now_case = next(
+            case for case in manifest["cases"] if case["name"] == "midm-up-next-play-now-native-mpv"
+        )
+        self.assertEqual(
+            up_next_play_now_case["automation_actions"],
+            "wait:1,up_next_play_now,wait:1,stop",
+        )
+        self.assertIn("up_next_play_now", up_next_play_now_case["expect_event"])
+
+        up_next_autoplay_case = next(
+            case for case in manifest["cases"] if case["name"] == "midm-up-next-autoplay-native-mpv"
+        )
+        self.assertEqual(up_next_autoplay_case["automation_actions"], "wait:3,stop")
+        self.assertIn("up_next_autoplay_starting", up_next_autoplay_case["expect_event"])
 
         ass_case = next(
             case
@@ -405,6 +441,9 @@ class PlaybackClientFixtureMatrixTests(unittest.TestCase):
                 "subtitle_next",
                 "lower_quality",
                 "retry_from_current",
+                "skip_active_segment",
+                "up_next_cancel",
+                "up_next_play_now",
                 "stop",
             ],
             "required_recovery_scenarios": [
@@ -464,6 +503,9 @@ class PlaybackClientFixtureMatrixTests(unittest.TestCase):
                 "subtitle_next",
                 "lower_quality",
                 "retry_from_current",
+                "skip_active_segment",
+                "up_next_cancel",
+                "up_next_play_now",
                 "stop",
             ],
             "required_recovery_scenarios": [

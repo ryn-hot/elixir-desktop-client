@@ -5,6 +5,8 @@
 #include <QQmlEngine>
 #include <QUrl>
 
+#include <algorithm>
+
 MediaFilterModel::MediaFilterModel(QObject *parent)
     : QSortFilterProxyModel(parent) {
     setDynamicSortFilter(true);
@@ -145,6 +147,8 @@ QVariant LibraryModel::data(const QModelIndex &index, int role) const {
             return item.progress;
         case MediaRoles::RuntimeRole:
             return item.runtimeSeconds;
+        case MediaRoles::LastPlayedAtRole:
+            return item.lastPlayedAt;
         case MediaRoles::UpdatedAtRole:
             return item.updatedAt;
         case MediaRoles::TrackedByManagerRole:
@@ -170,6 +174,7 @@ QHash<int, QByteArray> LibraryModel::roleNames() const {
         {MediaRoles::GenresRole, "genres"},
         {MediaRoles::ProgressRole, "progress"},
         {MediaRoles::RuntimeRole, "runtime"},
+        {MediaRoles::LastPlayedAtRole, "lastPlayedAt"},
         {MediaRoles::UpdatedAtRole, "updatedAt"},
         {MediaRoles::TrackedByManagerRole, "trackedByManager"},
         {MediaRoles::CanStopTrackingRole, "canStopTracking"},
@@ -197,6 +202,7 @@ QVariantMap LibraryModel::get(int index) const {
         {"genres", item.genres},
         {"progress", item.progress},
         {"runtime", item.runtimeSeconds},
+        {"lastPlayedAt", item.lastPlayedAt},
         {"updatedAt", item.updatedAt},
         {"trackedByManager", item.trackedByManager},
         {"canStopTracking", item.canStopTracking},
@@ -314,6 +320,25 @@ MediaItem LibraryModel::itemFromVariant(const QVariantMap &map) const {
     item.updatedAt = map.value("updated_at").toString();
     item.runtimeSeconds = map.value("runtime_seconds").toInt();
     item.progress = map.value("progress").toDouble();
+    const QVariantMap playbackState = map.value("playback_state").toMap();
+    if (item.progress <= 0.0 && !playbackState.isEmpty()) {
+        const double resumeSeconds = playbackState.value(
+                                                "resume_seconds",
+                                                playbackState.value("resumeSeconds"))
+                                                .toDouble();
+        const double durationSeconds = playbackState.value(
+                                                  "duration_seconds",
+                                                  playbackState.value("durationSeconds"))
+                                                  .toDouble();
+        const bool watched = playbackState.value("watched").toBool();
+        if (!watched && resumeSeconds > 0.0 && durationSeconds > 0.0) {
+            item.progress = std::min(0.98, std::max(0.0, resumeSeconds / durationSeconds));
+        }
+    }
+    item.lastPlayedAt = playbackState.value(
+                                      "last_played_at",
+                                      playbackState.value("lastPlayedAt"))
+                                      .toString();
     const QVariantMap lifecycle = map.value("lifecycle").toMap();
     item.trackedByManager = lifecycle.value(
                                   "trackedByManager",
@@ -555,10 +580,14 @@ void LibraryModel::applySortMode() {
         order = Qt::DescendingOrder;
     }
 
-    for (MediaFilterModel *model : {&m_allModel, &m_moviesModel, &m_seriesModel, &m_animeModel, &m_continueModel, &m_searchModel}) {
+    for (MediaFilterModel *model : {&m_allModel, &m_moviesModel, &m_seriesModel, &m_animeModel}) {
         model->setSortRole(role);
         model->sort(0, order);
     }
+    m_continueModel.setSortRole(MediaRoles::LastPlayedAtRole);
+    m_continueModel.sort(0, Qt::DescendingOrder);
+    m_searchModel.setSortRole(m_filterMode == "continue" ? MediaRoles::LastPlayedAtRole : role);
+    m_searchModel.sort(0, m_filterMode == "continue" ? Qt::DescendingOrder : order);
 }
 
 void LibraryModel::applyFilterMode() {
@@ -578,4 +607,5 @@ void LibraryModel::applyFilterMode() {
         m_searchModel.setTypeFilter(QString());
         m_searchModel.setRequireProgress(false);
     }
+    applySortMode();
 }

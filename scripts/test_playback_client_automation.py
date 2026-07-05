@@ -40,14 +40,21 @@ def write_rgb_png(path: Path, width: int, height: int, pixels: list[tuple[int, i
 class PlaybackClientAutomationTests(unittest.TestCase):
     def test_expected_events_include_control_path_evidence(self) -> None:
         events = automation.expected_events_for_actions(
-            "pause,resume,seek_forward,seek_backward,lower_quality,retry_from_current,wait:2,stop"
+            "pause,resume,seek_forward,seek_backward,lower_quality,retry_from_current,"
+            "wait:2,skip_active_segment,up_next_cancel,up_next_play_now,stop"
         )
         self.assertIn("paused", events)
         self.assertIn("resumed", events)
-        self.assertEqual(events.count("seek_applied|seek_completed"), 2)
+        self.assertEqual(events.count("seek_applied|seek_completed"), 3)
         self.assertIn("lower_quality_requested|lower_quality_unavailable", events)
         self.assertIn("retry_recovery_requested", events)
         self.assertIn("automation_wait", events)
+        self.assertIn("automation_skip_active_segment", events)
+        self.assertIn("segment_skip_requested", events)
+        self.assertIn("automation_up_next_cancel", events)
+        self.assertIn("up_next_cancelled", events)
+        self.assertIn("automation_up_next_play_now", events)
+        self.assertIn("up_next_play_now", events)
         self.assertIn("session_end_requested", events)
         self.assertIn("automation_finished", events)
 

@@ -18,6 +18,11 @@ Item {
     property int importProviderPresetIndex: 0
     property int importForwardedPortProtocolIndex: 0
     property int importForwardedPortSourceIndex: 0
+    property int mediaSegmentJobStatusFilterIndex: 0
+    property int mediaSegmentCandidateStatusFilterIndex: 0
+    property bool mediaSegmentCandidateLowConfidenceOnly: true
+    property string mediaSegmentWorkerStatusText: ""
+    readonly property bool mediaInteractionSupportToolsEnabled: false
 
     function parseList(text) {
         return text.split(/\\s*,\\s*/).filter(function(item) { return item.length > 0 })
@@ -51,6 +56,91 @@ Item {
             value = apiClient.mediaManagerPreferences.preferencesState
         }
         return value || {}
+    }
+
+    function playbackInteractionState() {
+        return apiClient.playbackInteractionPreferences || {}
+    }
+
+    function skipBehaviorOptions() {
+        return [
+            { label: "Prompt", value: "prompt" },
+            { label: "Auto skip", value: "auto" },
+            { label: "Disabled", value: "disabled" }
+        ]
+    }
+
+    function playbackSkipBehavior(snakeKey, camelKey) {
+        var value = fieldValue(root.playbackInteractionState(), snakeKey, camelKey)
+        return value === "" ? "prompt" : String(value)
+    }
+
+    function playbackBoolValue(snakeKey, camelKey, fallback) {
+        var prefs = root.playbackInteractionState()
+        var value = prefs[camelKey]
+        if (value === undefined && snakeKey !== "") {
+            value = prefs[snakeKey]
+        }
+        return value === undefined || value === null ? fallback : value
+    }
+
+    function playbackIntValue(snakeKey, camelKey, fallback) {
+        var value = fieldValue(root.playbackInteractionState(), snakeKey, camelKey)
+        if (value === "") {
+            return fallback
+        }
+        var parsed = parseInt(value)
+        return isNaN(parsed) ? fallback : parsed
+    }
+
+    function playbackProviderSettings() {
+        var prefs = root.playbackInteractionState()
+        var value = prefs.segment_provider_settings
+        if (value === undefined || value === null) {
+            value = prefs.segmentProviderSettings
+        }
+        return value || {}
+    }
+
+    function playbackProviderEntry(providerId) {
+        var settings = root.playbackProviderSettings()
+        var entry = settings[providerId]
+        if (entry === undefined || entry === null) {
+            return ({})
+        }
+        return entry
+    }
+
+    function playbackProviderEnabled(providerId, fallback) {
+        var entry = root.playbackProviderEntry(providerId)
+        if (entry === undefined || entry === null) {
+            return fallback
+        }
+        if (entry === true || entry === false) {
+            return entry
+        }
+        var enabled = entry.enabled
+        return enabled === undefined || enabled === null ? fallback : enabled
+    }
+
+    function playbackProviderIntSetting(providerId, snakeKey, camelKey, fallback) {
+        var entry = root.playbackProviderEntry(providerId)
+        var value = entry[snakeKey]
+        if (value === undefined || value === null) {
+            value = entry[camelKey]
+        }
+        var parsed = parseInt(value)
+        return isNaN(parsed) ? fallback : parsed
+    }
+
+    function playbackProviderFloatSetting(providerId, snakeKey, camelKey, fallback) {
+        var entry = root.playbackProviderEntry(providerId)
+        var value = entry[snakeKey]
+        if (value === undefined || value === null) {
+            value = entry[camelKey]
+        }
+        var parsed = Number(value)
+        return isNaN(parsed) ? fallback : parsed
     }
 
     function managerProvidersFor(type) {
@@ -598,6 +688,331 @@ Item {
         apiClient.fetchPlaybackAdminDiagnostics()
     }
 
+    function mediaSegmentJobStatusOptions() {
+        return [
+            { label: "All", value: "" },
+            { label: "Running", value: "running" },
+            { label: "Queued", value: "queued" },
+            { label: "Failed", value: "failed" },
+            { label: "Succeeded", value: "succeeded" },
+            { label: "Cancelled", value: "cancelled" },
+            { label: "Skipped", value: "skipped" }
+        ]
+    }
+
+    function mediaSegmentJobStatusFilter() {
+        var options = root.mediaSegmentJobStatusOptions()
+        var index = Math.max(0, Math.min(root.mediaSegmentJobStatusFilterIndex, options.length - 1))
+        return String(options[index].value || "")
+    }
+
+    function mediaSegmentCandidateStatusOptions() {
+        return [
+            { label: "Needs review", value: "" },
+            { label: "Rejected", value: "rejected" },
+            { label: "Pending", value: "pending" },
+            { label: "Accepted", value: "accepted" }
+        ]
+    }
+
+    function mediaSegmentCandidateStatusFilter() {
+        var options = root.mediaSegmentCandidateStatusOptions()
+        var index = Math.max(0, Math.min(root.mediaSegmentCandidateStatusFilterIndex, options.length - 1))
+        return String(options[index].value || "")
+    }
+
+    function refreshMediaSegmentJobs() {
+        if (!root.mediaInteractionSupportToolsEnabled) {
+            return
+        }
+        root.playbackDiagnosticsNotice = ""
+        apiClient.fetchMediaSegmentJobs(root.mediaSegmentJobStatusFilter(), "", "", 30)
+    }
+
+    function runMediaSegmentWorker() {
+        if (!root.mediaInteractionSupportToolsEnabled) {
+            return
+        }
+        root.playbackDiagnosticsNotice = ""
+        root.mediaSegmentWorkerStatusText = ""
+        apiClient.runMediaSegmentWorker()
+    }
+
+    function summaryNumber(summary, snakeKey, camelKey) {
+        if (!summary) {
+            return 0
+        }
+        var value = summary[snakeKey]
+        if (value === undefined || value === null) {
+            value = summary[camelKey]
+        }
+        value = Number(value)
+        return isNaN(value) ? 0 : value
+    }
+
+    function mediaSegmentWorkerSummaryText(summary) {
+        var enqueue = summary ? (summary.enqueue || {}) : {}
+        var jobsRun = root.summaryNumber(summary, "jobs_run", "jobsRun")
+        var succeeded = root.summaryNumber(summary, "jobs_succeeded", "jobsSucceeded")
+        var failed = root.summaryNumber(summary, "jobs_failed", "jobsFailed")
+        var cancelled = root.summaryNumber(summary, "jobs_cancelled", "jobsCancelled")
+        var skipped = root.summaryNumber(summary, "jobs_skipped", "jobsSkipped")
+        var requeued = root.summaryNumber(summary, "jobs_requeued", "jobsRequeued")
+        var staleRecovered = root.summaryNumber(summary, "stale_jobs_recovered", "staleJobsRecovered")
+        var staleRequeued = root.summaryNumber(summary, "stale_jobs_requeued", "staleJobsRequeued")
+        var staleFailed = root.summaryNumber(summary, "stale_jobs_failed", "staleJobsFailed")
+        var queued = root.summaryNumber(enqueue, "jobs_queued", "jobsQueued")
+        var enqueueFailed = root.summaryNumber(enqueue, "jobs_failed", "jobsFailed")
+        var filesSeen = root.summaryNumber(enqueue, "files_seen", "filesSeen")
+        var elapsedMs = root.summaryNumber(summary, "runtime_elapsed_ms", "runtimeElapsedMs")
+        var budgetSeconds = root.summaryNumber(summary, "runtime_budget_seconds", "runtimeBudgetSeconds")
+        var exhausted = summary && (summary.runtime_budget_exhausted || summary.runtimeBudgetExhausted)
+
+        var parts = []
+        parts.push("Worker ran " + jobsRun + " jobs")
+        parts.push(succeeded + " succeeded")
+        if (failed > 0) parts.push(failed + " failed")
+        if (cancelled > 0) parts.push(cancelled + " cancelled")
+        if (skipped > 0) parts.push(skipped + " skipped")
+        if (requeued > 0) parts.push(requeued + " requeued")
+        parts.push("queued " + queued + " follow-up jobs across " + filesSeen + " files")
+        if (enqueueFailed > 0) parts.push(enqueueFailed + " enqueue failures")
+        if (staleRecovered > 0 || staleRequeued > 0 || staleFailed > 0) {
+            parts.push("stale recovered " + staleRecovered + ", requeued " + staleRequeued + ", failed " + staleFailed)
+        }
+        parts.push("elapsed " + elapsedMs + "ms of " + budgetSeconds + "s")
+        if (exhausted) {
+            parts.push("budget exhausted")
+        }
+        return parts.join("; ") + "."
+    }
+
+    function refreshMediaSegmentCandidates() {
+        if (!root.mediaInteractionSupportToolsEnabled) {
+            return
+        }
+        root.playbackDiagnosticsNotice = ""
+        apiClient.fetchMediaSegmentCandidates(
+                    root.mediaSegmentCandidateStatusFilter(),
+                    "",
+                    root.mediaSegmentCandidateLowConfidenceOnly,
+                    30)
+    }
+
+    function refreshMediaInteractionLibraries() {
+        if (!root.mediaInteractionSupportToolsEnabled) {
+            return
+        }
+        root.playbackDiagnosticsNotice = ""
+        apiClient.fetchMediaInteractionLibraries()
+    }
+
+    function mediaSegmentJobs() {
+        return apiClient.mediaSegmentJobs || []
+    }
+
+    function mediaSegmentCandidates() {
+        return apiClient.mediaSegmentCandidates || []
+    }
+
+    function mediaInteractionLibraries() {
+        return apiClient.mediaInteractionLibraries || []
+    }
+
+    function mediaInteractionLibraryId(library) {
+        return String(library.source_config_id || library.sourceConfigId || "")
+    }
+
+    function mediaInteractionLibraryLabel(library) {
+        var extensionId = String(library.extension_id || library.extensionId || "Library")
+        var sourceId = root.mediaInteractionLibraryId(library)
+        if (sourceId.length > 8) {
+            return extensionId + " " + sourceId.slice(sourceId.length - 8)
+        }
+        return extensionId
+    }
+
+    function mediaInteractionLibrarySourceStatus(library) {
+        var enabled = library.source_enabled
+        if (enabled === undefined || enabled === null) {
+            enabled = library.sourceEnabled
+        }
+        return enabled === false ? "source disabled" : "source enabled"
+    }
+
+    function mediaInteractionLibraryProviderSettings(library) {
+        var settings = library.effective_segment_provider_settings
+        if (settings === undefined || settings === null) {
+            settings = library.effectiveSegmentProviderSettings
+        }
+        if (settings === undefined || settings === null) {
+            settings = library.segment_provider_settings || library.segmentProviderSettings
+        }
+        return settings || {}
+    }
+
+    function mediaInteractionLibraryProviderEnabled(library, providerId, fallback) {
+        var settings = root.mediaInteractionLibraryProviderSettings(library)
+        var entry = settings[providerId]
+        if (entry === undefined || entry === null) {
+            return fallback
+        }
+        if (entry === true || entry === false) {
+            return entry
+        }
+        var enabled = entry.enabled
+        return enabled === undefined || enabled === null ? fallback : enabled
+    }
+
+    function updateMediaInteractionLibraryProvider(library, providerId, enabled) {
+        if (!root.mediaInteractionSupportToolsEnabled) {
+            return
+        }
+        var sourceConfigId = root.mediaInteractionLibraryId(library)
+        if (sourceConfigId === "") {
+            root.playbackDiagnosticsNotice = "Source config id is required."
+            return
+        }
+        var providerSettings = {}
+        providerSettings[providerId] = { enabled: enabled }
+        apiClient.updateMediaInteractionLibrarySettings(sourceConfigId, {
+            segmentProviderSettings: providerSettings
+        })
+    }
+
+    function mediaSegmentCandidateStatus(candidate) {
+        return String(candidate.validation_state || candidate.validationState || "")
+    }
+
+    function mediaSegmentCandidateStatusColor(status) {
+        if (status === "accepted") {
+            return Theme.accentSuccess
+        }
+        if (status === "rejected") {
+            return Theme.accentDanger
+        }
+        if (status === "pending") {
+            return Theme.accent
+        }
+        return Theme.textMuted
+    }
+
+    function mediaSegmentCandidateTitle(candidate) {
+        return root.titleLabel(candidate.segment_type || candidate.segmentType) + " from " +
+               root.titleLabel(candidate.provider_kind || candidate.providerKind)
+    }
+
+    function mediaSegmentCandidateRange(candidate) {
+        var start = Number(candidate.start_seconds !== undefined ? candidate.start_seconds : candidate.startSeconds)
+        var end = Number(candidate.end_seconds !== undefined ? candidate.end_seconds : candidate.endSeconds)
+        if (isNaN(start) || isNaN(end)) {
+            return "-"
+        }
+        return Math.round(start) + "s-" + Math.round(end) + "s"
+    }
+
+    function mediaSegmentCandidateReason(candidate) {
+        var reason = candidate.validation_reason || candidate.validationReason || ""
+        if (reason !== "") {
+            return root.titleLabel(reason)
+        }
+        var state = root.mediaSegmentCandidateStatus(candidate)
+        return state === "" ? "-" : root.titleLabel(state)
+    }
+
+    function mediaSegmentCandidateConfidence(candidate) {
+        var confidence = Number(candidate.confidence)
+        if (isNaN(confidence)) {
+            return "-"
+        }
+        return Math.round(confidence * 100) + "%"
+    }
+
+    function mediaSegmentJobStatus(job) {
+        return String(job.status || "")
+    }
+
+    function mediaSegmentJobStatusColor(status) {
+        if (status === "running" || status === "queued") {
+            return Theme.accent
+        }
+        if (status === "succeeded") {
+            return Theme.accentSuccess
+        }
+        if (status === "failed") {
+            return Theme.accentDanger
+        }
+        return Theme.textMuted
+    }
+
+    function mediaSegmentJobTitle(job) {
+        return root.titleLabel(job.provider_kind || job.providerKind) + " " +
+               root.titleLabel(job.job_type || job.jobType)
+    }
+
+    function mediaSegmentJobScope(job) {
+        return root.titleLabel(job.scope_type || job.scopeType) + ": " +
+               root.valueOrDash(job.scope_id || job.scopeId)
+    }
+
+    function mediaSegmentJobTiming(job) {
+        var finished = job.finished_at || job.finishedAt || ""
+        if (finished !== "") {
+            return "finished " + finished
+        }
+        var started = job.started_at || job.startedAt || ""
+        if (started !== "") {
+            return "started " + started
+        }
+        var nextAttempt = job.next_attempt_at || job.nextAttemptAt || ""
+        if (nextAttempt !== "") {
+            return "next " + nextAttempt
+        }
+        return "not scheduled"
+    }
+
+    function mediaSegmentJobError(job) {
+        var error = job.error || {}
+        var message = String(error.message || "")
+        if (message !== "") {
+            return message
+        }
+        var reason = String(error.reason || "")
+        return reason
+    }
+
+    function mediaSegmentJobCanCancel(job) {
+        var status = root.mediaSegmentJobStatus(job)
+        return status !== "succeeded" && status !== "cancelled" && root.valueOrDash(job.id) !== "-"
+    }
+
+    function cancelMediaSegmentJob(job) {
+        if (!root.mediaInteractionSupportToolsEnabled || !root.mediaSegmentJobCanCancel(job)) {
+            return
+        }
+        var jobId = String(job.id || "")
+        if (jobId === "") {
+            return
+        }
+        apiClient.cancelMediaSegmentJob(jobId, "cancel requested from desktop settings")
+    }
+
+    function mediaSegmentJobCanRetry(job) {
+        var status = root.mediaSegmentJobStatus(job)
+        return status !== "running" && status !== "queued" && root.valueOrDash(job.id) !== "-"
+    }
+
+    function retryMediaSegmentJob(job) {
+        if (!root.mediaInteractionSupportToolsEnabled || !root.mediaSegmentJobCanRetry(job)) {
+            return
+        }
+        var jobId = String(job.id || "")
+        if (jobId === "") {
+            return
+        }
+        apiClient.retryMediaSegmentJob(jobId, "retry requested from desktop settings")
+    }
+
     function playbackAdminSessions() {
         var diagnostics = apiClient.playbackAdminDiagnostics || {}
         return diagnostics.sessions || []
@@ -1028,13 +1443,50 @@ Item {
                     root.languagePreferenceForSave())
     }
 
+    function savePlaybackInteractionPreferences() {
+        apiClient.updatePlaybackInteractionPreferences({
+            skipIntroBehavior: String(skipIntroBehaviorCombo.currentValue || "prompt"),
+            skipRecapBehavior: String(skipRecapBehaviorCombo.currentValue || "prompt"),
+            skipPreviewBehavior: String(skipPreviewBehaviorCombo.currentValue || "prompt"),
+            skipCreditsBehavior: String(skipCreditsBehaviorCombo.currentValue || "prompt"),
+            skipOutroBehavior: String(skipOutroBehaviorCombo.currentValue || "prompt"),
+            autoplayEnabled: autoplayEnabledCheck.checked,
+            autoplayCountdownSeconds: autoplayCountdownSpin.value,
+            autoplayMaxConsecutive: autoplayMaxConsecutiveSpin.value,
+            autoplayMaxElapsedMinutes: autoplayMaxElapsedSpin.value,
+            segmentProviderSettings: {
+                theintrodb: { enabled: theIntroDbProviderCheck.checked },
+                aniskip: { enabled: aniSkipProviderCheck.checked },
+                local_audio_recurring: {
+                    enabled: localAudioProviderCheck.checked,
+                    minRepeatCount: localAudioMinRepeatSpin.value,
+                    minSeasonFiles: localAudioMinSeasonFilesSpin.value
+                },
+                local_visual_recurring: {
+                    enabled: localVisualProviderCheck.checked,
+                    minFrameCount: localVisualMinFrameCountSpin.value,
+                    minSpanSeconds: localVisualMinSpanSpin.value,
+                    minStartFraction: localVisualMinStartPercentSpin.value / 100.0,
+                    frameHashStepSeconds: localVisualFrameHashStepSpin.value,
+                    frameHashMaxFrames: localVisualFrameHashMaxFramesSpin.value
+                }
+            }
+        })
+    }
+
     Component.onCompleted: {
         if (apiClient.authToken !== "") {
             apiClient.fetchExtensionsCatalog()
             apiClient.fetchManagerPreferences()
+            apiClient.fetchPlaybackInteractionPreferences()
             root.refreshNetworkProtection()
             root.refreshPlaybackHardware()
             root.refreshPlaybackDiagnostics()
+            if (root.mediaInteractionSupportToolsEnabled) {
+                root.refreshMediaSegmentJobs()
+                root.refreshMediaSegmentCandidates()
+                root.refreshMediaInteractionLibraries()
+            }
         }
     }
 
@@ -1044,9 +1496,15 @@ Item {
             if (apiClient.authToken !== "") {
                 apiClient.fetchExtensionsCatalog()
                 apiClient.fetchManagerPreferences()
+                apiClient.fetchPlaybackInteractionPreferences()
                 root.refreshNetworkProtection()
                 root.refreshPlaybackHardware()
                 root.refreshPlaybackDiagnostics()
+                if (root.mediaInteractionSupportToolsEnabled) {
+                    root.refreshMediaSegmentJobs()
+                    root.refreshMediaSegmentCandidates()
+                    root.refreshMediaInteractionLibraries()
+                }
             }
         }
 
@@ -1077,10 +1535,39 @@ Item {
                 root.networkProtectionNotice = error
             } else if (endpoint.indexOf("/api/v1/playback/hardware") === 0) {
                 root.playbackHardwareNotice = error
+            } else if (endpoint.indexOf("/api/v1/profile/playback-interactions") === 0) {
+                root.playbackDiagnosticsNotice = error
+            } else if (endpoint.indexOf("/api/v1/media-interaction-libraries") === 0) {
+                root.playbackDiagnosticsNotice = error
+            } else if (endpoint.indexOf("/api/v1/media-segments/candidates") === 0) {
+                root.playbackDiagnosticsNotice = error
+            } else if (endpoint === "/api/v1/media-segment-jobs/run-worker") {
+                root.mediaSegmentWorkerStatusText = "Worker failed: " + error
+            } else if (endpoint.indexOf("/api/v1/media-segment-jobs") === 0) {
+                root.playbackDiagnosticsNotice = error
             } else if (endpoint.indexOf("/api/v1/playback/admin") === 0 ||
                        endpoint.indexOf("/api/v1/sessions/") === 0) {
                 root.playbackDiagnosticsNotice = error
             }
+        }
+
+        function onMediaInteractionLibrarySettingsUpdated(sourceConfigId, library) {
+            root.playbackDiagnosticsNotice =
+                    "Updated " + root.mediaInteractionLibraryLabel(library) + "."
+        }
+
+        function onMediaSegmentWorkerRunCompleted(summary) {
+            if (!root.mediaInteractionSupportToolsEnabled) {
+                return
+            }
+            root.mediaSegmentWorkerStatusText = root.mediaSegmentWorkerSummaryText(summary)
+            apiClient.fetchMediaSegmentJobs(root.mediaSegmentJobStatusFilter(), "", "", 30)
+            apiClient.fetchMediaSegmentCandidates(
+                        root.mediaSegmentCandidateStatusFilter(),
+                        "",
+                        root.mediaSegmentCandidateLowConfidenceOnly,
+                        30)
+            apiClient.fetchPlaybackAdminDiagnostics()
         }
     }
 
@@ -2493,6 +2980,878 @@ Item {
                     valueRole: "value"
                     currentIndex: root.optionIndexForValue(model, root.routePreferenceFor("anime"))
                     onActivated: root.saveManagerPreferences()
+                }
+
+                Rectangle {
+                    height: 1
+                    color: Theme.border
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: "Watch tracking and skip content"
+                    color: Theme.textPrimary
+                    font.pixelSize: 16
+                    font.family: Theme.fontDisplay
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: Theme.spacingLarge
+                    rowSpacing: Theme.spacingSmall
+
+                    Label {
+                        text: "Intro"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    ComboBox {
+                        id: skipIntroBehaviorCombo
+                        Layout.fillWidth: true
+                        model: root.skipBehaviorOptions()
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.optionIndexForValue(model, root.playbackSkipBehavior("skip_intro_behavior", "skipIntroBehavior"))
+                        onActivated: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Recap"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    ComboBox {
+                        id: skipRecapBehaviorCombo
+                        Layout.fillWidth: true
+                        model: root.skipBehaviorOptions()
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.optionIndexForValue(model, root.playbackSkipBehavior("skip_recap_behavior", "skipRecapBehavior"))
+                        onActivated: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Preview"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    ComboBox {
+                        id: skipPreviewBehaviorCombo
+                        Layout.fillWidth: true
+                        model: root.skipBehaviorOptions()
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.optionIndexForValue(model, root.playbackSkipBehavior("skip_preview_behavior", "skipPreviewBehavior"))
+                        onActivated: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Credits"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    ComboBox {
+                        id: skipCreditsBehaviorCombo
+                        Layout.fillWidth: true
+                        model: root.skipBehaviorOptions()
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.optionIndexForValue(model, root.playbackSkipBehavior("skip_credits_behavior", "skipCreditsBehavior"))
+                        onActivated: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Outro"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    ComboBox {
+                        id: skipOutroBehaviorCombo
+                        Layout.fillWidth: true
+                        model: root.skipBehaviorOptions()
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.optionIndexForValue(model, root.playbackSkipBehavior("skip_outro_behavior", "skipOutroBehavior"))
+                        onActivated: root.savePlaybackInteractionPreferences()
+                    }
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: Theme.spacingLarge
+                    rowSpacing: Theme.spacingSmall
+
+                    CheckBox {
+                        id: autoplayEnabledCheck
+                        text: "Up Next autoplay"
+                        checked: root.playbackBoolValue("autoplay_enabled", "autoplayEnabled", true)
+                        onToggled: root.savePlaybackInteractionPreferences()
+                        Layout.columnSpan: 2
+                    }
+
+                    Label {
+                        text: "Countdown"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    SpinBox {
+                        id: autoplayCountdownSpin
+                        Layout.fillWidth: true
+                        from: 0
+                        to: 120
+                        value: root.playbackIntValue("autoplay_countdown_seconds", "autoplayCountdownSeconds", 10)
+                        onValueModified: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Max consecutive"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    SpinBox {
+                        id: autoplayMaxConsecutiveSpin
+                        Layout.fillWidth: true
+                        from: 0
+                        to: 20
+                        value: root.playbackIntValue("autoplay_max_consecutive", "autoplayMaxConsecutive", 3)
+                        onValueModified: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Max elapsed minutes"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
+                    SpinBox {
+                        id: autoplayMaxElapsedSpin
+                        Layout.fillWidth: true
+                        from: 0
+                        to: 1440
+                        value: root.playbackIntValue("autoplay_max_elapsed_minutes", "autoplayMaxElapsedMinutes", 180)
+                        onValueModified: root.savePlaybackInteractionPreferences()
+                    }
+
+                    CheckBox {
+                        id: theIntroDbProviderCheck
+                        text: "TheIntroDB"
+                        checked: root.playbackProviderEnabled("theintrodb", true)
+                        onToggled: root.savePlaybackInteractionPreferences()
+                        Layout.columnSpan: 2
+                    }
+
+                    CheckBox {
+                        id: aniSkipProviderCheck
+                        text: "AniSkip"
+                        checked: root.playbackProviderEnabled("aniskip", true)
+                        onToggled: root.savePlaybackInteractionPreferences()
+                        Layout.columnSpan: 2
+                    }
+
+                    CheckBox {
+                        id: localAudioProviderCheck
+                        text: "Local audio detector"
+                        checked: root.playbackProviderEnabled("local_audio_recurring", false)
+                        onToggled: root.savePlaybackInteractionPreferences()
+                        Layout.columnSpan: 2
+                    }
+
+                    Label {
+                        text: "Audio repeat count"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.mediaInteractionSupportToolsEnabled
+                    }
+
+                    SpinBox {
+                        id: localAudioMinRepeatSpin
+                        Layout.fillWidth: true
+                        visible: root.mediaInteractionSupportToolsEnabled
+                        from: 2
+                        to: 20
+                        value: root.playbackProviderIntSetting(
+                                   "local_audio_recurring",
+                                   "min_repeat_count",
+                                   "minRepeatCount",
+                                   2)
+                        onValueModified: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Audio season files"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.mediaInteractionSupportToolsEnabled
+                    }
+
+                    SpinBox {
+                        id: localAudioMinSeasonFilesSpin
+                        Layout.fillWidth: true
+                        visible: root.mediaInteractionSupportToolsEnabled
+                        from: 2
+                        to: 50
+                        value: root.playbackProviderIntSetting(
+                                   "local_audio_recurring",
+                                   "min_season_files",
+                                   "minSeasonFiles",
+                                   2)
+                        onValueModified: root.savePlaybackInteractionPreferences()
+                    }
+
+                    CheckBox {
+                        id: localVisualProviderCheck
+                        text: "Local visual detector"
+                        checked: root.playbackProviderEnabled("local_visual_recurring", false)
+                        onToggled: root.savePlaybackInteractionPreferences()
+                        Layout.columnSpan: 2
+                    }
+
+                    Label {
+                        text: "Visual frame count"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.mediaInteractionSupportToolsEnabled
+                    }
+
+                    SpinBox {
+                        id: localVisualMinFrameCountSpin
+                        Layout.fillWidth: true
+                        visible: root.mediaInteractionSupportToolsEnabled
+                        from: 2
+                        to: 20
+                        value: root.playbackProviderIntSetting(
+                                   "local_visual_recurring",
+                                   "min_frame_count",
+                                   "minFrameCount",
+                                   3)
+                        onValueModified: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Visual span seconds"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.mediaInteractionSupportToolsEnabled
+                    }
+
+                    SpinBox {
+                        id: localVisualMinSpanSpin
+                        Layout.fillWidth: true
+                        visible: root.mediaInteractionSupportToolsEnabled
+                        from: 10
+                        to: 600
+                        value: root.playbackProviderIntSetting(
+                                   "local_visual_recurring",
+                                   "min_span_seconds",
+                                   "minSpanSeconds",
+                                   20)
+                        onValueModified: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Visual start percent"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.mediaInteractionSupportToolsEnabled
+                    }
+
+                    SpinBox {
+                        id: localVisualMinStartPercentSpin
+                        Layout.fillWidth: true
+                        visible: root.mediaInteractionSupportToolsEnabled
+                        from: 50
+                        to: 95
+                        value: Math.round(root.playbackProviderFloatSetting(
+                                              "local_visual_recurring",
+                                              "min_start_fraction",
+                                              "minStartFraction",
+                                              0.60) * 100)
+                        onValueModified: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Frame hash step"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.mediaInteractionSupportToolsEnabled
+                    }
+
+                    SpinBox {
+                        id: localVisualFrameHashStepSpin
+                        Layout.fillWidth: true
+                        visible: root.mediaInteractionSupportToolsEnabled
+                        from: 5
+                        to: 120
+                        value: root.playbackProviderIntSetting(
+                                   "local_visual_recurring",
+                                   "frame_hash_step_seconds",
+                                   "frameHashStepSeconds",
+                                   30)
+                        onValueModified: root.savePlaybackInteractionPreferences()
+                    }
+
+                    Label {
+                        text: "Frame hash max"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        visible: root.mediaInteractionSupportToolsEnabled
+                    }
+
+                    SpinBox {
+                        id: localVisualFrameHashMaxFramesSpin
+                        Layout.fillWidth: true
+                        visible: root.mediaInteractionSupportToolsEnabled
+                        from: 10
+                        to: 500
+                        value: root.playbackProviderIntSetting(
+                                   "local_visual_recurring",
+                                   "frame_hash_max_frames",
+                                   "frameHashMaxFrames",
+                                   120)
+                        onValueModified: root.savePlaybackInteractionPreferences()
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingMedium
+                    visible: root.mediaInteractionSupportToolsEnabled
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "Library segment policy"
+                        color: Theme.textPrimary
+                        font.pixelSize: 14
+                        font.family: Theme.fontDisplay
+                    }
+
+                    Button {
+                        id: mediaInteractionLibrariesRefreshButton
+                        text: apiClient.mediaInteractionLibrariesLoading ? "Refreshing" : "Refresh"
+                        enabled: apiClient.authToken !== "" && !apiClient.mediaInteractionLibrariesLoading
+                        onClicked: root.refreshMediaInteractionLibraries()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: mediaInteractionLibrariesRefreshButton.text
+                            color: mediaInteractionLibrariesRefreshButton.enabled ? Theme.textPrimary : Theme.textDisabled
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.mediaInteractionSupportToolsEnabled &&
+                             root.mediaInteractionLibraries().length === 0
+                    text: apiClient.mediaInteractionLibrariesLoading ? "Refreshing library policies." : "No library policies available."
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                }
+
+                Repeater {
+                    model: root.mediaInteractionSupportToolsEnabled
+                           ? root.mediaInteractionLibraries()
+                           : []
+
+                    delegate: Rectangle {
+                        id: mediaInteractionLibraryCard
+                        required property var modelData
+                        readonly property var library: modelData
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                        implicitHeight: mediaInteractionLibraryColumn.implicitHeight + Theme.spacingSmall * 2
+
+                        ColumnLayout {
+                            id: mediaInteractionLibraryColumn
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: Theme.spacingSmall
+                            spacing: 5
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.mediaInteractionLibraryLabel(mediaInteractionLibraryCard.library)
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 12
+                                    font.family: Theme.fontBody
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    text: root.mediaInteractionLibrarySourceStatus(mediaInteractionLibraryCard.library)
+                                    color: Theme.textMuted
+                                    font.pixelSize: 10
+                                    font.family: Theme.fontBody
+                                }
+                            }
+
+                            GridLayout {
+                                Layout.fillWidth: true
+                                columns: 2
+                                rowSpacing: 2
+                                columnSpacing: Theme.spacingMedium
+
+                                CheckBox {
+                                    text: "TheIntroDB"
+                                    checked: root.mediaInteractionLibraryProviderEnabled(
+                                                 mediaInteractionLibraryCard.library,
+                                                 "theintrodb",
+                                                 true)
+                                    onToggled: root.updateMediaInteractionLibraryProvider(
+                                                   mediaInteractionLibraryCard.library,
+                                                   "theintrodb",
+                                                   checked)
+                                }
+
+                                CheckBox {
+                                    text: "AniSkip"
+                                    checked: root.mediaInteractionLibraryProviderEnabled(
+                                                 mediaInteractionLibraryCard.library,
+                                                 "aniskip",
+                                                 true)
+                                    onToggled: root.updateMediaInteractionLibraryProvider(
+                                                   mediaInteractionLibraryCard.library,
+                                                   "aniskip",
+                                                   checked)
+                                }
+
+                                CheckBox {
+                                    text: "Local audio"
+                                    checked: root.mediaInteractionLibraryProviderEnabled(
+                                                 mediaInteractionLibraryCard.library,
+                                                 "local_audio_recurring",
+                                                 false)
+                                    onToggled: root.updateMediaInteractionLibraryProvider(
+                                                   mediaInteractionLibraryCard.library,
+                                                   "local_audio_recurring",
+                                                   checked)
+                                }
+
+                                CheckBox {
+                                    text: "Local visual"
+                                    checked: root.mediaInteractionLibraryProviderEnabled(
+                                                 mediaInteractionLibraryCard.library,
+                                                 "local_visual_recurring",
+                                                 false)
+                                    onToggled: root.updateMediaInteractionLibraryProvider(
+                                                   mediaInteractionLibraryCard.library,
+                                                   "local_visual_recurring",
+                                                   checked)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingMedium
+                    visible: root.mediaInteractionSupportToolsEnabled
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "Segment candidate review"
+                        color: Theme.textPrimary
+                        font.pixelSize: 14
+                        font.family: Theme.fontDisplay
+                    }
+
+                    ComboBox {
+                        id: mediaSegmentCandidateStatusCombo
+                        Layout.preferredWidth: 150
+                        model: root.mediaSegmentCandidateStatusOptions()
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.mediaSegmentCandidateStatusFilterIndex
+                        onActivated: {
+                            root.mediaSegmentCandidateStatusFilterIndex = index
+                            root.refreshMediaSegmentCandidates()
+                        }
+                    }
+
+                    CheckBox {
+                        id: mediaSegmentCandidateLowConfidenceCheck
+                        text: "Low confidence"
+                        checked: root.mediaSegmentCandidateLowConfidenceOnly
+                        onToggled: {
+                            root.mediaSegmentCandidateLowConfidenceOnly = checked
+                            root.refreshMediaSegmentCandidates()
+                        }
+                    }
+
+                    Button {
+                        id: mediaSegmentCandidatesRefreshButton
+                        text: apiClient.mediaSegmentCandidatesLoading ? "Refreshing" : "Refresh"
+                        enabled: apiClient.authToken !== "" && !apiClient.mediaSegmentCandidatesLoading
+                        onClicked: root.refreshMediaSegmentCandidates()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: mediaSegmentCandidatesRefreshButton.text
+                            color: mediaSegmentCandidatesRefreshButton.enabled ? Theme.textPrimary : Theme.textDisabled
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.mediaInteractionSupportToolsEnabled &&
+                             root.mediaSegmentCandidates().length === 0
+                    text: apiClient.mediaSegmentCandidatesLoading ? "Refreshing segment candidates." : "No segment candidates match this filter."
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                }
+
+                Repeater {
+                    model: root.mediaInteractionSupportToolsEnabled
+                           ? root.mediaSegmentCandidates()
+                           : []
+
+                    delegate: Rectangle {
+                        id: mediaSegmentCandidateCard
+                        required property var modelData
+                        readonly property var candidate: modelData
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: root.mediaSegmentCandidateStatusColor(
+                                          root.mediaSegmentCandidateStatus(candidate))
+                        implicitHeight: mediaSegmentCandidateColumn.implicitHeight + Theme.spacingSmall * 2
+
+                        ColumnLayout {
+                            id: mediaSegmentCandidateColumn
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: Theme.spacingSmall
+                            spacing: 5
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.mediaSegmentCandidateTitle(mediaSegmentCandidateCard.candidate)
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 12
+                                    font.family: Theme.fontBody
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    text: root.titleLabel(root.mediaSegmentCandidateStatus(
+                                                              mediaSegmentCandidateCard.candidate))
+                                    color: root.mediaSegmentCandidateStatusColor(
+                                               root.mediaSegmentCandidateStatus(
+                                                   mediaSegmentCandidateCard.candidate))
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                }
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+                                PillTag { text: root.mediaSegmentCandidateRange(mediaSegmentCandidateCard.candidate) }
+                                PillTag { text: "confidence " + root.mediaSegmentCandidateConfidence(mediaSegmentCandidateCard.candidate) }
+                                PillTag { text: root.titleLabel(mediaSegmentCandidateCard.candidate.identity_strength ||
+                                                                mediaSegmentCandidateCard.candidate.identityStrength ||
+                                                                "unknown") }
+                                PillTag { text: root.valueOrDash(mediaSegmentCandidateCard.candidate.item_type ||
+                                                                 mediaSegmentCandidateCard.candidate.itemType) }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Reason: " + root.mediaSegmentCandidateReason(mediaSegmentCandidateCard.candidate)
+                                color: Theme.textMuted
+                                font.pixelSize: 10
+                                font.family: Theme.fontBody
+                                elide: Text.ElideRight
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "File " + root.valueOrDash(mediaSegmentCandidateCard.candidate.media_file_id ||
+                                                                  mediaSegmentCandidateCard.candidate.mediaFileId)
+                                color: Theme.textMuted
+                                font.pixelSize: 10
+                                font.family: Theme.fontBody
+                                elide: Text.ElideMiddle
+                            }
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingMedium
+                    visible: root.mediaInteractionSupportToolsEnabled
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "Media segment jobs"
+                        color: Theme.textPrimary
+                        font.pixelSize: 14
+                        font.family: Theme.fontDisplay
+                    }
+
+                    ComboBox {
+                        id: mediaSegmentJobStatusCombo
+                        Layout.preferredWidth: 150
+                        model: root.mediaSegmentJobStatusOptions()
+                        textRole: "label"
+                        valueRole: "value"
+                        currentIndex: root.mediaSegmentJobStatusFilterIndex
+                        onActivated: {
+                            root.mediaSegmentJobStatusFilterIndex = index
+                            root.refreshMediaSegmentJobs()
+                        }
+                    }
+
+                    Button {
+                        id: mediaSegmentJobRefreshButton
+                        text: apiClient.mediaSegmentJobsLoading ? "Refreshing" : "Refresh"
+                        enabled: apiClient.authToken !== "" && !apiClient.mediaSegmentJobsLoading
+                        onClicked: root.refreshMediaSegmentJobs()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: mediaSegmentJobRefreshButton.text
+                            color: mediaSegmentJobRefreshButton.enabled ? Theme.textPrimary : Theme.textDisabled
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        id: mediaSegmentWorkerRunButton
+                        text: apiClient.mediaSegmentWorkerRunning ? "Running" : "Run worker"
+                        enabled: apiClient.authToken !== "" && !apiClient.mediaSegmentWorkerRunning
+                        onClicked: root.runMediaSegmentWorker()
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.backgroundCardRaised
+                            border.color: Theme.border
+                        }
+                        contentItem: Label {
+                            text: mediaSegmentWorkerRunButton.text
+                            color: mediaSegmentWorkerRunButton.enabled ? Theme.textPrimary : Theme.textDisabled
+                            font.pixelSize: 11
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.mediaInteractionSupportToolsEnabled &&
+                             (root.mediaSegmentWorkerStatusText !== "" || apiClient.mediaSegmentWorkerRunning)
+                    text: apiClient.mediaSegmentWorkerRunning
+                          ? "Running one bounded media segment worker pass."
+                          : root.mediaSegmentWorkerStatusText
+                    color: root.mediaSegmentWorkerStatusText.indexOf("failed") >= 0
+                           ? Theme.accentDanger
+                           : Theme.textSecondary
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.mediaInteractionSupportToolsEnabled &&
+                             root.mediaSegmentJobs().length === 0
+                    text: apiClient.mediaSegmentJobsLoading ? "Refreshing media segment jobs." : "No media segment jobs match this filter."
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.family: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                }
+
+                Repeater {
+                    model: root.mediaInteractionSupportToolsEnabled
+                           ? root.mediaSegmentJobs()
+                           : []
+
+                    delegate: Rectangle {
+                        id: mediaSegmentJobCard
+                        required property var modelData
+                        readonly property var segmentJob: modelData
+                        Layout.fillWidth: true
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: root.mediaSegmentJobStatusColor(root.mediaSegmentJobStatus(segmentJob))
+                        implicitHeight: mediaSegmentJobColumn.implicitHeight + Theme.spacingSmall * 2
+
+                        ColumnLayout {
+                            id: mediaSegmentJobColumn
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: Theme.spacingSmall
+                            spacing: 5
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.mediaSegmentJobTitle(mediaSegmentJobCard.segmentJob)
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 12
+                                    font.family: Theme.fontBody
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    text: root.titleLabel(root.mediaSegmentJobStatus(mediaSegmentJobCard.segmentJob))
+                                    color: root.mediaSegmentJobStatusColor(root.mediaSegmentJobStatus(mediaSegmentJobCard.segmentJob))
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                }
+
+                                Button {
+                                    id: mediaSegmentJobRetryButton
+                                    text: "Retry"
+                                    enabled: apiClient.authToken !== "" &&
+                                             root.mediaSegmentJobCanRetry(mediaSegmentJobCard.segmentJob)
+                                    onClicked: root.retryMediaSegmentJob(mediaSegmentJobCard.segmentJob)
+                                    background: Rectangle {
+                                        radius: Theme.radiusSmall
+                                        color: Theme.backgroundCard
+                                        border.color: Theme.border
+                                    }
+                                    contentItem: Label {
+                                        text: mediaSegmentJobRetryButton.text
+                                        color: parent.enabled ? Theme.textPrimary : Theme.textDisabled
+                                        font.pixelSize: 11
+                                        font.family: Theme.fontBody
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                }
+
+                                Button {
+                                    id: mediaSegmentJobCancelButton
+                                    text: "Cancel"
+                                    enabled: apiClient.authToken !== "" &&
+                                             root.mediaSegmentJobCanCancel(mediaSegmentJobCard.segmentJob)
+                                    onClicked: root.cancelMediaSegmentJob(mediaSegmentJobCard.segmentJob)
+                                    background: Rectangle {
+                                        radius: Theme.radiusSmall
+                                        color: Theme.backgroundCard
+                                        border.color: Theme.border
+                                    }
+                                    contentItem: Label {
+                                        text: mediaSegmentJobCancelButton.text
+                                        color: parent.enabled ? Theme.textPrimary : Theme.textDisabled
+                                        font.pixelSize: 11
+                                        font.family: Theme.fontBody
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                }
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+                                PillTag { text: root.mediaSegmentJobScope(mediaSegmentJobCard.segmentJob) }
+                                PillTag { text: "priority " + root.valueOrDash(mediaSegmentJobCard.segmentJob.priority) }
+                                PillTag {
+                                    text: "attempts " +
+                                          root.valueOrDash(mediaSegmentJobCard.segmentJob.attempts) + "/" +
+                                          root.valueOrDash(mediaSegmentJobCard.segmentJob.max_attempts ||
+                                                           mediaSegmentJobCard.segmentJob.maxAttempts)
+                                }
+                                PillTag {
+                                    visible: root.valueOrDash(mediaSegmentJobCard.segmentJob.locked_by ||
+                                                              mediaSegmentJobCard.segmentJob.lockedBy) !== "-"
+                                    text: "locked"
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.mediaSegmentJobTiming(mediaSegmentJobCard.segmentJob)
+                                color: Theme.textMuted
+                                font.pixelSize: 10
+                                font.family: Theme.fontBody
+                                elide: Text.ElideRight
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                visible: root.mediaSegmentJobError(mediaSegmentJobCard.segmentJob) !== ""
+                                text: "Last error: " + root.mediaSegmentJobError(mediaSegmentJobCard.segmentJob)
+                                color: Theme.textMuted
+                                font.pixelSize: 10
+                                font.family: Theme.fontBody
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
                 }
 
                 Rectangle {

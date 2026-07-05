@@ -284,6 +284,12 @@ QVariantMap normalizeFindMediaPreferencesPayload(const QVariantMap &payload) {
     return normalized;
 }
 
+QVariantMap normalizePlaybackInteractionPreferencesPayload(const QVariantMap &payload) {
+    const QVariantMap preferences =
+        payload.value("preferences", payload.value("playbackPreferences")).toMap();
+    return preferences.isEmpty() ? payload : preferences;
+}
+
 void insertForwardedPort(QJsonObject &body, int port, const QString &protocol, const QString &source) {
     if (port <= 0 || port > 65535) {
         return;
@@ -569,6 +575,38 @@ bool ApiClient::playbackAdminDiagnosticsLoading() const {
     return m_playbackAdminDiagnosticsLoading;
 }
 
+QVariantMap ApiClient::playbackInteractionPreferences() const {
+    return m_playbackInteractionPreferences;
+}
+
+QVariantList ApiClient::mediaSegmentJobs() const {
+    return m_mediaSegmentJobs;
+}
+
+bool ApiClient::mediaSegmentJobsLoading() const {
+    return m_mediaSegmentJobsLoading;
+}
+
+bool ApiClient::mediaSegmentWorkerRunning() const {
+    return m_mediaSegmentWorkerRunning;
+}
+
+QVariantList ApiClient::mediaSegmentCandidates() const {
+    return m_mediaSegmentCandidates;
+}
+
+bool ApiClient::mediaSegmentCandidatesLoading() const {
+    return m_mediaSegmentCandidatesLoading;
+}
+
+QVariantList ApiClient::mediaInteractionLibraries() const {
+    return m_mediaInteractionLibraries;
+}
+
+bool ApiClient::mediaInteractionLibrariesLoading() const {
+    return m_mediaInteractionLibrariesLoading;
+}
+
 QVariantMap ApiClient::mediaFindResult() const {
     return m_mediaFindResult;
 }
@@ -754,6 +792,119 @@ void ApiClient::fetchMediaDetails(const QString &mediaItemId) {
                     }
                     emit mediaDetailsReceived(details);
                 });
+}
+
+void ApiClient::analyzeMediaSegments(
+    const QString &mediaItemId,
+    const QString &itemType,
+    bool force) {
+    const QString trimmedMediaItemId = mediaItemId.trimmed();
+    QString normalizedItemType = itemType.trimmed().toLower();
+    if (normalizedItemType == "tv" || normalizedItemType == "show") {
+        normalizedItemType = QStringLiteral("series");
+    }
+    if (trimmedMediaItemId.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/items/:item_type/:item_id/media-segment-jobs/analyze",
+            "Media item id is required.");
+        return;
+    }
+    if (normalizedItemType.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/items/:item_type/:item_id/media-segment-jobs/analyze",
+            "Media item type is required.");
+        return;
+    }
+
+    QJsonObject body{{"force", force}};
+    sendRequest(
+        "POST",
+        QString("/api/v1/items/%1/%2/media-segment-jobs/analyze")
+            .arg(normalizedItemType, trimmedMediaItemId),
+        body,
+        [this, trimmedMediaItemId](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/items/:item_type/:item_id/media-segment-jobs/analyze",
+                    "Media segment analysis response was not an object.");
+                return;
+            }
+            const QVariantMap summary = doc.object().value("summary").toObject().toVariantMap();
+            emit mediaSegmentAnalysisCompleted(trimmedMediaItemId, summary);
+        });
+}
+
+void ApiClient::fetchItemMediaSegments(
+    const QString &mediaItemId,
+    const QString &itemType) {
+    const QString trimmedMediaItemId = mediaItemId.trimmed();
+    QString normalizedItemType = itemType.trimmed().toLower();
+    if (normalizedItemType == "tv" || normalizedItemType == "show") {
+        normalizedItemType = QStringLiteral("series");
+    }
+
+    if (trimmedMediaItemId.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/items/:item_type/:item_id/segments",
+            "Media item id is required.");
+        return;
+    }
+    if (normalizedItemType.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/items/:item_type/:item_id/segments",
+            "Media item type is required.");
+        return;
+    }
+
+    const QString encodedItemType = QString::fromUtf8(QUrl::toPercentEncoding(normalizedItemType));
+    const QString encodedMediaItemId =
+        QString::fromUtf8(QUrl::toPercentEncoding(trimmedMediaItemId));
+    const QString path =
+        QString("/api/v1/items/%1/%2/segments").arg(encodedItemType, encodedMediaItemId);
+    sendRequest(
+        "GET",
+        path,
+        QJsonObject(),
+        [this, trimmedMediaItemId, normalizedItemType, path](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(path, "Media segments response was not an object.");
+                return;
+            }
+            emit itemMediaSegmentsReceived(
+                trimmedMediaItemId,
+                normalizedItemType,
+                doc.object().toVariantMap());
+        });
+}
+
+void ApiClient::disableMediaSegment(
+    const QString &segmentId,
+    const QString &reason) {
+    const QString trimmedSegmentId = segmentId.trimmed();
+    if (trimmedSegmentId.isEmpty()) {
+        emit requestFailed("/api/v1/media-segments/:id/disable", "Media segment id is required.");
+        return;
+    }
+
+    QJsonObject body;
+    const QString trimmedReason = reason.trimmed();
+    if (!trimmedReason.isEmpty()) {
+        body.insert("reason", trimmedReason);
+    }
+
+    const QString encodedSegmentId = QString::fromUtf8(QUrl::toPercentEncoding(trimmedSegmentId));
+    const QString path = QString("/api/v1/media-segments/%1/disable").arg(encodedSegmentId);
+    sendRequest(
+        "POST",
+        path,
+        body,
+        [this, trimmedSegmentId, path](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(path, "Media segment disable response was not an object.");
+                return;
+            }
+            emit mediaSegmentDisabled(trimmedSegmentId, doc.object().toVariantMap());
+        });
 }
 
 void ApiClient::deleteLibraryItem(const QString &mediaItemId, bool stopTracking) {
@@ -1016,8 +1167,61 @@ void ApiClient::heartbeatSession(const QString &sessionId) {
                 true);
 }
 
-void ApiClient::endSession(const QString &sessionId) {
-    sendRequest("POST", QString("/api/v1/sessions/%1/end").arg(sessionId), QJsonObject(),
+void ApiClient::reportPlaybackProgress(
+    const QString &sessionId,
+    double positionSeconds,
+    double durationSeconds,
+    bool paused,
+    const QString &eventType,
+    const QVariantMap &progressMetadata) {
+    if (sessionId.trimmed().isEmpty() || !std::isfinite(positionSeconds) || positionSeconds < 0.0) {
+        return;
+    }
+    QJsonObject body{{"positionSeconds", positionSeconds}, {"paused", paused}};
+    if (std::isfinite(durationSeconds) && durationSeconds > 0.0) {
+        body.insert("durationSeconds", durationSeconds);
+    }
+    const QString trimmedEventType = eventType.trimmed();
+    if (!trimmedEventType.isEmpty()) {
+        body.insert("eventType", trimmedEventType);
+    }
+    for (auto it = progressMetadata.cbegin(); it != progressMetadata.cend(); ++it) {
+        if (!it.key().trimmed().isEmpty() && it.value().isValid() && !it.value().isNull()) {
+            body.insert(it.key(), QJsonValue::fromVariant(it.value()));
+        }
+    }
+    body.insert("clientReportedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+
+    sendRequest("POST", QString("/api/v1/sessions/%1/progress").arg(sessionId), body,
+                [](const QJsonDocument &) {},
+                ErrorHandler(),
+                true);
+}
+
+void ApiClient::endSession(
+    const QString &sessionId,
+    double positionSeconds,
+    double durationSeconds,
+    const QString &eventType) {
+    if (sessionId.trimmed().isEmpty()) {
+        return;
+    }
+    QJsonObject body;
+    if (std::isfinite(positionSeconds) && positionSeconds >= 0.0) {
+        body.insert("positionSeconds", positionSeconds);
+    }
+    if (std::isfinite(durationSeconds) && durationSeconds > 0.0) {
+        body.insert("durationSeconds", durationSeconds);
+    }
+    const QString trimmedEventType = eventType.trimmed();
+    if (!trimmedEventType.isEmpty()) {
+        body.insert("eventType", trimmedEventType);
+    }
+    if (!body.isEmpty()) {
+        body.insert("clientReportedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    }
+
+    sendRequest("POST", QString("/api/v1/sessions/%1/end").arg(sessionId), body,
                 [](const QJsonDocument &) {},
                 ErrorHandler(),
                 true);
@@ -2716,6 +2920,120 @@ void ApiClient::updatePlaybackAdminDiagnostics(const QJsonObject &obj) {
     emit playbackAdminDiagnosticsChanged();
 }
 
+void ApiClient::setMediaSegmentJobsLoading(bool loading) {
+    if (m_mediaSegmentJobsLoading == loading) {
+        return;
+    }
+    m_mediaSegmentJobsLoading = loading;
+    emit mediaSegmentJobsLoadingChanged();
+}
+
+void ApiClient::setMediaSegmentWorkerRunning(bool running) {
+    if (m_mediaSegmentWorkerRunning == running) {
+        return;
+    }
+    m_mediaSegmentWorkerRunning = running;
+    emit mediaSegmentWorkerRunningChanged();
+}
+
+void ApiClient::updateMediaSegmentJobs(const QJsonArray &jobs) {
+    const QVariantList value = jobs.toVariantList();
+    if (m_mediaSegmentJobs == value) {
+        return;
+    }
+    m_mediaSegmentJobs = value;
+    emit mediaSegmentJobsChanged();
+}
+
+void ApiClient::upsertMediaSegmentJob(const QVariantMap &job) {
+    const QString id = job.value("id").toString().trimmed();
+    if (id.isEmpty()) {
+        return;
+    }
+
+    QVariantList updated = m_mediaSegmentJobs;
+    bool replaced = false;
+    for (qsizetype i = 0; i < updated.size(); ++i) {
+        const QVariantMap current = updated.at(i).toMap();
+        if (current.value("id").toString() == id) {
+            updated.replace(i, job);
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced) {
+        updated.prepend(job);
+    }
+    if (m_mediaSegmentJobs == updated) {
+        return;
+    }
+    m_mediaSegmentJobs = updated;
+    emit mediaSegmentJobsChanged();
+}
+
+void ApiClient::setMediaSegmentCandidatesLoading(bool loading) {
+    if (m_mediaSegmentCandidatesLoading == loading) {
+        return;
+    }
+    m_mediaSegmentCandidatesLoading = loading;
+    emit mediaSegmentCandidatesLoadingChanged();
+}
+
+void ApiClient::updateMediaSegmentCandidates(const QJsonArray &candidates) {
+    const QVariantList value = candidates.toVariantList();
+    if (m_mediaSegmentCandidates == value) {
+        return;
+    }
+    m_mediaSegmentCandidates = value;
+    emit mediaSegmentCandidatesChanged();
+}
+
+void ApiClient::setMediaInteractionLibrariesLoading(bool loading) {
+    if (m_mediaInteractionLibrariesLoading == loading) {
+        return;
+    }
+    m_mediaInteractionLibrariesLoading = loading;
+    emit mediaInteractionLibrariesLoadingChanged();
+}
+
+void ApiClient::updateMediaInteractionLibraries(const QJsonArray &libraries) {
+    const QVariantList value = libraries.toVariantList();
+    if (m_mediaInteractionLibraries == value) {
+        return;
+    }
+    m_mediaInteractionLibraries = value;
+    emit mediaInteractionLibrariesChanged();
+}
+
+void ApiClient::upsertMediaInteractionLibrary(const QVariantMap &library) {
+    const QString sourceConfigId =
+        library.value("source_config_id", library.value("sourceConfigId")).toString().trimmed();
+    if (sourceConfigId.isEmpty()) {
+        return;
+    }
+
+    QVariantList updated = m_mediaInteractionLibraries;
+    bool replaced = false;
+    for (qsizetype i = 0; i < updated.size(); ++i) {
+        const QVariantMap current = updated.at(i).toMap();
+        const QString currentId =
+            current.value("source_config_id", current.value("sourceConfigId")).toString();
+        if (currentId == sourceConfigId) {
+            updated.replace(i, library);
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced) {
+        updated.append(library);
+    }
+    if (m_mediaInteractionLibraries == updated) {
+        return;
+    }
+    m_mediaInteractionLibraries = updated;
+    emit mediaInteractionLibrariesChanged();
+}
+
 void ApiClient::updateMediaAcquisitionState(const QJsonObject &obj) {
     const QVariantMap status = obj.toVariantMap();
     const QVariantList items = obj.value("items").toArray().toVariantList();
@@ -3613,6 +3931,343 @@ void ApiClient::fetchManagerPreferences() {
                 m_mediaManagerPreferences = payload;
                 emit mediaManagerPreferencesChanged();
             }
+        });
+}
+
+void ApiClient::fetchPlaybackInteractionPreferences() {
+    sendRequest(
+        "GET",
+        "/api/v1/profile/playback-interactions",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/profile/playback-interactions",
+                    "Playback interaction preferences response was not an object.");
+                return;
+            }
+            const QVariantMap payload =
+                normalizePlaybackInteractionPreferencesPayload(doc.object().toVariantMap());
+            if (m_playbackInteractionPreferences != payload) {
+                m_playbackInteractionPreferences = payload;
+                emit playbackInteractionPreferencesChanged();
+            }
+        });
+}
+
+void ApiClient::updatePlaybackInteractionPreferences(const QVariantMap &preferences) {
+    sendRequest(
+        "PUT",
+        "/api/v1/profile/playback-interactions",
+        QJsonObject::fromVariantMap(preferences),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/profile/playback-interactions",
+                    "Playback interaction preferences update response was not an object.");
+                return;
+            }
+            const QVariantMap payload =
+                normalizePlaybackInteractionPreferencesPayload(doc.object().toVariantMap());
+            if (m_playbackInteractionPreferences != payload) {
+                m_playbackInteractionPreferences = payload;
+                emit playbackInteractionPreferencesChanged();
+            }
+        });
+}
+
+void ApiClient::fetchMediaSegmentJobs(
+    const QString &status,
+    const QString &providerKind,
+    const QString &jobType,
+    int limit) {
+    QUrlQuery query;
+    const QString trimmedStatus = status.trimmed();
+    const QString trimmedProviderKind = providerKind.trimmed();
+    const QString trimmedJobType = jobType.trimmed();
+    if (!trimmedStatus.isEmpty()) {
+        query.addQueryItem("status", trimmedStatus);
+    }
+    if (!trimmedProviderKind.isEmpty()) {
+        query.addQueryItem("providerKind", trimmedProviderKind);
+    }
+    if (!trimmedJobType.isEmpty()) {
+        query.addQueryItem("jobType", trimmedJobType);
+    }
+    query.addQueryItem("limit", QString::number(qBound(1, limit, 500)));
+
+    QString path = "/api/v1/media-segment-jobs";
+    if (!query.isEmpty()) {
+        path.append('?');
+        path.append(query.toString(QUrl::FullyEncoded));
+    }
+
+    setMediaSegmentJobsLoading(true);
+    sendRequest(
+        "GET",
+        path,
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setMediaSegmentJobsLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/media-segment-jobs",
+                    "Media segment jobs response was not an object.");
+                return;
+            }
+            updateMediaSegmentJobs(doc.object().value("jobs").toArray());
+        },
+        [this](const QString &) {
+            setMediaSegmentJobsLoading(false);
+        });
+}
+
+void ApiClient::runMediaSegmentWorker() {
+    if (m_mediaSegmentWorkerRunning) {
+        return;
+    }
+
+    setMediaSegmentWorkerRunning(true);
+    sendRequest(
+        "POST",
+        "/api/v1/media-segment-jobs/run-worker",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setMediaSegmentWorkerRunning(false);
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/media-segment-jobs/run-worker",
+                    "Media segment worker response was not an object.");
+                return;
+            }
+            const QVariantMap summary = doc.object().value("summary").toObject().toVariantMap();
+            emit mediaSegmentWorkerRunCompleted(summary);
+        },
+        [this](const QString &) {
+            setMediaSegmentWorkerRunning(false);
+        });
+}
+
+void ApiClient::fetchMediaSegmentCandidates(
+    const QString &validationState,
+    const QString &providerKind,
+    bool lowConfidence,
+    int limit) {
+    QUrlQuery query;
+    const QString trimmedValidationState = validationState.trimmed();
+    const QString trimmedProviderKind = providerKind.trimmed();
+    if (!trimmedValidationState.isEmpty()) {
+        query.addQueryItem("validationState", trimmedValidationState);
+    }
+    if (!trimmedProviderKind.isEmpty()) {
+        query.addQueryItem("providerKind", trimmedProviderKind);
+    }
+    query.addQueryItem("lowConfidence", lowConfidence ? "true" : "false");
+    query.addQueryItem("limit", QString::number(qBound(1, limit, 500)));
+
+    QString path = "/api/v1/media-segments/candidates";
+    if (!query.isEmpty()) {
+        path.append('?');
+        path.append(query.toString(QUrl::FullyEncoded));
+    }
+
+    setMediaSegmentCandidatesLoading(true);
+    sendRequest(
+        "GET",
+        path,
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setMediaSegmentCandidatesLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/media-segments/candidates",
+                    "Media segment candidates response was not an object.");
+                return;
+            }
+            updateMediaSegmentCandidates(doc.object().value("candidates").toArray());
+        },
+        [this](const QString &) {
+            setMediaSegmentCandidatesLoading(false);
+        });
+}
+
+void ApiClient::fetchMediaInteractionLibraries() {
+    setMediaInteractionLibrariesLoading(true);
+    sendRequest(
+        "GET",
+        "/api/v1/media-interaction-libraries",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setMediaInteractionLibrariesLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/media-interaction-libraries",
+                    "Media interaction libraries response was not an object.");
+                return;
+            }
+            updateMediaInteractionLibraries(doc.object().value("libraries").toArray());
+        },
+        [this](const QString &) {
+            setMediaInteractionLibrariesLoading(false);
+        });
+}
+
+void ApiClient::updateMediaInteractionLibrarySettings(
+    const QString &sourceConfigId,
+    const QVariantMap &settings) {
+    const QString trimmedSourceConfigId = sourceConfigId.trimmed();
+    if (trimmedSourceConfigId.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/media-interaction-libraries/:source_config_id",
+            "Source config id is required.");
+        return;
+    }
+
+    const QString encodedSourceConfigId =
+        QString::fromUtf8(QUrl::toPercentEncoding(trimmedSourceConfigId));
+    sendRequest(
+        "PUT",
+        QString("/api/v1/media-interaction-libraries/%1").arg(encodedSourceConfigId),
+        QJsonObject::fromVariantMap(settings),
+        [this, trimmedSourceConfigId](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/media-interaction-libraries/:source_config_id",
+                    "Media interaction library update response was not an object.");
+                return;
+            }
+            const QVariantMap library = doc.object().value("library").toObject().toVariantMap();
+            upsertMediaInteractionLibrary(library);
+            emit mediaInteractionLibrarySettingsUpdated(trimmedSourceConfigId, library);
+        });
+}
+
+void ApiClient::updateMediaItemWatchState(
+    const QString &mediaItemId,
+    const QString &itemType,
+    const QString &action,
+    int durationSeconds) {
+    const QString trimmedMediaItemId = mediaItemId.trimmed();
+    QString normalizedItemType = itemType.trimmed().toLower();
+    if (normalizedItemType == "tv" || normalizedItemType == "show") {
+        normalizedItemType = QStringLiteral("series");
+    }
+    QString normalizedAction = action.trimmed().toLower().replace("-", "_");
+    if (normalizedAction == "reset_progress") {
+        normalizedAction = QStringLiteral("reset");
+    }
+
+    if (trimmedMediaItemId.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/items/:item_type/:item_id/watch-state",
+            "Media item id is required.");
+        return;
+    }
+    if (normalizedItemType.isEmpty()) {
+        emit requestFailed(
+            "/api/v1/items/:item_type/:item_id/watch-state",
+            "Media item type is required.");
+        return;
+    }
+    if (normalizedAction != "watched" && normalizedAction != "unwatched"
+        && normalizedAction != "reset") {
+        emit requestFailed(
+            "/api/v1/items/:item_type/:item_id/watch-state",
+            "Watch state action must be watched, unwatched, or reset.");
+        return;
+    }
+
+    QJsonObject body;
+    if (durationSeconds > 0) {
+        body.insert("durationSeconds", durationSeconds);
+    }
+
+    const QString encodedItemType = QString::fromUtf8(QUrl::toPercentEncoding(normalizedItemType));
+    const QString encodedMediaItemId =
+        QString::fromUtf8(QUrl::toPercentEncoding(trimmedMediaItemId));
+    const QString path = QString("/api/v1/items/%1/%2/watch-state/%3")
+                             .arg(encodedItemType, encodedMediaItemId, normalizedAction);
+    sendRequest(
+        "POST",
+        path,
+        body,
+        [this, trimmedMediaItemId, normalizedItemType, normalizedAction, path](
+            const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(path, "Watch state response was not an object.");
+                return;
+            }
+            const QVariantMap playbackState =
+                doc.object().value("playback_state").toObject().toVariantMap();
+            emit mediaWatchStateUpdated(
+                trimmedMediaItemId,
+                normalizedItemType,
+                normalizedAction,
+                playbackState);
+        });
+}
+
+void ApiClient::cancelMediaSegmentJob(
+    const QString &jobId,
+    const QString &reason) {
+    const QString trimmedJobId = jobId.trimmed();
+    if (trimmedJobId.isEmpty()) {
+        emit requestFailed("/api/v1/media-segment-jobs/:id/cancel", "Job id is required.");
+        return;
+    }
+
+    QJsonObject body;
+    const QString trimmedReason = reason.trimmed();
+    if (!trimmedReason.isEmpty()) {
+        body.insert("reason", trimmedReason);
+    }
+
+    sendRequest(
+        "POST",
+        QString("/api/v1/media-segment-jobs/%1/cancel").arg(trimmedJobId),
+        body,
+        [this, trimmedJobId](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/media-segment-jobs/:id/cancel",
+                    "Media segment job cancel response was not an object.");
+                return;
+            }
+            const QVariantMap job = doc.object().value("job").toObject().toVariantMap();
+            upsertMediaSegmentJob(job);
+            emit mediaSegmentJobActionCompleted(trimmedJobId, "cancel", job);
+        });
+}
+
+void ApiClient::retryMediaSegmentJob(
+    const QString &jobId,
+    const QString &reason) {
+    const QString trimmedJobId = jobId.trimmed();
+    if (trimmedJobId.isEmpty()) {
+        emit requestFailed("/api/v1/media-segment-jobs/:id/retry", "Job id is required.");
+        return;
+    }
+
+    QJsonObject body;
+    const QString trimmedReason = reason.trimmed();
+    if (!trimmedReason.isEmpty()) {
+        body.insert("reason", trimmedReason);
+    }
+
+    sendRequest(
+        "POST",
+        QString("/api/v1/media-segment-jobs/%1/retry").arg(trimmedJobId),
+        body,
+        [this, trimmedJobId](const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/media-segment-jobs/:id/retry",
+                    "Media segment job retry response was not an object.");
+                return;
+            }
+            const QVariantMap job = doc.object().value("job").toObject().toVariantMap();
+            upsertMediaSegmentJob(job);
+            emit mediaSegmentJobActionCompleted(trimmedJobId, "retry", job);
         });
 }
 

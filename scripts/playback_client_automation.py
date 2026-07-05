@@ -197,6 +197,16 @@ def expected_events_for_actions(actions: str) -> list[str]:
             expected.append("retry_recovery_requested")
         elif action == "wait":
             expected.append("automation_wait")
+        elif action in {"skip_active_segment", "skip_segment"}:
+            expected.append("automation_skip_active_segment")
+            expected.append("segment_skip_requested")
+            expected.append("seek_applied|seek_completed")
+        elif action in {"up_next_play_now", "play_next"}:
+            expected.append("automation_up_next_play_now")
+            expected.append("up_next_play_now")
+        elif action in {"up_next_cancel", "cancel_up_next"}:
+            expected.append("automation_up_next_cancel")
+            expected.append("up_next_cancelled")
         elif action == "stop":
             expected.append("session_end_requested")
     if actions.strip():

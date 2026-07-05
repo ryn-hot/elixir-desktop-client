@@ -62,6 +62,14 @@ class ApiClient : public QObject {
     Q_PROPERTY(bool playbackHardwareLoading READ playbackHardwareLoading NOTIFY playbackHardwareLoadingChanged)
     Q_PROPERTY(QVariantMap playbackAdminDiagnostics READ playbackAdminDiagnostics NOTIFY playbackAdminDiagnosticsChanged)
     Q_PROPERTY(bool playbackAdminDiagnosticsLoading READ playbackAdminDiagnosticsLoading NOTIFY playbackAdminDiagnosticsLoadingChanged)
+    Q_PROPERTY(QVariantMap playbackInteractionPreferences READ playbackInteractionPreferences NOTIFY playbackInteractionPreferencesChanged)
+    Q_PROPERTY(QVariantList mediaSegmentJobs READ mediaSegmentJobs NOTIFY mediaSegmentJobsChanged)
+    Q_PROPERTY(bool mediaSegmentJobsLoading READ mediaSegmentJobsLoading NOTIFY mediaSegmentJobsLoadingChanged)
+    Q_PROPERTY(bool mediaSegmentWorkerRunning READ mediaSegmentWorkerRunning NOTIFY mediaSegmentWorkerRunningChanged)
+    Q_PROPERTY(QVariantList mediaSegmentCandidates READ mediaSegmentCandidates NOTIFY mediaSegmentCandidatesChanged)
+    Q_PROPERTY(bool mediaSegmentCandidatesLoading READ mediaSegmentCandidatesLoading NOTIFY mediaSegmentCandidatesLoadingChanged)
+    Q_PROPERTY(QVariantList mediaInteractionLibraries READ mediaInteractionLibraries NOTIFY mediaInteractionLibrariesChanged)
+    Q_PROPERTY(bool mediaInteractionLibrariesLoading READ mediaInteractionLibrariesLoading NOTIFY mediaInteractionLibrariesLoadingChanged)
     Q_PROPERTY(QVariantMap mediaFindResult READ mediaFindResult NOTIFY mediaFindResultChanged)
     Q_PROPERTY(bool mediaFindLoading READ mediaFindLoading NOTIFY mediaFindLoadingChanged)
     Q_PROPERTY(QVariantMap mediaManagerPreferences READ mediaManagerPreferences NOTIFY mediaManagerPreferencesChanged)
@@ -144,6 +152,14 @@ public:
     bool playbackHardwareLoading() const;
     QVariantMap playbackAdminDiagnostics() const;
     bool playbackAdminDiagnosticsLoading() const;
+    QVariantMap playbackInteractionPreferences() const;
+    QVariantList mediaSegmentJobs() const;
+    bool mediaSegmentJobsLoading() const;
+    bool mediaSegmentWorkerRunning() const;
+    QVariantList mediaSegmentCandidates() const;
+    bool mediaSegmentCandidatesLoading() const;
+    QVariantList mediaInteractionLibraries() const;
+    bool mediaInteractionLibrariesLoading() const;
     QVariantMap mediaFindResult() const;
     bool mediaFindLoading() const;
     QVariantMap mediaManagerPreferences() const;
@@ -167,6 +183,16 @@ public:
     Q_INVOKABLE void completePasswordReset(const QString &token, const QString &newPassword);
     Q_INVOKABLE void fetchLibrary();
     Q_INVOKABLE void fetchMediaDetails(const QString &mediaItemId);
+    Q_INVOKABLE void analyzeMediaSegments(
+        const QString &mediaItemId,
+        const QString &itemType,
+        bool force = false);
+    Q_INVOKABLE void fetchItemMediaSegments(
+        const QString &mediaItemId,
+        const QString &itemType);
+    Q_INVOKABLE void disableMediaSegment(
+        const QString &segmentId,
+        const QString &reason = QString());
     Q_INVOKABLE void deleteLibraryItem(const QString &mediaItemId, bool stopTracking = false);
     Q_INVOKABLE void deleteLibraryItemWithAction(const QString &mediaItemId, const QString &ownerReleaseAction, bool bestEffort = false);
     Q_INVOKABLE void deleteEpisode(const QString &episodeId, bool blockInElixir = false);
@@ -183,7 +209,18 @@ public:
     Q_INVOKABLE void seekPlayback(const QString &sessionId, double seconds);
     Q_INVOKABLE void pollSession(const QString &sessionId);
     Q_INVOKABLE void heartbeatSession(const QString &sessionId);
-    Q_INVOKABLE void endSession(const QString &sessionId);
+    Q_INVOKABLE void reportPlaybackProgress(
+        const QString &sessionId,
+        double positionSeconds,
+        double durationSeconds = -1.0,
+        bool paused = false,
+        const QString &eventType = QString(),
+        const QVariantMap &progressMetadata = QVariantMap());
+    Q_INVOKABLE void endSession(
+        const QString &sessionId,
+        double positionSeconds = -1.0,
+        double durationSeconds = -1.0,
+        const QString &eventType = QString());
     bool endSessionBlocking(const QString &sessionId, int timeoutMs = 1500);
     Q_INVOKABLE void runScan(bool forceMetadata);
     Q_INVOKABLE void fetchReviewQueue(const QString &status, int limit, int offset);
@@ -294,6 +331,34 @@ public:
         const QVariantMap &scope,
         const QString &routePolicy = QString());
     Q_INVOKABLE void fetchManagerPreferences();
+    Q_INVOKABLE void fetchPlaybackInteractionPreferences();
+    Q_INVOKABLE void updatePlaybackInteractionPreferences(const QVariantMap &preferences);
+    Q_INVOKABLE void fetchMediaSegmentJobs(
+        const QString &status = QString(),
+        const QString &providerKind = QString(),
+        const QString &jobType = QString(),
+        int limit = 30);
+    Q_INVOKABLE void runMediaSegmentWorker();
+    Q_INVOKABLE void fetchMediaSegmentCandidates(
+        const QString &validationState = QString(),
+        const QString &providerKind = QString(),
+        bool lowConfidence = true,
+        int limit = 30);
+    Q_INVOKABLE void fetchMediaInteractionLibraries();
+    Q_INVOKABLE void updateMediaInteractionLibrarySettings(
+        const QString &sourceConfigId,
+        const QVariantMap &settings);
+    Q_INVOKABLE void updateMediaItemWatchState(
+        const QString &mediaItemId,
+        const QString &itemType,
+        const QString &action,
+        int durationSeconds = 0);
+    Q_INVOKABLE void cancelMediaSegmentJob(
+        const QString &jobId,
+        const QString &reason = QString());
+    Q_INVOKABLE void retryMediaSegmentJob(
+        const QString &jobId,
+        const QString &reason = QString());
     Q_INVOKABLE void updateManagerPreferences(
         const QString &movieProviderId,
         const QString &seriesProviderId,
@@ -351,6 +416,28 @@ signals:
     void playbackHardwareLoadingChanged();
     void playbackAdminDiagnosticsChanged();
     void playbackAdminDiagnosticsLoadingChanged();
+    void playbackInteractionPreferencesChanged();
+    void mediaSegmentJobsChanged();
+    void mediaSegmentJobsLoadingChanged();
+    void mediaSegmentWorkerRunningChanged();
+    void mediaSegmentCandidatesChanged();
+    void mediaSegmentCandidatesLoadingChanged();
+    void mediaInteractionLibrariesChanged();
+    void mediaInteractionLibrariesLoadingChanged();
+    void mediaInteractionLibrarySettingsUpdated(const QString &sourceConfigId, const QVariantMap &library);
+    void mediaSegmentJobActionCompleted(const QString &jobId, const QString &action, const QVariantMap &job);
+    void mediaSegmentWorkerRunCompleted(const QVariantMap &summary);
+    void mediaSegmentAnalysisCompleted(const QString &mediaItemId, const QVariantMap &summary);
+    void itemMediaSegmentsReceived(
+        const QString &mediaItemId,
+        const QString &itemType,
+        const QVariantMap &segments);
+    void mediaSegmentDisabled(const QString &segmentId, const QVariantMap &result);
+    void mediaWatchStateUpdated(
+        const QString &mediaItemId,
+        const QString &itemType,
+        const QString &action,
+        const QVariantMap &playbackState);
     void mediaFindResultChanged();
     void mediaFindLoadingChanged();
     void mediaManagerPreferencesChanged();
@@ -428,6 +515,15 @@ private:
     void updatePlaybackHardwareWarnings(const QJsonArray &warnings);
     void setPlaybackAdminDiagnosticsLoading(bool loading);
     void updatePlaybackAdminDiagnostics(const QJsonObject &obj);
+    void setMediaSegmentJobsLoading(bool loading);
+    void setMediaSegmentWorkerRunning(bool running);
+    void updateMediaSegmentJobs(const QJsonArray &jobs);
+    void upsertMediaSegmentJob(const QVariantMap &job);
+    void setMediaSegmentCandidatesLoading(bool loading);
+    void updateMediaSegmentCandidates(const QJsonArray &candidates);
+    void setMediaInteractionLibrariesLoading(bool loading);
+    void updateMediaInteractionLibraries(const QJsonArray &libraries);
+    void upsertMediaInteractionLibrary(const QVariantMap &library);
     void updateMediaAcquisitionState(const QJsonObject &obj);
     void updateAcquisitionReviewReleases(const QJsonObject &obj);
     void updateAcquisitionReviewDetail(const QJsonObject &obj);
@@ -495,6 +591,14 @@ private:
     bool m_playbackHardwareLoading = false;
     QVariantMap m_playbackAdminDiagnostics;
     bool m_playbackAdminDiagnosticsLoading = false;
+    QVariantMap m_playbackInteractionPreferences;
+    QVariantList m_mediaSegmentJobs;
+    bool m_mediaSegmentJobsLoading = false;
+    bool m_mediaSegmentWorkerRunning = false;
+    QVariantList m_mediaSegmentCandidates;
+    bool m_mediaSegmentCandidatesLoading = false;
+    QVariantList m_mediaInteractionLibraries;
+    bool m_mediaInteractionLibrariesLoading = false;
     QVariantMap m_mediaFindResult;
     bool m_mediaFindLoading = false;
     quint64 m_mediaFindRequestId = 0;

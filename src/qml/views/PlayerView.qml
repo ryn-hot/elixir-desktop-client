@@ -580,6 +580,21 @@ Item {
             })
             return
         }
+        if (actionName === "skip_active_segment" || actionName === "skip_segment") {
+            playerController.recordAutomationEvent("automation_skip_active_segment", {})
+            playerController.skipActiveSegment()
+            return
+        }
+        if (actionName === "up_next_play_now" || actionName === "play_next") {
+            playerController.recordAutomationEvent("automation_up_next_play_now", {})
+            playerController.playUpNextNow()
+            return
+        }
+        if (actionName === "up_next_cancel" || actionName === "cancel_up_next") {
+            playerController.recordAutomationEvent("automation_up_next_cancel", {})
+            playerController.cancelUpNextAutoplay()
+            return
+        }
         if (actionName === "retry_same" || actionName === "retry_from_current") {
             if (automationRetryIssued) {
                 playerController.recordAutomationEvent("retry_recovery_already_requested", {
@@ -770,6 +785,58 @@ Item {
             }
         }
         return ""
+    }
+
+    function upNextTitle() {
+        var next = playerController.upNext || ({})
+        var title = String(firstMapValue(next, ["title", "name"]) || "")
+        return title !== "" ? title : "Next episode"
+    }
+
+    function upNextSubtitle() {
+        var next = playerController.upNext || ({})
+        var season = firstMapValue(next, ["season_number", "seasonNumber"])
+        var episode = firstMapValue(next, ["episode_number", "episodeNumber"])
+        var absolute = firstMapValue(next, ["absolute_episode_number", "absoluteEpisodeNumber"])
+        var parts = []
+        if (season !== "" && episode !== "") {
+            parts.push("S" + Number(season) + " E" + Number(episode))
+        } else if (episode !== "") {
+            parts.push("Episode " + Number(episode))
+        } else if (absolute !== "") {
+            parts.push("Episode " + Number(absolute))
+        }
+        var reason = String(firstMapValue(next, ["reason"]) || "")
+        if (reason !== "") {
+            parts.push(titleCaseFromId(reason))
+        }
+        return parts.join(" · ")
+    }
+
+    function upNextStatusText() {
+        if (!playerController.upNextPromptVisible) {
+            return ""
+        }
+        if (playerController.upNextCountdownRemaining >= 0) {
+            return "Playing in " + playerController.upNextCountdownRemaining + "s"
+        }
+        var next = playerController.upNext || ({})
+        var autoplay = next.autoplay || ({})
+        var blockReason = String(autoplay.block_reason || autoplay.blockReason || "")
+        if (blockReason === "max_consecutive_reached" || blockReason === "max_consecutive_zero") {
+            return "Autoplay limit reached"
+        }
+        if (blockReason === "max_elapsed_reached" || blockReason === "max_elapsed_zero") {
+            return "Autoplay time limit reached"
+        }
+        if (blockReason === "disabled") {
+            return "Autoplay off"
+        }
+        var prefs = playerController.playbackPreferences || ({})
+        if (prefs.autoplay_enabled === false || prefs.autoplayEnabled === false) {
+            return "Autoplay off"
+        }
+        return "Autoplay paused"
     }
 
     function preferredRemediation() {
@@ -1299,6 +1366,147 @@ Item {
             anchors.margins: Theme.spacingLarge
             spacing: Theme.spacingSmall
 
+            Rectangle {
+                visible: playerController.upNextPromptVisible
+                Layout.alignment: Qt.AlignRight
+                Layout.fillWidth: true
+                Layout.maximumWidth: 420
+                implicitHeight: upNextContent.implicitHeight + Theme.spacingMedium * 2
+                radius: Theme.radiusSmall
+                color: Theme.backgroundCard
+                border.color: Theme.border
+                clip: true
+
+                ColumnLayout {
+                    id: upNextContent
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingMedium
+                    spacing: Theme.spacingSmall
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Label {
+                                text: "Up Next"
+                                color: Theme.textMuted
+                                font.pixelSize: 10
+                                font.family: Theme.fontBody
+                                font.weight: Font.DemiBold
+                            }
+
+                            Label {
+                                text: upNextTitle()
+                                color: Theme.textPrimary
+                                font.pixelSize: 14
+                                font.family: Theme.fontDisplay
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        Label {
+                            text: upNextStatusText()
+                            color: playerController.upNextCountdownRemaining >= 0
+                                ? Theme.accent
+                                : Theme.textSecondary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            horizontalAlignment: Text.AlignRight
+                        }
+                    }
+
+                    Label {
+                        text: upNextSubtitle()
+                        visible: text !== ""
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignRight
+                        spacing: Theme.spacingSmall
+
+                        Button {
+                            id: upNextPlayNowButton
+                            text: "Play Now"
+                            onClicked: playerController.playUpNextNow()
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.accent
+                            }
+                            contentItem: Label {
+                                text: upNextPlayNowButton.text
+                                color: "#FFFFFF"
+                                font.pixelSize: 12
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: Theme.spacingMedium
+                                rightPadding: Theme.spacingMedium
+                            }
+                        }
+
+                        Button {
+                            id: upNextCancelButton
+                            text: "Cancel"
+                            onClicked: {
+                                playerController.cancelUpNextAutoplay()
+                                root.showControls()
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: Theme.backgroundCardRaised
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                text: upNextCancelButton.text
+                                color: Theme.textPrimary
+                                font.pixelSize: 12
+                                font.family: Theme.fontBody
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: Theme.spacingMedium
+                                rightPadding: Theme.spacingMedium
+                            }
+                        }
+                    }
+                }
+            }
+
+            Button {
+                text: playerController.activeSkipLabel
+                visible: text !== ""
+                Layout.alignment: Qt.AlignRight
+                onClicked: {
+                    playerController.skipActiveSegment()
+                    root.showControls()
+                }
+                background: Rectangle {
+                    radius: Theme.radiusSmall
+                    color: Theme.accent
+                }
+                contentItem: Label {
+                    text: parent.text
+                    color: "#FFFFFF"
+                    font.pixelSize: 13
+                    font.family: Theme.fontBody
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    leftPadding: Theme.spacingMedium
+                    rightPadding: Theme.spacingMedium
+                    topPadding: 8
+                    bottomPadding: 8
+                }
+            }
+
             Slider {
                 id: timeSlider
                 Layout.fillWidth: true
@@ -1590,6 +1798,16 @@ Item {
     }
 
     Timer {
+        id: upNextCountdownTimer
+        interval: 1000
+        repeat: true
+        running: playerController.upNextPromptVisible
+            && playerController.upNextCountdownRemaining >= 0
+            && !playerController.paused
+        onTriggered: playerController.tickUpNextCountdown()
+    }
+
+    Timer {
         id: trackRefreshTimer
         interval: 900
         repeat: false
@@ -1715,6 +1933,11 @@ Item {
                 controlsVisible = true
                 hideTimer.stop()
             } else {
+                showControls()
+            }
+        }
+        function onUpNextChanged() {
+            if (playerController.upNextPromptVisible) {
                 showControls()
             }
         }
