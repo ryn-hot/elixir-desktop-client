@@ -3928,7 +3928,7 @@ Item {
 
                     CheckBox {
                         id: animeEnglishAudioCheck
-                        text: "Anime English dub"
+                        text: "Anime dub"
                         checked: root.languageRuleHasProfile("anime", "en_audio", false)
                         onToggled: root.saveManagerPreferences()
                         Layout.columnSpan: 2

@@ -3697,6 +3697,13 @@ void ApiClient::addMediaToAcquisition(
     if (options.contains("scope") && options.value("scope").canConvert<QVariantMap>()) {
         body.insert("scope", QJsonObject::fromVariantMap(options.value("scope").toMap()));
     }
+    if (options.contains("animeAudioPreference")
+        && options.value("animeAudioPreference").canConvert<QVariantMap>()) {
+        const QVariantMap animeAudioPreference = options.value("animeAudioPreference").toMap();
+        if (!animeAudioPreference.isEmpty()) {
+            body.insert("animeAudioPreference", QJsonObject::fromVariantMap(animeAudioPreference));
+        }
+    }
     if (options.contains("target") && options.value("target").canConvert<QVariantMap>()) {
         body.insert("target", QJsonObject::fromVariantMap(options.value("target").toMap()));
     }
@@ -3832,7 +3839,8 @@ void ApiClient::addScopedMediaFromFind(
     const QVariantMap &item,
     const QString &sourceProviderId,
     const QVariantMap &scope,
-    const QString &routePolicy) {
+    const QString &routePolicy,
+    const QVariantMap &animeAudioPreference) {
     const QString provider = sourceProviderId.trimmed();
     if (provider.isEmpty()) {
         emit requestFailed(
@@ -3850,6 +3858,9 @@ void ApiClient::addScopedMediaFromFind(
     const QString trimmedRoutePolicy = routePolicy.trimmed();
     if (!trimmedRoutePolicy.isEmpty()) {
         body.insert("routePolicy", trimmedRoutePolicy);
+    }
+    if (!animeAudioPreference.isEmpty()) {
+        body.insert("animeAudioPreference", QJsonObject::fromVariantMap(animeAudioPreference));
     }
 
     if (!m_mediaAddLoading) {

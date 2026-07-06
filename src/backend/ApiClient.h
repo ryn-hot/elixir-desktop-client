@@ -329,7 +329,8 @@ public:
         const QVariantMap &item,
         const QString &sourceProviderId,
         const QVariantMap &scope,
-        const QString &routePolicy = QString());
+        const QString &routePolicy = QString(),
+        const QVariantMap &animeAudioPreference = QVariantMap());
     Q_INVOKABLE void fetchManagerPreferences();
     Q_INVOKABLE void fetchPlaybackInteractionPreferences();
     Q_INVOKABLE void updatePlaybackInteractionPreferences(const QVariantMap &preferences);

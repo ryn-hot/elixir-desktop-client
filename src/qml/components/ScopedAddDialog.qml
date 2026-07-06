@@ -18,6 +18,7 @@ Dialog {
     property string selectedArcLabel: ""
     property var selectedArcTargetKeys: []
     property var selectedTargetKeys: []
+    property string selectedAudioPreferenceMode: "any"
     property string rangeStartText: ""
     property string rangeEndText: ""
     property string episodeFilterText: ""
@@ -47,6 +48,7 @@ Dialog {
         selectedArcLabel = ""
         selectedArcTargetKeys = []
         selectedTargetKeys = []
+        selectedAudioPreferenceMode = "any"
         rangeStartText = ""
         rangeEndText = ""
         episodeFilterText = ""
@@ -137,12 +139,15 @@ Dialog {
 
     function seasonByNumber(number) {
         var seasons = previewSeasons()
+        if (number <= 0) {
+            return null
+        }
         for (var i = 0; i < seasons.length; ++i) {
             if (seasonNumber(seasons[i]) === number) {
                 return seasons[i]
             }
         }
-        return seasons.length > 0 ? seasons[0] : null
+        return null
     }
 
     function currentSeason() {
@@ -316,11 +321,91 @@ Dialog {
         return seasons.length > 0 ? seasonNumber(seasons[0]) : 0
     }
 
+    function inferredAnimeSeasonNumber() {
+        if (mediaType !== "anime") {
+            return 0
+        }
+        var title = mediaTitle().toLowerCase()
+        var ordinal = title.match(/\b(\d+)(?:st|nd|rd|th)\s+season\b/)
+        if (ordinal && ordinal.length > 1) {
+            return Number(ordinal[1])
+        }
+        var explicit = title.match(/\bseason\s+(\d+)\b/)
+        if (explicit && explicit.length > 1) {
+            return Number(explicit[1])
+        }
+        var words = {
+            "second": 2,
+            "third": 3,
+            "fourth": 4,
+            "fifth": 5,
+            "sixth": 6,
+            "seventh": 7,
+            "eighth": 8,
+            "ninth": 9,
+            "tenth": 10
+        }
+        for (var word in words) {
+            if (title.indexOf(word + " season") >= 0) {
+                return words[word]
+            }
+        }
+        return 0
+    }
+
+    function preferredAnimeSeason() {
+        var inferred = inferredAnimeSeasonNumber()
+        if (inferred > 0) {
+            return seasonByNumber(inferred)
+        }
+        var first = seasonByNumber(1)
+        if (first !== null) {
+            return first
+        }
+        var seasons = previewSeasons()
+        return seasons.length === 1 ? seasons[0] : null
+    }
+
+    function preferredAnimeSeasonNumber() {
+        var season = preferredAnimeSeason()
+        return season ? seasonNumber(season) : 0
+    }
+
+    function defaultSeasonNumber() {
+        if (mediaType === "anime") {
+            return preferredAnimeSeasonNumber()
+        }
+        return firstSeasonNumber()
+    }
+
+    function selectedTitleDetail() {
+        var season = preferredAnimeSeason()
+        if (season === null) {
+            return "Episodes not available"
+        }
+        var count = seasonEpisodeCount(season)
+        return count > 0 ? (count + " episodes") : "Episodes not available"
+    }
+
     function selectDefaultScope() {
         var seasons = previewSeasons()
         var arcs = previewArcs()
-        if (mediaType === "anime" && arcs.length > 0 && capabilityEnabled("animeArcs", "anime_arcs", true)) {
-            selectArc(arcs[0])
+        if (mediaType === "anime") {
+            if (arcs.length > 0 && capabilityEnabled("animeArcs", "anime_arcs", true)) {
+                selectArc(arcs[0])
+                return
+            }
+            var animeSeason = preferredAnimeSeason()
+            if (animeSeason !== null && capabilityEnabled("seasons", "seasons", true)) {
+                selectSeason(animeSeason)
+                return
+            }
+            selectedScopeType = "season"
+            selectedSeasonNumber = 0
+            selectedArcId = ""
+            selectedArcLabel = ""
+            selectedArcTargetKeys = []
+            statusText = ""
             return
         }
         if (seasons.length > 0 && capabilityEnabled("seasons", "seasons", true)) {
@@ -343,7 +428,7 @@ Dialog {
     function selectRangeMode() {
         selectedScopeType = "range"
         if (selectedSeasonNumber <= 0) {
-            selectedSeasonNumber = firstSeasonNumber()
+            selectedSeasonNumber = defaultSeasonNumber()
         }
         selectedArcId = ""
         selectedArcLabel = ""
@@ -354,7 +439,7 @@ Dialog {
     function selectSelectedTargetsMode() {
         selectedScopeType = "selected_targets"
         if (selectedSeasonNumber <= 0) {
-            selectedSeasonNumber = firstSeasonNumber()
+            selectedSeasonNumber = defaultSeasonNumber()
         }
         selectedArcId = ""
         selectedArcLabel = ""
@@ -482,6 +567,9 @@ Dialog {
             return "This arc has no validated episode coverage."
         }
         if (selectedScopeType === "season" && currentSeasonTargetKeys().length === 0) {
+            if (mediaType === "anime") {
+                return "This title has no selectable episodes."
+            }
             return "This season has no selectable episodes."
         }
         if (selectedScopeType === "entire_title" && totalEpisodeCount() === 0 && mediaType !== "movie") {
@@ -524,6 +612,10 @@ Dialog {
 
     function selectedSummary() {
         if (selectedScopeType === "season") {
+            if (mediaType === "anime") {
+                var titleCount = selectedCount()
+                return titleCount > 0 ? ("Selected title, " + titleCount + " episodes") : "Selected title"
+            }
             return "Season " + selectedSeasonNumber + ", " + selectedCount() + " episodes"
         }
         if (selectedScopeType === "range") {
@@ -542,11 +634,21 @@ Dialog {
         return mediaTitle()
     }
 
+    function animeAudioPreferenceForSubmit() {
+        if (mediaType === "anime" && selectedAudioPreferenceMode === "dub") {
+            return { mode: "prefer_dub", language: "en" }
+        }
+        return ({})
+    }
+
     function submitLabel() {
         if (apiClient.mediaAddLoading && submitInFlight) {
             return "Adding..."
         }
         if (selectedScopeType === "season") {
+            if (mediaType === "anime") {
+                return "Add selected title"
+            }
             return "Add Season " + selectedSeasonNumber
         }
         if (selectedScopeType === "range") {
@@ -599,7 +701,13 @@ Dialog {
         }
         submitInFlight = true
         statusText = ""
-        apiClient.addScopedMediaFromFind(mediaType, mediaItem, selectedProviderId, scope)
+        apiClient.addScopedMediaFromFind(
+            mediaType,
+            mediaItem,
+            selectedProviderId,
+            scope,
+            "",
+            animeAudioPreferenceForSubmit())
     }
 
     modal: true
@@ -771,6 +879,58 @@ Dialog {
             spacing: Theme.space10
             visible: !apiClient.mediaScopePreviewLoading && !root.hasBlockers()
 
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.space8
+                visible: root.mediaType === "anime"
+
+                Label {
+                    text: "Audio"
+                    color: Theme.textPrimary
+                    font.pixelSize: 13
+                    font.family: Theme.fontBody
+                    font.weight: Font.DemiBold
+                }
+
+                Repeater {
+                    model: [
+                        { id: "any", label: "Any" },
+                        { id: "dub", label: "Dub" }
+                    ]
+
+                    delegate: Button {
+                        id: audioPreferenceButton
+                        required property var modelData
+                        text: modelData.label
+                        enabled: !apiClient.mediaAddLoading
+                        onClicked: {
+                            root.selectedAudioPreferenceMode = modelData.id
+                            root.statusText = ""
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: root.selectedAudioPreferenceMode === modelData.id
+                                   ? Theme.surfaceHover
+                                   : Theme.backgroundCardRaised
+                            border.color: root.selectedAudioPreferenceMode === modelData.id
+                                          ? Theme.accent
+                                          : Theme.border
+                        }
+                        contentItem: Label {
+                            text: audioPreferenceButton.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            font.weight: Font.DemiBold
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
+            }
+
             Flow {
                 id: scopeFlow
                 Layout.fillWidth: true
@@ -783,28 +943,39 @@ Dialog {
                             label: "Entire title",
                             detail: root.totalEpisodeCount() > 0 ? (root.totalEpisodeCount() + " episodes") : "Everything available",
                             enabled: root.capabilityEnabled("entireTitle", "entire_title", true),
-                            visible: true
+                            visible: root.mediaType !== "anime"
                         },
                         {
                             id: "season",
-                            label: "Season",
-                            detail: root.selectedSeasonNumber > 0 ? ("Season " + root.selectedSeasonNumber) : "Choose a season",
-                            enabled: root.previewSeasons().length > 0 && root.capabilityEnabled("seasons", "seasons", true),
-                            visible: root.previewSeasons().length > 0
+                            label: root.mediaType === "anime" ? "Selected title" : "Season",
+                            detail: root.mediaType === "anime"
+                                    ? root.selectedTitleDetail()
+                                    : (root.selectedSeasonNumber > 0 ? ("Season " + root.selectedSeasonNumber) : "Choose a season"),
+                            enabled: (root.mediaType === "anime"
+                                      ? root.preferredAnimeSeason() !== null
+                                      : root.previewSeasons().length > 0)
+                                     && root.capabilityEnabled("seasons", "seasons", true),
+                            visible: root.mediaType === "anime" || root.previewSeasons().length > 0
                         },
                         {
                             id: "range",
                             label: "Range",
                             detail: root.rangeTargetKeys().length > 0 ? (root.rangeTargetKeys().length + " episodes") : "Enter a contiguous slice",
-                            enabled: root.previewSeasons().length > 0 && root.capabilityEnabled("episodeRange", "episode_range", true),
-                            visible: root.previewSeasons().length > 0
+                            enabled: (root.mediaType === "anime"
+                                      ? root.preferredAnimeSeason() !== null
+                                      : root.previewSeasons().length > 0)
+                                     && root.capabilityEnabled("episodeRange", "episode_range", true),
+                            visible: root.mediaType === "anime" || root.previewSeasons().length > 0
                         },
                         {
                             id: "selected_targets",
                             label: "Selected episodes",
                             detail: root.selectedTargetKeys.length > 0 ? (root.selectedTargetKeys.length + " selected") : "Pick exact episodes",
-                            enabled: root.previewSeasons().length > 0 && root.capabilityEnabled("selectedEpisodes", "selected_episodes", true),
-                            visible: root.previewSeasons().length > 0
+                            enabled: (root.mediaType === "anime"
+                                      ? root.preferredAnimeSeason() !== null
+                                      : root.previewSeasons().length > 0)
+                                     && root.capabilityEnabled("selectedEpisodes", "selected_episodes", true),
+                            visible: root.mediaType === "anime" || root.previewSeasons().length > 0
                         },
                         {
                             id: "anime_arc",
@@ -835,7 +1006,7 @@ Dialog {
                                 } else if (modelData.id === "season") {
                                     root.selectedScopeType = "season"
                                     if (root.selectedSeasonNumber <= 0) {
-                                        root.selectedSeasonNumber = root.firstSeasonNumber()
+                                        root.selectedSeasonNumber = root.defaultSeasonNumber()
                                     }
                                     root.statusText = ""
                                 } else if (modelData.id === "range") {
@@ -882,7 +1053,8 @@ Dialog {
                 id: seasonFlow
                 Layout.fillWidth: true
                 spacing: Theme.space8
-                visible: root.previewSeasons().length > 0 &&
+                visible: root.mediaType !== "anime" &&
+                         root.previewSeasons().length > 0 &&
                          (root.selectedScopeType === "season" ||
                           root.selectedScopeType === "range" ||
                           root.selectedScopeType === "selected_targets")
@@ -966,7 +1138,9 @@ Dialog {
 
                     Label {
                         Layout.fillWidth: true
-                        text: "Use numbers like 647, S01E647, or A0647."
+                        text: root.mediaType === "anime"
+                              ? "Use episode numbers like 1, 12, or A012."
+                              : "Use numbers like 647, S01E647, or A0647."
                         color: Theme.textSecondary
                         font.pixelSize: 12
                         font.family: Theme.fontBody
@@ -987,7 +1161,9 @@ Dialog {
                     TextField {
                         Layout.fillWidth: true
                         text: root.episodeFilterText
-                        placeholderText: "Filter by episode, title, SxxEyy, or absolute number"
+                        placeholderText: root.mediaType === "anime"
+                                         ? "Filter by episode, title, or absolute number"
+                                         : "Filter by episode, title, SxxEyy, or absolute number"
                         color: Theme.textPrimary
                         placeholderTextColor: Theme.textMuted
                         selectionColor: Theme.accent
@@ -1014,7 +1190,7 @@ Dialog {
                     spacing: Theme.space8
 
                     ActionButton {
-                        text: "All in season"
+                        text: root.mediaType === "anime" ? "All episodes" : "All in season"
                         compact: true
                         onClicked: root.setSelectedTargets(root.currentSeasonTargetKeys())
                     }

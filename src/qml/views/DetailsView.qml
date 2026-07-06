@@ -50,6 +50,7 @@ Item {
     property var acquisitionSheetEpisode: null
     property string acquisitionSheetScope: "episode"
     property string acquisitionSheetOrigin: "episode"
+    property string acquisitionSheetAudioPreferenceMode: "any"
     property string acquisitionSheetStatusText: ""
     property var selectedRecoveryEpisodeIds: ({})
     property string recoveryRangeStart: ""
@@ -809,6 +810,7 @@ Item {
         acquisitionSheetEpisode = episode
         acquisitionSheetOrigin = "episode"
         acquisitionSheetScope = "episode"
+        acquisitionSheetAudioPreferenceMode = "any"
         acquisitionSheetStatusText = ""
         acquisitionStatusText = ""
         clearRecoverySelection()
@@ -827,6 +829,7 @@ Item {
         acquisitionSheetEpisode = null
         acquisitionSheetOrigin = "season"
         acquisitionSheetScope = "season"
+        acquisitionSheetAudioPreferenceMode = "any"
         acquisitionSheetStatusText = ""
         acquisitionStatusText = ""
         clearRecoverySelection()
@@ -1312,8 +1315,15 @@ Item {
         return recoverableEpisodesForActiveSeason()
     }
 
+    function animeAudioPreferenceForAcquisition() {
+        if (acquisitionMediaType() === "anime" && acquisitionSheetAudioPreferenceMode === "dub") {
+            return { mode: "prefer_dub", language: "en" }
+        }
+        return null
+    }
+
     function acquisitionOptions(scope, target, targets, idempotencySuffix) {
-        return {
+        var options = {
             sourceProviderId: selectedSourceProviderId,
             routePolicy: "debrid_first",
             requestMode: "one_shot",
@@ -1331,6 +1341,11 @@ Item {
                 targetCount: targets.length
             }
         }
+        var audioPreference = animeAudioPreferenceForAcquisition()
+        if (audioPreference) {
+            options.animeAudioPreference = audioPreference
+        }
+        return options
     }
 
     function buildPendingAcquisitionRequest(scope, title, items) {
@@ -2480,6 +2495,58 @@ Item {
                         }
                     }
                 }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.space8
+                visible: root.acquisitionMediaType() === "anime"
+
+                Label {
+                    text: "Audio"
+                    color: Theme.textPrimary
+                    font.pixelSize: 13
+                    font.family: Theme.fontBody
+                    font.weight: Font.DemiBold
+                }
+
+                Repeater {
+                    model: [
+                        { id: "any", label: "Any" },
+                        { id: "dub", label: "Dub" }
+                    ]
+
+                    delegate: Button {
+                        id: acquisitionAudioButton
+                        required property var modelData
+                        text: modelData.label
+                        enabled: root.acquisitionBusyKey === ""
+                        onClicked: {
+                            root.acquisitionSheetAudioPreferenceMode = modelData.id
+                            root.acquisitionSheetStatusText = ""
+                        }
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: root.acquisitionSheetAudioPreferenceMode === modelData.id
+                                   ? Theme.surfaceHover
+                                   : Theme.backgroundCardRaised
+                            border.color: root.acquisitionSheetAudioPreferenceMode === modelData.id
+                                          ? Theme.accent
+                                          : Theme.border
+                        }
+                        contentItem: Label {
+                            text: acquisitionAudioButton.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                            font.family: Theme.fontBody
+                            font.weight: Font.DemiBold
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
             }
 
             ColumnLayout {
