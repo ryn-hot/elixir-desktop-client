@@ -9,6 +9,9 @@
         <file alias="components/EmptyState.qml">../src/qml/components/EmptyState.qml</file>
         <file alias="components/IconButton.qml">../src/qml/components/IconButton.qml</file>
         <file alias="components/PillTag.qml">../src/qml/components/PillTag.qml</file>
+        <file alias="components/LiveStatusPill.qml">../src/qml/components/LiveStatusPill.qml</file>
+        <file alias="components/LiveEventCard.qml">../src/qml/components/LiveEventCard.qml</file>
+        <file alias="components/LiveFilterBar.qml">../src/qml/components/LiveFilterBar.qml</file>
         <file alias="components/MediaPosterCard.qml">../src/qml/components/MediaPosterCard.qml</file>
         <file alias="components/MediaLandscapeCard.qml">../src/qml/components/MediaLandscapeCard.qml</file>
         <file alias="components/MediaShelf.qml">../src/qml/components/MediaShelf.qml</file>
@@ -25,6 +28,12 @@
         <file alias="components/ScopedAddDialog.qml">../src/qml/components/ScopedAddDialog.qml</file>
         <file alias="views/ConnectServerView.qml">../src/qml/views/ConnectServerView.qml</file>
         <file alias="views/HomeView.qml">../src/qml/views/HomeView.qml</file>
+        <file alias="views/LiveView.qml">../src/qml/views/LiveView.qml</file>
+        <file alias="views/LiveDetailsView.qml">../src/qml/views/LiveDetailsView.qml</file>
+        <file alias="views/LiveMpvSurface.qml">../src/qml/views/LiveMpvSurface.qml</file>
+        <file alias="views/LivePlayerView.qml">../src/qml/views/LivePlayerView.qml</file>
+        <file alias="views/LiveAdminView.qml">../src/qml/views/LiveAdminView.qml</file>
+        <file alias="views/LiveNetworkSettingsView.qml">../src/qml/views/LiveNetworkSettingsView.qml</file>
         <file alias="views/FindMediaView.qml">../src/qml/views/FindMediaView.qml</file>
         <file alias="views/AcquisitionView.qml">../src/qml/views/AcquisitionView.qml</file>
         <file alias="views/AcquisitionReviewView.qml">../src/qml/views/AcquisitionReviewView.qml</file>

@@ -14,6 +14,7 @@ Rectangle {
     signal moviesRequested()
     signal seriesRequested()
     signal animeRequested()
+    signal liveRequested()
     signal findMediaRequested()
     signal acquisitionRequested()
     signal extensionsRequested()
@@ -99,6 +100,7 @@ Rectangle {
             model: ListModel {
                 ListElement { type: "section"; label: "Browse"; icon: ""; action: "" }
                 ListElement { type: "item"; label: "Home"; icon: "qrc:/icons/home.svg"; action: "home" }
+                ListElement { type: "item"; label: "Live"; icon: "qrc:/icons/activity.svg"; action: "live" }
                 ListElement { type: "item"; label: "Movies"; icon: "qrc:/icons/movie.svg"; action: "movies" }
                 ListElement { type: "item"; label: "TV Shows"; icon: "qrc:/icons/tv.svg"; action: "series" }
                 ListElement { type: "item"; label: "Anime"; icon: "qrc:/icons/animation.svg"; action: "anime" }
@@ -138,6 +140,7 @@ Rectangle {
                         if (model.action === "movies" && root.currentView === "movies") return true
                         if (model.action === "series" && root.currentView === "series") return true
                         if (model.action === "anime" && root.currentView === "anime") return true
+                        if (model.action === "live" && root.currentView === "live") return true
                         if (model.action === "find_media" && root.currentView === "find_media") return true
                         if (model.action === "acquisition" && root.currentView === "acquisition") return true
                         if (model.action === "extensions" && root.currentView === "extensions") return true
@@ -150,6 +153,7 @@ Rectangle {
                         else if (model.action === "movies") root.moviesRequested()
                         else if (model.action === "series") root.seriesRequested()
                         else if (model.action === "anime") root.animeRequested()
+                        else if (model.action === "live") root.liveRequested()
                         else if (model.action === "find_media") root.findMediaRequested()
                         else if (model.action === "acquisition") root.acquisitionRequested()
                         else if (model.action === "extensions") root.extensionsRequested()

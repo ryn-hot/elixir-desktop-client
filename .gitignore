@@ -1,3 +1,6 @@
 build/
+/build-coverage/
+*.profraw
+*.profdata
 *.user
 .DS_Store

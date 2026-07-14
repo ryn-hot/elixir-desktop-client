@@ -1,10 +1,15 @@
 #include "backend/SessionManager.h"
+#include "backend/CredentialStore.h"
+
+#include <QUrl>
+#include <utility>
 
 namespace {
 constexpr const char *kBaseUrlKey = "session/baseUrl";
 constexpr const char *kRegistryUrlKey = "session/registryUrl";
 constexpr const char *kAuthTokenKey = "session/authToken";
 constexpr const char *kAccessTokenExpiresAtKey = "session/accessTokenExpiresAt";
+constexpr const char *kRefreshTokenService = "com.elixir.media.auth.refresh-token.v1";
 constexpr const char *kControlPlaneEmailKey = "session/controlPlaneEmail";
 constexpr const char *kControlPlaneTokenKey = "session/controlPlaneToken";
 constexpr const char *kControlPlaneExpiresAtKey = "session/controlPlaneExpiresAt";
@@ -42,14 +47,62 @@ QString normalizePlaybackQualityMode(const QString &value) {
     }
     return "original";
 }
+
+QString normalizeServerUrl(const QString &value) {
+    QString normalized = value.trimmed();
+    if (normalized.isEmpty()) {
+        return normalized;
+    }
+    if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+        normalized.prepend("http://");
+    }
+    QUrl url(normalized);
+    const QString scheme = url.scheme().toLower();
+    if (!url.isValid()
+        || (scheme != "http" && scheme != "https")
+        || url.host().isEmpty()) {
+        return QString();
+    }
+    url.setScheme(scheme);
+    url.setHost(url.host().toLower());
+    url.setUserInfo(QString());
+    url.setPath(QString());
+    url.setQuery(QString());
+    url.setFragment(QString());
+    return url.toString(QUrl::FullyEncoded);
+}
+
+bool isSafeCredentialToken(const QString &value) {
+    if (value.isEmpty() || value.size() > 8192) {
+        return false;
+    }
+    for (const QChar character : value) {
+        const ushort code = character.unicode();
+        const bool allowed = (code >= 'a' && code <= 'z')
+            || (code >= 'A' && code <= 'Z')
+            || (code >= '0' && code <= '9')
+            || code == '-'
+            || code == '_'
+            || code == '.'
+            || code == '~';
+        if (!allowed) {
+            return false;
+        }
+    }
+    return true;
+}
 }
 
 SessionManager::SessionManager(QObject *parent)
+    : SessionManager(createPlatformCredentialStore(), parent) {}
+
+SessionManager::SessionManager(
+    std::shared_ptr<CredentialStore> credentialStore,
+    QObject *parent)
     : QObject(parent),
-      m_baseUrl(m_settings.value(kBaseUrlKey, "http://127.0.0.1:44301").toString()),
+      m_credentialStore(std::move(credentialStore)),
+      m_baseUrl(normalizeServerUrl(m_settings.value(kBaseUrlKey, "http://127.0.0.1:44301").toString())),
       m_registryUrl(m_settings.value(kRegistryUrlKey, m_baseUrl).toString()),
-      m_authToken(m_settings.value(kAuthTokenKey, "").toString()),
-      m_accessTokenExpiresAt(m_settings.value(kAccessTokenExpiresAtKey, "").toString()),
       m_controlPlaneEmail(m_settings.value(kControlPlaneEmailKey, "").toString()),
       m_controlPlaneToken(m_settings.value(kControlPlaneTokenKey, "").toString()),
       m_controlPlaneExpiresAt(m_settings.value(kControlPlaneExpiresAtKey, "").toString()),
@@ -65,6 +118,13 @@ SessionManager::SessionManager(QObject *parent)
       m_subtitleTitle(m_settings.value(kSubtitleTitleKey, "").toString()),
       m_email(m_settings.value(kEmailKey, "").toString()),
       m_networkType(m_settings.value(kNetworkTypeKey, "auto").toString()) {
+    if (!m_credentialStore) {
+        m_credentialStore = createPlatformCredentialStore();
+    }
+    migrateLegacySessionState();
+    loadScopedSessionState();
+    loadRefreshTokenForCurrentServer();
+
     const int profileVersion = m_settings.value(kPlaybackProfileVersionKey, 0).toInt();
     if (profileVersion < 2) {
         m_playbackMaxResolution = "unlimited";
@@ -100,14 +160,21 @@ void SessionManager::setBaseUrlRuntimeOverride(const QString &value) {
 }
 
 void SessionManager::setBaseUrlInternal(const QString &value, bool persist) {
-    if (m_baseUrl == value) {
+    const QString normalized = normalizeServerUrl(value);
+    if (m_baseUrl == normalized) {
         return;
     }
-    m_baseUrl = value;
+    clearRuntimeSession(persist);
+    setRefreshTokenInMemory(QString());
+    m_baseUrl = normalized;
     if (persist) {
         storeValue(kBaseUrlKey, m_baseUrl);
     }
     emit baseUrlChanged();
+    if (persist) {
+        clearRuntimeSession(true);
+        loadRefreshTokenForCurrentServer();
+    }
 }
 
 QString SessionManager::registryUrl() const {
@@ -146,12 +213,13 @@ void SessionManager::setAuthTokenRuntimeOverride(const QString &value) {
 }
 
 void SessionManager::setAuthTokenInternal(const QString &value, bool persist) {
-    if (m_authToken == value) {
+    const QString accepted = value.isEmpty() || isSafeCredentialToken(value) ? value : QString();
+    if (m_authToken == accepted) {
         return;
     }
-    m_authToken = value;
+    m_authToken = accepted;
     if (persist) {
-        storeValue(kAuthTokenKey, m_authToken);
+        storeAuthValue("accessToken", m_authToken);
     }
     emit authTokenChanged();
 }
@@ -174,9 +242,184 @@ void SessionManager::setAccessTokenExpiresAtInternal(const QString &value, bool 
     }
     m_accessTokenExpiresAt = value;
     if (persist) {
-        storeValue(kAccessTokenExpiresAtKey, m_accessTokenExpiresAt);
+        storeAuthValue("accessTokenExpiresAt", m_accessTokenExpiresAt);
     }
     emit accessTokenExpiresAtChanged();
+}
+
+QString SessionManager::refreshToken() const {
+    return m_refreshToken;
+}
+
+void SessionManager::setRefreshToken(const QString &value) {
+    const QString accepted = value.isEmpty() || isSafeCredentialToken(value) ? value : QString();
+    if (m_refreshToken == accepted) {
+        return;
+    }
+    setRefreshTokenInMemory(accepted);
+    if (m_baseUrl.isEmpty() || !m_credentialStore) {
+        if (!accepted.isEmpty()) {
+            emit credentialStorageError(QStringLiteral("Cannot persist a refresh token without secure server storage."));
+        }
+        return;
+    }
+
+    QString error;
+    const QString account = credentialAccountForServer(m_baseUrl);
+    const CredentialStoreStatus status = accepted.isEmpty()
+        ? m_credentialStore->remove(kRefreshTokenService, account, &error)
+        : m_credentialStore->write(kRefreshTokenService, account, accepted, &error);
+    if (status != CredentialStoreStatus::Success
+        && status != CredentialStoreStatus::NotFound) {
+        emit credentialStorageError(
+            error.isEmpty()
+                ? QStringLiteral("Secure refresh-token storage failed.")
+                : error);
+    }
+}
+
+bool SessionManager::hasRefreshToken() const {
+    return !m_refreshToken.isEmpty();
+}
+
+bool SessionManager::secureCredentialStorage() const {
+    return m_credentialStore && m_credentialStore->isSecure();
+}
+
+QString SessionManager::sessionId() const {
+    return m_sessionId;
+}
+
+void SessionManager::setSessionId(const QString &value) {
+    if (m_sessionId == value) {
+        return;
+    }
+    m_sessionId = value;
+    storeAuthValue("sessionId", value);
+    emit sessionIdChanged();
+    emit sessionStateChanged();
+}
+
+QString SessionManager::homeId() const {
+    return m_homeId;
+}
+
+void SessionManager::setHomeId(const QString &value) {
+    if (m_homeId == value) {
+        return;
+    }
+    m_homeId = value;
+    storeAuthValue("homeId", value);
+    emit homeIdChanged();
+    emit sessionStateChanged();
+}
+
+QString SessionManager::activeProfileId() const {
+    return m_activeProfileId;
+}
+
+void SessionManager::setActiveProfileId(const QString &value) {
+    if (m_activeProfileId == value) {
+        return;
+    }
+    m_activeProfileId = value;
+    storeAuthValue("activeProfileId", value);
+    emit activeProfileIdChanged();
+    emit sessionStateChanged();
+}
+
+QString SessionManager::activeProfileName() const {
+    return m_activeProfileName;
+}
+
+void SessionManager::setActiveProfileName(const QString &value) {
+    if (m_activeProfileName == value) {
+        return;
+    }
+    m_activeProfileName = value;
+    storeAuthValue("activeProfileName", value);
+    emit activeProfileNameChanged();
+    emit sessionStateChanged();
+}
+
+QString SessionManager::activeProfileType() const {
+    return m_activeProfileType;
+}
+
+void SessionManager::setActiveProfileType(const QString &value) {
+    if (m_activeProfileType == value) {
+        return;
+    }
+    m_activeProfileType = value;
+    storeAuthValue("activeProfileType", value);
+    emit activeProfileTypeChanged();
+    emit sessionStateChanged();
+}
+
+QString SessionManager::homeRole() const {
+    return m_homeRole;
+}
+
+void SessionManager::setHomeRole(const QString &value) {
+    if (m_homeRole == value) {
+        return;
+    }
+    m_homeRole = value;
+    storeAuthValue("homeRole", value);
+    emit homeRoleChanged();
+    emit sessionStateChanged();
+}
+
+QStringList SessionManager::capabilities() const {
+    return m_capabilities;
+}
+
+void SessionManager::setCapabilities(const QStringList &value) {
+    if (m_capabilities == value) {
+        return;
+    }
+    m_capabilities = value;
+    storeAuthValue("capabilities", value);
+    emit capabilitiesChanged();
+    emit sessionStateChanged();
+}
+
+qint64 SessionManager::capabilityRevision() const {
+    return m_capabilityRevision;
+}
+
+void SessionManager::setCapabilityRevision(qint64 value) {
+    if (m_capabilityRevision == value) {
+        return;
+    }
+    m_capabilityRevision = value;
+    storeAuthValue("capabilityRevision", value);
+    emit capabilityRevisionChanged();
+    emit sessionStateChanged();
+}
+
+QVariantMap SessionManager::sessionState() const {
+    return {
+        {"session_id", m_sessionId},
+        {"home_id", m_homeId},
+        {"active_profile_id", m_activeProfileId},
+        {"active_profile_name", m_activeProfileName},
+        {"active_profile_type", m_activeProfileType},
+        {"role", m_homeRole},
+        {"capabilities", m_capabilities},
+        {"capability_revision", m_capabilityRevision},
+    };
+}
+
+void SessionManager::setSessionState(const QVariantMap &state) {
+    setSessionId(state.value("session_id").toString());
+    setHomeId(state.value("home_id").toString());
+    setActiveProfileId(state.value("active_profile_id").toString());
+    setActiveProfileName(state.value("active_profile_name").toString());
+    setActiveProfileType(state.value("active_profile_type").toString());
+    setHomeRole(state.value("role").toString());
+    setCapabilities(state.value("capabilities").toStringList());
+    setCapabilityRevision(state.value("capability_revision").toLongLong());
 }
 
 QString SessionManager::controlPlaneEmail() const {
@@ -386,8 +629,8 @@ void SessionManager::setNetworkTypeInternal(const QString &value, bool persist) 
 }
 
 void SessionManager::clearAuth() {
-    setAuthToken(QString());
-    setAccessTokenExpiresAt(QString());
+    setRefreshToken(QString());
+    clearRuntimeSession(true);
 }
 
 void SessionManager::clearControlPlaneAuth() {
@@ -398,4 +641,140 @@ void SessionManager::clearControlPlaneAuth() {
 void SessionManager::storeValue(const QString &key, const QVariant &value) {
     m_settings.setValue(key, value);
     m_settings.sync();
+}
+
+void SessionManager::setRefreshTokenInMemory(const QString &value) {
+    if (m_refreshToken == value) {
+        return;
+    }
+    m_refreshToken = value;
+    emit refreshTokenChanged();
+}
+
+void SessionManager::loadRefreshTokenForCurrentServer() {
+    if (m_baseUrl.isEmpty() || !m_credentialStore) {
+        setRefreshTokenInMemory(QString());
+        return;
+    }
+    const CredentialReadResult result = m_credentialStore->read(
+        kRefreshTokenService,
+        credentialAccountForServer(m_baseUrl));
+    if (result.status == CredentialStoreStatus::Success) {
+        if (isSafeCredentialToken(result.value)) {
+            setRefreshTokenInMemory(result.value);
+            return;
+        }
+        QString removalError;
+        m_credentialStore->remove(
+            kRefreshTokenService,
+            credentialAccountForServer(m_baseUrl),
+            &removalError);
+        setRefreshTokenInMemory(QString());
+        emit credentialStorageError(QStringLiteral("Stored refresh credential was invalid and was removed."));
+        return;
+    }
+    setRefreshTokenInMemory(QString());
+    if (result.status != CredentialStoreStatus::NotFound && !result.error.isEmpty()) {
+        emit credentialStorageError(result.error);
+    }
+}
+
+void SessionManager::clearRuntimeSession(bool persist) {
+    if (persist && m_authToken.isEmpty()) {
+        storeAuthValue("accessToken", QString());
+    }
+    if (persist && m_accessTokenExpiresAt.isEmpty()) {
+        storeAuthValue("accessTokenExpiresAt", QString());
+    }
+    setAuthTokenInternal(QString(), persist);
+    setAccessTokenExpiresAtInternal(QString(), persist);
+    clearSessionMetadata(persist);
+}
+
+void SessionManager::clearSessionMetadata(bool persist) {
+    const auto clearString = [this, persist](
+                                 QString &field,
+                                 const QString &key,
+                                 void (SessionManager::*signal)()) {
+        if (field.isEmpty()) {
+            if (persist) {
+                storeAuthValue(key, QString());
+            }
+            return;
+        }
+        field.clear();
+        if (persist) {
+            storeAuthValue(key, QString());
+        }
+        emit (this->*signal)();
+    };
+    clearString(m_sessionId, "sessionId", &SessionManager::sessionIdChanged);
+    clearString(m_homeId, "homeId", &SessionManager::homeIdChanged);
+    clearString(m_activeProfileId, "activeProfileId", &SessionManager::activeProfileIdChanged);
+    clearString(m_activeProfileName, "activeProfileName", &SessionManager::activeProfileNameChanged);
+    clearString(m_activeProfileType, "activeProfileType", &SessionManager::activeProfileTypeChanged);
+    clearString(m_homeRole, "homeRole", &SessionManager::homeRoleChanged);
+    if (!m_capabilities.isEmpty()) {
+        m_capabilities.clear();
+        if (persist) {
+            storeAuthValue("capabilities", QStringList());
+        }
+        emit capabilitiesChanged();
+    } else if (persist) {
+        storeAuthValue("capabilities", QStringList());
+    }
+    if (m_capabilityRevision != 0) {
+        m_capabilityRevision = 0;
+        if (persist) {
+            storeAuthValue("capabilityRevision", 0);
+        }
+        emit capabilityRevisionChanged();
+    } else if (persist) {
+        storeAuthValue("capabilityRevision", 0);
+    }
+    emit sessionStateChanged();
+}
+
+void SessionManager::loadScopedSessionState() {
+    m_authToken = m_settings.value(authSettingKey("accessToken"), "").toString();
+    if (!m_authToken.isEmpty() && !isSafeCredentialToken(m_authToken)) {
+        m_authToken.clear();
+        storeAuthValue("accessToken", QString());
+    }
+    m_accessTokenExpiresAt =
+        m_settings.value(authSettingKey("accessTokenExpiresAt"), "").toString();
+    m_sessionId = m_settings.value(authSettingKey("sessionId"), "").toString();
+    m_homeId = m_settings.value(authSettingKey("homeId"), "").toString();
+    m_activeProfileId = m_settings.value(authSettingKey("activeProfileId"), "").toString();
+    m_activeProfileName = m_settings.value(authSettingKey("activeProfileName"), "").toString();
+    m_activeProfileType = m_settings.value(authSettingKey("activeProfileType"), "").toString();
+    m_homeRole = m_settings.value(authSettingKey("homeRole"), "").toString();
+    m_capabilities = m_settings.value(authSettingKey("capabilities")).toStringList();
+    m_capabilityRevision = m_settings.value(authSettingKey("capabilityRevision"), 0).toLongLong();
+}
+
+void SessionManager::migrateLegacySessionState() {
+    const QString scopedTokenKey = authSettingKey("accessToken");
+    if (!m_settings.contains(scopedTokenKey) && m_settings.contains(kAuthTokenKey)) {
+        m_settings.setValue(scopedTokenKey, m_settings.value(kAuthTokenKey));
+    }
+    const QString scopedExpiryKey = authSettingKey("accessTokenExpiresAt");
+    if (!m_settings.contains(scopedExpiryKey) && m_settings.contains(kAccessTokenExpiresAtKey)) {
+        m_settings.setValue(scopedExpiryKey, m_settings.value(kAccessTokenExpiresAtKey));
+    }
+    m_settings.remove(kAuthTokenKey);
+    m_settings.remove(kAccessTokenExpiresAtKey);
+    m_settings.sync();
+}
+
+QString SessionManager::authSettingKey(const QString &name) const {
+    return QStringLiteral("session/accounts/%1/%2")
+        .arg(credentialAccountForServer(m_baseUrl), name);
+}
+
+void SessionManager::storeAuthValue(const QString &name, const QVariant &value) {
+    if (m_baseUrl.isEmpty()) {
+        return;
+    }
+    storeValue(authSettingKey(name), value);
 }

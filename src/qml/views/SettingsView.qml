@@ -24,6 +24,22 @@ Item {
     property string mediaSegmentWorkerStatusText: ""
     readonly property bool mediaInteractionSupportToolsEnabled: false
 
+    function hasCapability(capability) {
+        return apiClient.capabilities && apiClient.capabilities.indexOf(capability) >= 0
+    }
+
+    function canManageLiveEgress() {
+        return apiClient.homeRole === "owner"
+                && hasCapability("live_manage")
+                && hasCapability("settings_manage")
+    }
+
+    function refreshLiveEgress() {
+        if (apiClient.authToken !== "" && canManageLiveEgress()) {
+            apiClient.fetchLiveEgressStatus()
+        }
+    }
+
     function parseList(text) {
         return text.split(/\\s*,\\s*/).filter(function(item) { return item.length > 0 })
     }
@@ -1482,6 +1498,7 @@ Item {
             root.refreshNetworkProtection()
             root.refreshPlaybackHardware()
             root.refreshPlaybackDiagnostics()
+            root.refreshLiveEgress()
             if (root.mediaInteractionSupportToolsEnabled) {
                 root.refreshMediaSegmentJobs()
                 root.refreshMediaSegmentCandidates()
@@ -1500,12 +1517,17 @@ Item {
                 root.refreshNetworkProtection()
                 root.refreshPlaybackHardware()
                 root.refreshPlaybackDiagnostics()
+                root.refreshLiveEgress()
                 if (root.mediaInteractionSupportToolsEnabled) {
                     root.refreshMediaSegmentJobs()
                     root.refreshMediaSegmentCandidates()
                     root.refreshMediaInteractionLibraries()
                 }
             }
+        }
+
+        function onSessionStateChanged() {
+            root.refreshLiveEgress()
         }
 
         function onNetworkProtectionChanged() {
@@ -1657,6 +1679,19 @@ Item {
                 Rectangle {
                     height: 1
                     color: Theme.border
+                    Layout.fillWidth: true
+                }
+
+                LiveNetworkSettingsView {
+                    objectName: "settingsLiveNetworkSettings"
+                    visible: root.canManageLiveEgress()
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    height: 1
+                    color: Theme.border
+                    visible: root.canManageLiveEgress()
                     Layout.fillWidth: true
                 }
 
@@ -2852,6 +2887,43 @@ Item {
                     height: 1
                     color: Theme.border
                     Layout.fillWidth: true
+                }
+
+                Label {
+                    text: "Live administration"
+                    color: Theme.textPrimary
+                    font.pixelSize: 16
+                    font.family: Theme.fontDisplay
+                    visible: root.hasCapability("live_manage")
+                }
+
+                Button {
+                    objectName: "openLiveAdminButton"
+                    text: "Open Live administration"
+                    visible: root.hasCapability("live_manage")
+                    enabled: apiClient.authToken !== "" && root.stackView !== null
+                    Accessible.name: "Open Live administration"
+                    onClicked: root.stackView.push(Qt.resolvedUrl("LiveAdminView.qml"), { stackView: root.stackView })
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.backgroundCardRaised
+                        border.color: Theme.border
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: Theme.textPrimary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+
+                Rectangle {
+                    height: 1
+                    color: Theme.border
+                    Layout.fillWidth: true
+                    visible: root.hasCapability("live_manage")
                 }
 
                 Label {

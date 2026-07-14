@@ -19,7 +19,9 @@ ApplicationWindow {
     readonly property var navigationStack: stackView
 
     Component.onCompleted: {
-        if (apiClient.authToken !== "") {
+        if (apiClient.hasRefreshToken) {
+            apiClient.restoreSession()
+        } else if (apiClient.authToken !== "") {
             apiClient.fetchMediaAcquisition()
             apiClient.fetchAcquisitionReleases("review_required", "", 50)
         }
@@ -38,12 +40,22 @@ ApplicationWindow {
         showLibrarySection("all")
     }
 
-    function enforceAuthExpiry() {
-        if (apiClient.authToken === "") {
-            return
+    function openLive() {
+        if (!stackView.currentItem || stackView.currentItem.objectName !== "liveView") {
+            stackView.push(Qt.resolvedUrl("views/LiveView.qml"), {
+                stackView: stackView,
+                liveModel: liveCatalogModel,
+                playerController: livePlayerController,
+                serverBaseUrl: apiClient.baseUrl
+            })
         }
-        if (apiClient.accessTokenExpired(0)) {
-            apiClient.expireAuth("Session expired. Please sign in again.")
+    }
+
+    function maintainAuth() {
+        if (apiClient.hasRefreshToken
+                && !apiClient.refreshInFlight
+                && (apiClient.authToken === "" || apiClient.accessTokenNearExpiry(60))) {
+            apiClient.refreshAuth()
         }
     }
 
@@ -133,7 +145,9 @@ ApplicationWindow {
             id: sidebar
             Layout.fillHeight: true
             Layout.preferredWidth: collapsed ? collapsedWidth : Theme.sidebarWidth
-            visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
+            visible: stackView.currentItem
+                     && stackView.currentItem.objectName !== "connectView"
+                     && stackView.currentItem.objectName !== "livePlayerView"
             currentView: {
                 if (!stackView.currentItem) return "home"
                 if (stackView.currentItem.objectName === "homeView") {
@@ -144,6 +158,9 @@ ApplicationWindow {
                 }
                 if (stackView.currentItem.objectName === "settingsView") return "settings"
                 if (stackView.currentItem.objectName === "findMediaView") return "find_media"
+                if (stackView.currentItem.objectName === "liveView" ||
+                        stackView.currentItem.objectName === "liveDetailsView" ||
+                        stackView.currentItem.objectName === "livePlayerView") return "live"
                 if (stackView.currentItem.objectName === "acquisitionView" ||
                         stackView.currentItem.objectName === "acquisitionReviewView") return "acquisition"
                 if (stackView.currentItem.objectName === "extensionsView" ||
@@ -154,6 +171,7 @@ ApplicationWindow {
             acquisitionBadgeCount: root.acquisitionUnreadCount
             
             onHomeRequested: root.goHome()
+            onLiveRequested: root.openLive()
             onSettingsRequested: {
                 if (!stackView.currentItem || stackView.currentItem.objectName !== "settingsView") {
                     stackView.push(Qt.resolvedUrl("views/SettingsView.qml"), { stackView: stackView })
@@ -187,7 +205,9 @@ ApplicationWindow {
 
             TopBar {
                 Layout.fillWidth: true
-                visible: stackView.currentItem && stackView.currentItem.objectName !== "connectView"
+                visible: stackView.currentItem
+                         && stackView.currentItem.objectName !== "connectView"
+                         && stackView.currentItem.objectName !== "livePlayerView"
                 searchVisible: stackView.currentItem && stackView.currentItem.objectName === "homeView"
                 onActivityRequested: root.openAcquisition()
                 onSettingsRequested: {
@@ -288,6 +308,12 @@ ApplicationWindow {
             root.acquisitionUnreadCount = 0
             root.goHome()
         }
+        function onSessionRestored() {
+            root.authNotice = ""
+            apiClient.fetchMediaAcquisition()
+            apiClient.fetchAcquisitionReleases("review_required", "", 50)
+            root.goHome()
+        }
     }
 
     Timer {
@@ -310,8 +336,8 @@ ApplicationWindow {
         id: authExpiryPoll
         interval: 30000
         repeat: true
-        running: apiClient.authToken !== ""
-        onTriggered: root.enforceAuthExpiry()
+        running: apiClient.hasRefreshToken
+        onTriggered: root.maintainAuth()
     }
 
     Connections {

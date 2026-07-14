@@ -4,7 +4,7 @@ This is the Qt 6/QML rewrite of the Elixir desktop client. It speaks to the Rust
 
 ## Prerequisites
 
-- Qt 6.4+ (Core, Gui, Qml, Quick, QuickControls2, Network)
+- Qt 6.5+ (Core, Gui, Qml, Quick, QuickControls2, Network, Test, QuickTest)
 - libmpv + KDE/mpvqt (Qt 6 wrapper)
 
 ## Build
@@ -14,6 +14,24 @@ mkdir -p build
 cd build
 cmake ..
 cmake --build .
+```
+
+## Tests
+
+CTest includes deterministic C++ scheduler/network fixtures, QML tests, and the
+client authentication transport tests:
+
+```sh
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+For an LLVM source-coverage report, use a separate Clang build:
+
+```sh
+cmake -S . -B build-coverage -DBUILD_TESTING=ON -DELIXIR_ENABLE_CLIENT_COVERAGE=ON
+cmake --build build-coverage --target elixir-client-coverage
 ```
 
 ## Run

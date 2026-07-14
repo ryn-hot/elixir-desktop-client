@@ -4,17 +4,31 @@
 #include <QNetworkAccessManager>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QList>
+#include <QSet>
 #include <QUrl>
 #include <QVariant>
 #include <functional>
 
 class QJsonDocument;
+class QNetworkReply;
 
 class ApiClient : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString baseUrl READ baseUrl WRITE setBaseUrl NOTIFY baseUrlChanged)
     Q_PROPERTY(QString authToken READ authToken WRITE setAuthToken NOTIFY authTokenChanged)
     Q_PROPERTY(QString accessTokenExpiresAt READ accessTokenExpiresAt WRITE setAccessTokenExpiresAt NOTIFY accessTokenExpiresAtChanged)
+    Q_PROPERTY(bool hasRefreshToken READ hasRefreshToken NOTIFY refreshTokenChanged)
+    Q_PROPERTY(bool refreshInFlight READ refreshInFlight NOTIFY refreshInFlightChanged)
+    Q_PROPERTY(QString sessionId READ sessionId NOTIFY sessionStateChanged)
+    Q_PROPERTY(QString homeId READ homeId NOTIFY sessionStateChanged)
+    Q_PROPERTY(QString activeProfileId READ activeProfileId NOTIFY sessionStateChanged)
+    Q_PROPERTY(QString activeProfileName READ activeProfileName NOTIFY sessionStateChanged)
+    Q_PROPERTY(QString activeProfileType READ activeProfileType NOTIFY sessionStateChanged)
+    Q_PROPERTY(QString homeRole READ homeRole NOTIFY sessionStateChanged)
+    Q_PROPERTY(QStringList capabilities READ capabilities NOTIFY sessionStateChanged)
+    Q_PROPERTY(qint64 capabilityRevision READ capabilityRevision NOTIFY sessionStateChanged)
+    Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
     Q_PROPERTY(QVariantMap clientCapabilities READ clientCapabilities WRITE setClientCapabilities NOTIFY clientCapabilitiesChanged)
     Q_PROPERTY(QString networkType READ networkType WRITE setNetworkType NOTIFY networkTypeChanged)
     Q_PROPERTY(QVariantList extensionsInstalled READ extensionsInstalled NOTIFY extensionsCatalogChanged)
@@ -57,6 +71,8 @@ class ApiClient : public QObject {
     Q_PROPERTY(QVariantMap networkProtectionListenPortSyncPlan READ networkProtectionListenPortSyncPlan NOTIFY networkProtectionChanged)
     Q_PROPERTY(QVariantMap downloadBrokerRoutes READ downloadBrokerRoutes NOTIFY networkProtectionChanged)
     Q_PROPERTY(bool networkProtectionLoading READ networkProtectionLoading NOTIFY networkProtectionLoadingChanged)
+    Q_PROPERTY(QVariantMap liveEgressStatus READ liveEgressStatus NOTIFY liveEgressChanged)
+    Q_PROPERTY(bool liveEgressLoading READ liveEgressLoading NOTIFY liveEgressLoadingChanged)
     Q_PROPERTY(QVariantMap playbackHardwareReadiness READ playbackHardwareReadiness NOTIFY playbackHardwareChanged)
     Q_PROPERTY(QVariantList playbackHardwareWarnings READ playbackHardwareWarnings NOTIFY playbackHardwareChanged)
     Q_PROPERTY(bool playbackHardwareLoading READ playbackHardwareLoading NOTIFY playbackHardwareLoadingChanged)
@@ -99,7 +115,24 @@ public:
     QString accessTokenExpiresAt() const;
     void setAccessTokenExpiresAt(const QString &value);
     Q_INVOKABLE bool accessTokenExpired(int skewSeconds = 0) const;
+    Q_INVOKABLE bool accessTokenNearExpiry(int skewSeconds = 60) const;
     Q_INVOKABLE void expireAuth(const QString &message = QString());
+
+    QString refreshToken() const;
+    void setRefreshToken(const QString &value);
+    bool hasRefreshToken() const;
+    bool refreshInFlight() const;
+    QString sessionId() const;
+    QString homeId() const;
+    QString activeProfileId() const;
+    QString activeProfileName() const;
+    QString activeProfileType() const;
+    QString homeRole() const;
+    QStringList capabilities() const;
+    qint64 capabilityRevision() const;
+    QVariantMap sessionState() const;
+    void setSessionState(const QVariantMap &state);
+    QVariantList profiles() const;
 
     QVariantMap clientCapabilities() const;
     void setClientCapabilities(const QVariantMap &value);
@@ -147,6 +180,8 @@ public:
     QVariantMap networkProtectionListenPortSyncPlan() const;
     QVariantMap downloadBrokerRoutes() const;
     bool networkProtectionLoading() const;
+    QVariantMap liveEgressStatus() const;
+    bool liveEgressLoading() const;
     QVariantMap playbackHardwareReadiness() const;
     QVariantList playbackHardwareWarnings() const;
     bool playbackHardwareLoading() const;
@@ -179,6 +214,11 @@ public:
 
     Q_INVOKABLE void login(const QString &email, const QString &password);
     Q_INVOKABLE void signup(const QString &email, const QString &password);
+    Q_INVOKABLE void restoreSession();
+    Q_INVOKABLE void refreshAuth();
+    Q_INVOKABLE void logout();
+    Q_INVOKABLE void fetchProfiles();
+    Q_INVOKABLE void selectProfile(const QString &profileId, const QString &pin = QString());
     Q_INVOKABLE void startPasswordReset(const QString &email);
     Q_INVOKABLE void completePasswordReset(const QString &token, const QString &newPassword);
     Q_INVOKABLE void fetchLibrary();
@@ -269,6 +309,14 @@ public:
     Q_INVOKABLE void fetchNetworkProtectionWarpDiagnostics();
     Q_INVOKABLE void fetchNetworkProtectionProviderPresets();
     Q_INVOKABLE void fetchNetworkProtectionListenPortSyncPlan();
+    Q_INVOKABLE void fetchLiveEgressStatus();
+    Q_INVOKABLE void updateLiveEgressPolicy(
+        const QString &scopeType,
+        const QString &scopeId,
+        const QString &mode,
+        const QString &policyId,
+        bool allowFallback,
+        qint64 expectedRevision);
     Q_INVOKABLE void applyNetworkProtectionListenPortSync();
     Q_INVOKABLE void fetchPlaybackHardwareReadiness(bool diagnostics = false);
     Q_INVOKABLE void fetchPlaybackHardwareWarnings();
@@ -394,6 +442,10 @@ signals:
     void baseUrlChanged();
     void authTokenChanged();
     void accessTokenExpiresAtChanged();
+    void refreshTokenChanged();
+    void refreshInFlightChanged();
+    void sessionStateChanged();
+    void profilesChanged();
     void clientCapabilitiesChanged();
     void networkTypeChanged();
     void extensionsCatalogChanged();
@@ -413,6 +465,8 @@ signals:
     void extensionsDownloaderSettingsChanged();
     void networkProtectionChanged();
     void networkProtectionLoadingChanged();
+    void liveEgressChanged();
+    void liveEgressLoadingChanged();
     void playbackHardwareChanged();
     void playbackHardwareLoadingChanged();
     void playbackAdminDiagnosticsChanged();
@@ -463,6 +517,11 @@ signals:
 
     void loginSucceeded();
     void loginFailed(const QString &error);
+    void sessionRestored();
+    void sessionRestoreFailed(const QString &error);
+    void logoutCompleted();
+    void profilesReceived(const QVariantList &profiles);
+    void profileSelected(const QString &profileId);
     void authExpired(const QString &message);
     void passwordResetStarted(const QString &token, const QString &expiresAt);
     void passwordResetCompleted();
@@ -492,6 +551,18 @@ private:
     using SuccessHandler = std::function<void(const QJsonDocument &)>;
     using ErrorHandler = std::function<void(const QString &)>;
 
+    struct PendingRequest {
+        QString method;
+        QString path;
+        QJsonObject body;
+        SuccessHandler onSuccess;
+        ErrorHandler onError;
+        bool allowNonJson = false;
+        bool attachAuthorization = true;
+        int retryCount = 0;
+        quint64 generation = 0;
+    };
+
     QString normalizeBaseUrl(const QString &value) const;
     QUrl makeUrl(const QString &path) const;
     void updateExtensionsCatalog(const QJsonObject &obj);
@@ -511,6 +582,8 @@ private:
     void updateNetworkProtectionProviderPresets(const QJsonObject &obj);
     void updateNetworkProtectionListenPortSyncPlan(const QJsonObject &obj);
     void updateDownloadBrokerRoutes(const QJsonObject &obj);
+    void setLiveEgressLoading(bool loading);
+    void updateLiveEgressStatus(const QJsonObject &obj);
     void setPlaybackHardwareLoading(bool loading);
     void updatePlaybackHardwareReadiness(const QJsonObject &obj);
     void updatePlaybackHardwareWarnings(const QJsonArray &warnings);
@@ -537,6 +610,23 @@ private:
         const SuccessHandler &onSuccess,
         const ErrorHandler &onError = ErrorHandler(),
         bool allowNonJson = false);
+    void dispatchRequest(PendingRequest request);
+    void queueForRefresh(PendingRequest request);
+    void beginRefresh(bool restoring = false);
+    void finishRefreshSuccess(const QJsonObject &response, bool restoring);
+    void finishRefreshFailure(const QString &error, bool restoring);
+    void replayPendingRequests();
+    void failPendingRequests(const QString &error);
+    void cancelOutstandingRequests(const QString &reason);
+    void clearAuthenticationState(bool clearRefreshToken);
+    bool applyTokenResponse(const QJsonObject &response, QString *error);
+    bool applySessionResponse(const QJsonObject &response, QString *error);
+    static bool isPublicAuthPath(const QString &path);
+    static bool canRefreshRequest(const QString &path);
+    void emitRequestError(
+        const PendingRequest &request,
+        const QVariantMap &errorDetail,
+        const QString &message);
     void applyCurrentPlaybackContext(QJsonObject &body) const;
     void sendPlaybackRequest(const QJsonObject &body);
 
@@ -544,6 +634,23 @@ private:
     QString m_baseUrl;
     QString m_authToken;
     QString m_accessTokenExpiresAt;
+    QString m_refreshToken;
+    bool m_refreshInFlight = false;
+    bool m_refreshRestoring = false;
+    bool m_profileSwitchInFlight = false;
+    bool m_logoutInFlight = false;
+    QString m_sessionId;
+    QString m_homeId;
+    QString m_activeProfileId;
+    QString m_activeProfileName;
+    QString m_activeProfileType;
+    QString m_homeRole;
+    QStringList m_capabilities;
+    qint64 m_capabilityRevision = 0;
+    QVariantList m_profiles;
+    QList<PendingRequest> m_pendingRequests;
+    QSet<QNetworkReply *> m_activeReplies;
+    quint64 m_requestGeneration = 1;
     QVariantMap m_clientCapabilities;
     QString m_networkType;
     QJsonObject m_lastPlaybackBody;
@@ -587,6 +694,8 @@ private:
     QVariantMap m_networkProtectionListenPortSyncPlan;
     QVariantMap m_downloadBrokerRoutes;
     bool m_networkProtectionLoading = false;
+    QVariantMap m_liveEgressStatus;
+    bool m_liveEgressLoading = false;
     QVariantMap m_playbackHardwareReadiness;
     QVariantList m_playbackHardwareWarnings;
     bool m_playbackHardwareLoading = false;

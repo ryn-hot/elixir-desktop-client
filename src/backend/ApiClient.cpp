@@ -9,12 +9,47 @@
 #include <QDebug>
 #include <QDateTime>
 #include <QEventLoop>
+#include <QCoreApplication>
 #include <QLocale>
+#include <QSysInfo>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
+constexpr int kMaxPendingAuthRequests = 256;
+
+void addClientSessionContext(QJsonObject &body, bool includeRememberDevice) {
+    if (includeRememberDevice) {
+        body.insert("remember_device", true);
+    }
+    body.insert("device_name", QSysInfo::machineHostName());
+    body.insert("device_type", QStringLiteral("desktop"));
+    body.insert("client_name", QStringLiteral("elixir-client"));
+    body.insert("client_version", QCoreApplication::applicationVersion());
+}
+
+bool isSafeToken(const QString &value) {
+    if (value.isEmpty() || value.size() > 8192) {
+        return false;
+    }
+    for (const QChar character : value) {
+        const ushort code = character.unicode();
+        const bool allowed = (code >= 'a' && code <= 'z')
+            || (code >= 'A' && code <= 'Z')
+            || (code >= '0' && code <= '9')
+            || code == '-'
+            || code == '_'
+            || code == '.'
+            || code == '~';
+        if (!allowed) {
+            return false;
+        }
+    }
+    return true;
+}
+
 QVariantMap parseApiErrorPayload(
     const QByteArray &payload,
     const QString &fallback,
@@ -320,6 +355,10 @@ void ApiClient::setBaseUrl(const QString &value) {
     if (m_baseUrl == normalized) {
         return;
     }
+    if (!m_baseUrl.isEmpty()) {
+        cancelOutstandingRequests(QStringLiteral("Server changed."));
+        clearAuthenticationState(true);
+    }
     m_baseUrl = normalized;
     emit baseUrlChanged();
 }
@@ -329,10 +368,11 @@ QString ApiClient::authToken() const {
 }
 
 void ApiClient::setAuthToken(const QString &value) {
-    if (m_authToken == value) {
+    const QString accepted = value.isEmpty() || isSafeToken(value) ? value : QString();
+    if (m_authToken == accepted) {
         return;
     }
-    m_authToken = value;
+    m_authToken = accepted;
     emit authTokenChanged();
 }
 
@@ -362,13 +402,120 @@ bool ApiClient::accessTokenExpired(int skewSeconds) const {
     return expiresAt <= QDateTime::currentDateTimeUtc().addSecs(skewSeconds);
 }
 
+bool ApiClient::accessTokenNearExpiry(int skewSeconds) const {
+    return accessTokenExpired(std::max(0, skewSeconds));
+}
+
 void ApiClient::expireAuth(const QString &message) {
+    if (hasRefreshToken()) {
+        refreshAuth();
+        return;
+    }
     const QString detail = message.trimmed().isEmpty()
         ? QStringLiteral("Session expired. Please sign in again.")
         : message.trimmed();
-    setAuthToken(QString());
-    setAccessTokenExpiresAt(QString());
+    clearAuthenticationState(true);
     emit authExpired(detail);
+}
+
+QString ApiClient::refreshToken() const {
+    return m_refreshToken;
+}
+
+void ApiClient::setRefreshToken(const QString &value) {
+    const QString accepted = value.isEmpty() || isSafeToken(value) ? value : QString();
+    if (m_refreshToken == accepted) {
+        return;
+    }
+    m_refreshToken = accepted;
+    emit refreshTokenChanged();
+}
+
+bool ApiClient::hasRefreshToken() const {
+    return !m_refreshToken.isEmpty();
+}
+
+bool ApiClient::refreshInFlight() const {
+    return m_refreshInFlight;
+}
+
+QString ApiClient::sessionId() const {
+    return m_sessionId;
+}
+
+QString ApiClient::homeId() const {
+    return m_homeId;
+}
+
+QString ApiClient::activeProfileId() const {
+    return m_activeProfileId;
+}
+
+QString ApiClient::activeProfileName() const {
+    return m_activeProfileName;
+}
+
+QString ApiClient::activeProfileType() const {
+    return m_activeProfileType;
+}
+
+QString ApiClient::homeRole() const {
+    return m_homeRole;
+}
+
+QStringList ApiClient::capabilities() const {
+    return m_capabilities;
+}
+
+qint64 ApiClient::capabilityRevision() const {
+    return m_capabilityRevision;
+}
+
+QVariantMap ApiClient::sessionState() const {
+    return {
+        {"session_id", m_sessionId},
+        {"home_id", m_homeId},
+        {"active_profile_id", m_activeProfileId},
+        {"active_profile_name", m_activeProfileName},
+        {"active_profile_type", m_activeProfileType},
+        {"role", m_homeRole},
+        {"capabilities", m_capabilities},
+        {"capability_revision", m_capabilityRevision},
+    };
+}
+
+void ApiClient::setSessionState(const QVariantMap &state) {
+    const QString sessionId = state.value("session_id").toString();
+    const QString homeId = state.value("home_id").toString();
+    const QString profileId = state.value("active_profile_id").toString();
+    const QString profileName = state.value("active_profile_name").toString();
+    const QString profileType = state.value("active_profile_type").toString();
+    const QString role = state.value("role").toString();
+    const QStringList capabilities = state.value("capabilities").toStringList();
+    const qint64 revision = state.value("capability_revision").toLongLong();
+    if (m_sessionId == sessionId
+        && m_homeId == homeId
+        && m_activeProfileId == profileId
+        && m_activeProfileName == profileName
+        && m_activeProfileType == profileType
+        && m_homeRole == role
+        && m_capabilities == capabilities
+        && m_capabilityRevision == revision) {
+        return;
+    }
+    m_sessionId = sessionId;
+    m_homeId = homeId;
+    m_activeProfileId = profileId;
+    m_activeProfileName = profileName;
+    m_activeProfileType = profileType;
+    m_homeRole = role;
+    m_capabilities = capabilities;
+    m_capabilityRevision = revision;
+    emit sessionStateChanged();
+}
+
+QVariantList ApiClient::profiles() const {
+    return m_profiles;
 }
 
 QVariantMap ApiClient::clientCapabilities() const {
@@ -555,6 +702,14 @@ bool ApiClient::networkProtectionLoading() const {
     return m_networkProtectionLoading;
 }
 
+QVariantMap ApiClient::liveEgressStatus() const {
+    return m_liveEgressStatus;
+}
+
+bool ApiClient::liveEgressLoading() const {
+    return m_liveEgressLoading;
+}
+
 QVariantMap ApiClient::playbackHardwareReadiness() const {
     return m_playbackHardwareReadiness;
 }
@@ -673,6 +828,7 @@ bool ApiClient::acquisitionReviewLoading() const {
 
 void ApiClient::login(const QString &email, const QString &password) {
     QJsonObject body{{"email", email.trimmed()}, {"password", password}};
+    addClientSessionContext(body, true);
     sendRequest(
         "POST",
         "/api/v1/auth/login",
@@ -683,21 +839,40 @@ void ApiClient::login(const QString &email, const QString &password) {
                 return;
             }
             const QJsonObject obj = doc.object();
-            const QString token = obj.value("access_token").toString();
-            if (!token.isEmpty()) {
-                setAuthToken(token);
+            QString error;
+            if (!applyTokenResponse(obj, &error)) {
+                clearAuthenticationState(true);
+                emit loginFailed(error);
+                return;
             }
-            const QString expiresAt = obj.value("access_expires_at").toString();
-            if (!expiresAt.isEmpty()) {
-                setAccessTokenExpiresAt(expiresAt);
-            }
-            emit loginSucceeded();
+            sendRequest(
+                "GET",
+                "/api/v1/auth/session",
+                QJsonObject(),
+                [this](const QJsonDocument &sessionDoc) {
+                    QString sessionError;
+                    if (!sessionDoc.isObject()
+                        || !applySessionResponse(sessionDoc.object(), &sessionError)) {
+                        clearAuthenticationState(true);
+                        emit loginFailed(
+                            sessionError.isEmpty()
+                                ? QStringLiteral("Unexpected account-session response.")
+                                : sessionError);
+                        return;
+                    }
+                    emit loginSucceeded();
+                },
+                [this](const QString &sessionError) {
+                    clearAuthenticationState(true);
+                    emit loginFailed(sessionError);
+                });
         },
         [this](const QString &error) { emit loginFailed(error); });
 }
 
 void ApiClient::signup(const QString &email, const QString &password) {
     QJsonObject body{{"email", email.trimmed()}, {"password", password}};
+    addClientSessionContext(body, true);
     sendRequest(
         "POST",
         "/api/v1/auth/signup",
@@ -708,17 +883,137 @@ void ApiClient::signup(const QString &email, const QString &password) {
                 return;
             }
             const QJsonObject obj = doc.object();
-            const QString token = obj.value("access_token").toString();
-            if (!token.isEmpty()) {
-                setAuthToken(token);
+            QString error;
+            if (!applyTokenResponse(obj, &error)) {
+                clearAuthenticationState(true);
+                emit loginFailed(error);
+                return;
             }
-            const QString expiresAt = obj.value("access_expires_at").toString();
-            if (!expiresAt.isEmpty()) {
-                setAccessTokenExpiresAt(expiresAt);
-            }
-            emit loginSucceeded();
+            sendRequest(
+                "GET",
+                "/api/v1/auth/session",
+                QJsonObject(),
+                [this](const QJsonDocument &sessionDoc) {
+                    QString sessionError;
+                    if (!sessionDoc.isObject()
+                        || !applySessionResponse(sessionDoc.object(), &sessionError)) {
+                        clearAuthenticationState(true);
+                        emit loginFailed(
+                            sessionError.isEmpty()
+                                ? QStringLiteral("Unexpected account-session response.")
+                                : sessionError);
+                        return;
+                    }
+                    emit loginSucceeded();
+                },
+                [this](const QString &sessionError) {
+                    clearAuthenticationState(true);
+                    emit loginFailed(sessionError);
+                });
         },
         [this](const QString &error) { emit loginFailed(error); });
+}
+
+void ApiClient::restoreSession() {
+    if (!hasRefreshToken()) {
+        emit sessionRestoreFailed(QStringLiteral("No remembered session is available."));
+        return;
+    }
+    beginRefresh(true);
+}
+
+void ApiClient::refreshAuth() {
+    if (!hasRefreshToken()) {
+        clearAuthenticationState(true);
+        emit authExpired(QStringLiteral("This device is no longer signed in."));
+        return;
+    }
+    beginRefresh(false);
+}
+
+void ApiClient::logout() {
+    cancelOutstandingRequests(QStringLiteral("Signed out."));
+    if (m_authToken.isEmpty()) {
+        clearAuthenticationState(true);
+        emit logoutCompleted();
+        return;
+    }
+    m_logoutInFlight = true;
+    sendRequest(
+        "POST",
+        "/api/v1/auth/logout",
+        QJsonObject(),
+        [this](const QJsonDocument &) {
+            m_logoutInFlight = false;
+            clearAuthenticationState(true);
+            emit logoutCompleted();
+        },
+        [this](const QString &) {
+            m_logoutInFlight = false;
+            clearAuthenticationState(true);
+            emit logoutCompleted();
+        },
+        true);
+}
+
+void ApiClient::fetchProfiles() {
+    sendRequest(
+        "GET",
+        "/api/v1/profiles",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            if (!doc.isObject() || !doc.object().value("profiles").isArray()) {
+                emit requestFailed("/api/v1/profiles", "Unexpected profiles response.");
+                return;
+            }
+            m_profiles = doc.object().value("profiles").toArray().toVariantList();
+            emit profilesChanged();
+            emit profilesReceived(m_profiles);
+        });
+}
+
+void ApiClient::selectProfile(const QString &profileId, const QString &pin) {
+    const QString normalizedProfileId = profileId.trimmed();
+    if (normalizedProfileId.isEmpty()) {
+        emit requestFailed("/api/v1/profiles", "Profile id is required.");
+        return;
+    }
+    cancelOutstandingRequests(QStringLiteral("Profile changed."));
+    m_profileSwitchInFlight = true;
+    QJsonObject body;
+    if (!pin.isEmpty()) {
+        body.insert("pin", pin);
+    }
+    const QString path = QStringLiteral("/api/v1/profiles/%1/select")
+        .arg(QString::fromUtf8(QUrl::toPercentEncoding(normalizedProfileId)));
+    sendRequest(
+        "POST",
+        path,
+        body,
+        [this, normalizedProfileId](const QJsonDocument &doc) {
+            QString error;
+            if (!doc.isObject()) {
+                m_profileSwitchInFlight = false;
+                emit requestFailed("/api/v1/profiles", "Unexpected profile-selection response.");
+                return;
+            }
+            const QJsonObject response = doc.object();
+            const bool applied = response.contains("access_token")
+                ? applyTokenResponse(response, &error)
+                : applySessionResponse(response, &error);
+            if (!applied) {
+                m_profileSwitchInFlight = false;
+                emit requestFailed(
+                    "/api/v1/profiles",
+                    error.isEmpty() ? QStringLiteral("Invalid profile-selection response.") : error);
+                return;
+            }
+            m_profileSwitchInFlight = false;
+            emit profileSelected(normalizedProfileId);
+        },
+        [this](const QString &) {
+            m_profileSwitchInFlight = false;
+        });
 }
 
 void ApiClient::startPasswordReset(const QString &email) {
@@ -2382,6 +2677,115 @@ void ApiClient::fetchNetworkProtectionListenPortSyncPlan() {
         });
 }
 
+void ApiClient::fetchLiveEgressStatus() {
+    static const QString endpoint = QStringLiteral("/api/v1/live/admin/egress");
+    setLiveEgressLoading(true);
+    sendRequest(
+        "GET",
+        endpoint,
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setLiveEgressLoading(false);
+            const QJsonObject envelope = doc.isObject() ? doc.object() : QJsonObject();
+            const QJsonValue data = envelope.value(QStringLiteral("data"));
+            if (!data.isObject()) {
+                emit requestFailed(
+                    QStringLiteral("/api/v1/live/admin/egress"),
+                    QStringLiteral("Live egress status response was invalid."));
+                return;
+            }
+            const QJsonObject status = data.toObject();
+            const QSet<QString> expected{
+                QStringLiteral("enabled"),
+                QStringLiteral("ready"),
+                QStringLiteral("activeBindings"),
+                QStringLiteral("availableCapacity"),
+                QStringLiteral("defaultPolicy"),
+                QStringLiteral("profiles"),
+                QStringLiteral("assignments")
+            };
+            const QStringList keys = status.keys();
+            const QSet<QString> actual(keys.cbegin(), keys.cend());
+            if (actual != expected
+                || !status.value(QStringLiteral("enabled")).isBool()
+                || !status.value(QStringLiteral("ready")).isBool()
+                || !status.value(QStringLiteral("activeBindings")).isDouble()
+                || !status.value(QStringLiteral("availableCapacity")).isDouble()
+                || !status.value(QStringLiteral("defaultPolicy")).isObject()
+                || !status.value(QStringLiteral("profiles")).isArray()
+                || !status.value(QStringLiteral("assignments")).isArray()) {
+                emit requestFailed(
+                    QStringLiteral("/api/v1/live/admin/egress"),
+                    QStringLiteral("Live egress status response was invalid."));
+                return;
+            }
+            updateLiveEgressStatus(status);
+        },
+        [this](const QString &) {
+            setLiveEgressLoading(false);
+        });
+}
+
+void ApiClient::updateLiveEgressPolicy(
+    const QString &scopeType,
+    const QString &scopeId,
+    const QString &mode,
+    const QString &policyId,
+    bool allowFallback,
+    qint64 expectedRevision) {
+    static const QString endpoint = QStringLiteral("/api/v1/live/admin/egress");
+    const QString normalizedScope = scopeType.trimmed();
+    const QString normalizedScopeId = scopeId.trimmed();
+    const QString normalizedMode = mode.trimmed();
+    const QString normalizedPolicyId = policyId.trimmed();
+    const bool scopeValid = normalizedScope == QStringLiteral("server_default")
+        ? normalizedScopeId.isEmpty()
+        : (normalizedScope == QStringLiteral("profile")
+           || normalizedScope == QStringLiteral("provider"))
+              && !normalizedScopeId.isEmpty();
+    const bool modeValid = normalizedMode == QStringLiteral("off")
+        || normalizedMode == QStringLiteral("prefer_protected")
+        || normalizedMode == QStringLiteral("require_protected");
+    const bool policyShapeValid = normalizedMode == QStringLiteral("off")
+        ? normalizedPolicyId.isEmpty() && !allowFallback
+        : !normalizedPolicyId.isEmpty()
+              && (normalizedMode == QStringLiteral("prefer_protected") || !allowFallback);
+    if (!scopeValid || !modeValid || !policyShapeValid || expectedRevision < 0) {
+        emit requestFailed(endpoint, QStringLiteral("Live egress policy selection is invalid."));
+        return;
+    }
+    QJsonObject body{
+        {QStringLiteral("scopeType"), normalizedScope},
+        {QStringLiteral("mode"), normalizedMode},
+        {QStringLiteral("allowFallback"), allowFallback},
+        {QStringLiteral("expectedRevision"), expectedRevision}
+    };
+    if (!normalizedScopeId.isEmpty()) {
+        body.insert(QStringLiteral("scopeId"), normalizedScopeId);
+    }
+    if (!normalizedPolicyId.isEmpty()) {
+        body.insert(QStringLiteral("policyId"), normalizedPolicyId);
+    }
+    setLiveEgressLoading(true);
+    sendRequest(
+        "PUT",
+        endpoint,
+        body,
+        [this](const QJsonDocument &doc) {
+            setLiveEgressLoading(false);
+            if (!doc.isObject() || !doc.object().value(QStringLiteral("data")).isObject()) {
+                emit requestFailed(
+                    QStringLiteral("/api/v1/live/admin/egress"),
+                    QStringLiteral("Live egress policy response was invalid."));
+                return;
+            }
+            fetchLiveEgressStatus();
+        },
+        [this](const QString &) {
+            setLiveEgressLoading(false);
+        });
+}
+
 void ApiClient::applyNetworkProtectionListenPortSync() {
     setNetworkProtectionLoading(true);
     sendRequest(
@@ -2785,6 +3189,23 @@ void ApiClient::setNetworkProtectionLoading(bool loading) {
     }
     m_networkProtectionLoading = loading;
     emit networkProtectionLoadingChanged();
+}
+
+void ApiClient::setLiveEgressLoading(bool loading) {
+    if (m_liveEgressLoading == loading) {
+        return;
+    }
+    m_liveEgressLoading = loading;
+    emit liveEgressLoadingChanged();
+}
+
+void ApiClient::updateLiveEgressStatus(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_liveEgressStatus == value) {
+        return;
+    }
+    m_liveEgressStatus = value;
+    emit liveEgressChanged();
 }
 
 void ApiClient::updateNetworkProtectionStatus(const QJsonObject &obj) {
@@ -4497,10 +4918,20 @@ QString ApiClient::normalizeBaseUrl(const QString &value) const {
     if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
         trimmed.prepend("http://");
     }
-    while (trimmed.endsWith('/')) {
-        trimmed.chop(1);
+    QUrl url(trimmed);
+    const QString scheme = url.scheme().toLower();
+    if (!url.isValid()
+        || (scheme != "http" && scheme != "https")
+        || url.host().isEmpty()) {
+        return QString();
     }
-    return trimmed;
+    url.setScheme(scheme);
+    url.setHost(url.host().toLower());
+    url.setUserInfo(QString());
+    url.setPath(QString());
+    url.setQuery(QString());
+    url.setFragment(QString());
+    return url.toString(QUrl::FullyEncoded);
 }
 
 QUrl ApiClient::makeUrl(const QString &path) const {
@@ -4516,72 +4947,123 @@ void ApiClient::sendRequest(
     const SuccessHandler &onSuccess,
     const ErrorHandler &onError,
     bool allowNonJson) {
-    if (m_baseUrl.trimmed().isEmpty()) {
-        const QString msg = "Base URL is not set.";
-        QVariantMap error;
-        error.insert("endpoint", path);
-        error.insert("message", msg);
-        if (onError) {
-            onError(msg);
-        }
-        if (path == "/api/v1/play") {
-            emit playbackFailed(error);
-        }
-        emit requestFailedDetailed(path, error);
-        emit requestFailed(path, msg);
+    PendingRequest request;
+    request.method = method;
+    request.path = path;
+    request.body = body;
+    request.onSuccess = onSuccess;
+    request.onError = onError;
+    request.allowNonJson = allowNonJson;
+    request.attachAuthorization = !isPublicAuthPath(path);
+    request.generation = m_requestGeneration;
+
+    const bool isProfileSelection = path.startsWith("/api/v1/profiles/")
+        && path.endsWith("/select");
+    if ((m_profileSwitchInFlight && !isProfileSelection)
+        || (m_logoutInFlight && path != "/api/v1/auth/logout")) {
+        const QString message = m_logoutInFlight
+            ? QStringLiteral("Sign-out is in progress.")
+            : QStringLiteral("Profile selection is in progress.");
+        const QVariantMap error{
+            {"endpoint", path},
+            {"code", "auth_context_transition"},
+            {"message", message},
+        };
+        emitRequestError(request, error, message);
         return;
     }
 
-    const QStringList bodyKeys = body.keys();
-    qInfo() << "API request" << method << path << "base" << m_baseUrl
+    if (m_baseUrl.trimmed().isEmpty()) {
+        const QString msg = "Base URL is not set.";
+        QVariantMap error{{"endpoint", path}, {"code", "base_url_missing"}, {"message", msg}};
+        emitRequestError(request, error, msg);
+        return;
+    }
+
+    if (request.attachAuthorization
+        && canRefreshRequest(path)
+        && hasRefreshToken()
+        && accessTokenNearExpiry()) {
+        queueForRefresh(std::move(request));
+        return;
+    }
+    dispatchRequest(std::move(request));
+}
+
+void ApiClient::dispatchRequest(PendingRequest request) {
+    if (request.generation != m_requestGeneration) {
+        return;
+    }
+
+    const QStringList bodyKeys = request.body.keys();
+    qInfo() << "API request" << request.method << request.path << "base" << m_baseUrl
             << "keys" << bodyKeys;
 
-    QNetworkRequest request(makeUrl(path));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    QNetworkRequest networkRequest(makeUrl(request.path));
+    networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    networkRequest.setAttribute(
+        QNetworkRequest::RedirectPolicyAttribute,
+        QNetworkRequest::ManualRedirectPolicy);
     const QString locale = QLocale::system().name().replace('_', '-');
     if (!locale.trimmed().isEmpty()) {
-        request.setRawHeader("Accept-Language", locale.toUtf8());
+        networkRequest.setRawHeader("Accept-Language", locale.toUtf8());
     }
-    if (!m_authToken.isEmpty()) {
-        request.setRawHeader("Authorization", QByteArray("Bearer ") + m_authToken.toUtf8());
+    if (request.attachAuthorization && !m_authToken.isEmpty()) {
+        networkRequest.setRawHeader("Authorization", QByteArray("Bearer ") + m_authToken.toUtf8());
     }
 
     QNetworkReply *reply = nullptr;
-    if (method == "GET") {
-        reply = m_manager.get(request);
-    } else if (method == "POST") {
-        reply = m_manager.post(request, QJsonDocument(body).toJson());
+    if (request.method == "GET") {
+        reply = m_manager.get(networkRequest);
+    } else if (request.method == "POST") {
+        reply = m_manager.post(networkRequest, QJsonDocument(request.body).toJson());
     } else {
-        reply = m_manager.sendCustomRequest(request, method.toUtf8(), QJsonDocument(body).toJson());
+        reply = m_manager.sendCustomRequest(
+            networkRequest,
+            request.method.toUtf8(),
+            QJsonDocument(request.body).toJson());
     }
+    m_activeReplies.insert(reply);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, path, onSuccess, onError, allowNonJson]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, request = std::move(request)]() mutable {
+        m_activeReplies.remove(reply);
+        if (request.generation != m_requestGeneration) {
+            reply->deleteLater();
+            return;
+        }
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray payload = reply->readAll();
         const bool okStatus = status >= 200 && status < 300;
-        qInfo() << "API response" << path << "status" << status
+        qInfo() << "API response" << request.path << "status" << status
                 << "bytes" << payload.size() << "error" << reply->error();
 
         if (reply->error() != QNetworkReply::NoError || !okStatus) {
             const QVariantMap errorDetail =
-                parseApiErrorPayload(payload, reply->errorString(), status, path);
+                parseApiErrorPayload(payload, reply->errorString(), status, request.path);
             const QString detail = errorDetail.value("message").toString();
-            if (status == 401 && !path.startsWith("/api/v1/auth/")) {
-                expireAuth(detail.isEmpty() ? "Authentication expired." : detail);
+            if (status == 401
+                && request.attachAuthorization
+                && canRefreshRequest(request.path)
+                && request.retryCount == 0
+                && hasRefreshToken()) {
+                ++request.retryCount;
+                reply->deleteLater();
+                queueForRefresh(std::move(request));
+                return;
             }
-            if (onError) {
-                onError(detail);
+            if (status == 401 && request.attachAuthorization && !m_refreshInFlight) {
+                clearAuthenticationState(true);
+                emit authExpired(
+                    detail.isEmpty()
+                        ? QStringLiteral("This device was signed out.")
+                        : detail);
             }
-            if (path == "/api/v1/play") {
-                emit playbackFailed(errorDetail);
-            }
-            emit requestFailedDetailed(path, errorDetail);
-            emit requestFailed(path, detail);
+            emitRequestError(request, errorDetail, detail);
             reply->deleteLater();
             return;
         }
 
-        if (!onSuccess) {
+        if (!request.onSuccess) {
             reply->deleteLater();
             return;
         }
@@ -4589,29 +5071,327 @@ void ApiClient::sendRequest(
         QJsonParseError parseError;
         const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
         if (parseError.error != QJsonParseError::NoError) {
-            if (allowNonJson) {
-                qInfo() << "API response (non-JSON)" << path << "bytes" << payload.size();
-                onSuccess(QJsonDocument());
+            if (request.allowNonJson) {
+                qInfo() << "API response (non-JSON)" << request.path << "bytes" << payload.size();
+                request.onSuccess(QJsonDocument());
                 reply->deleteLater();
                 return;
             }
             const QString detail = QString("Invalid JSON: %1").arg(parseError.errorString());
-            QVariantMap errorDetail;
-            errorDetail.insert("endpoint", path);
-            errorDetail.insert("message", detail);
-            if (onError) {
-                onError(detail);
-            }
-            if (path == "/api/v1/play") {
-                emit playbackFailed(errorDetail);
-            }
-            emit requestFailedDetailed(path, errorDetail);
-            emit requestFailed(path, detail);
+            const QVariantMap errorDetail{
+                {"endpoint", request.path},
+                {"code", "invalid_json"},
+                {"message", detail},
+            };
+            emitRequestError(request, errorDetail, detail);
             reply->deleteLater();
             return;
         }
 
-        onSuccess(doc);
+        request.onSuccess(doc);
         reply->deleteLater();
     });
+}
+
+void ApiClient::queueForRefresh(PendingRequest request) {
+    if (request.generation != m_requestGeneration) {
+        return;
+    }
+    if (m_pendingRequests.size() >= kMaxPendingAuthRequests) {
+        const QString message = QStringLiteral("Too many requests are waiting for authentication.");
+        const QVariantMap error{
+            {"endpoint", request.path},
+            {"code", "auth_queue_full"},
+            {"message", message},
+        };
+        emitRequestError(request, error, message);
+        return;
+    }
+    m_pendingRequests.push_back(std::move(request));
+    beginRefresh(false);
+}
+
+void ApiClient::beginRefresh(bool restoring) {
+    if (m_refreshInFlight) {
+        m_refreshRestoring = m_refreshRestoring || restoring;
+        return;
+    }
+    if (!hasRefreshToken()) {
+        finishRefreshFailure(QStringLiteral("No remembered session is available."), restoring);
+        return;
+    }
+
+    m_refreshInFlight = true;
+    m_refreshRestoring = restoring;
+    emit refreshInFlightChanged();
+    QJsonObject body{{"refresh_token", m_refreshToken}};
+    addClientSessionContext(body, false);
+    PendingRequest request;
+    request.method = "POST";
+    request.path = "/api/v1/auth/refresh";
+    request.body = body;
+    request.attachAuthorization = false;
+    request.retryCount = 1;
+    request.generation = m_requestGeneration;
+    request.onSuccess = [this](const QJsonDocument &doc) {
+        if (!doc.isObject()) {
+            finishRefreshFailure(QStringLiteral("Unexpected refresh response."), m_refreshRestoring);
+            return;
+        }
+        finishRefreshSuccess(doc.object(), m_refreshRestoring);
+    };
+    request.onError = [this](const QString &error) {
+        finishRefreshFailure(error, m_refreshRestoring);
+    };
+    dispatchRequest(std::move(request));
+}
+
+void ApiClient::finishRefreshSuccess(const QJsonObject &response, bool restoring) {
+    QString error;
+    if (!applyTokenResponse(response, &error)) {
+        finishRefreshFailure(error, restoring);
+        return;
+    }
+
+    PendingRequest sessionRequest;
+    sessionRequest.method = "GET";
+    sessionRequest.path = "/api/v1/auth/session";
+    sessionRequest.attachAuthorization = true;
+    sessionRequest.retryCount = 1;
+    sessionRequest.generation = m_requestGeneration;
+    sessionRequest.onSuccess = [this, restoring](const QJsonDocument &doc) {
+        QString sessionError;
+        if (!doc.isObject() || !applySessionResponse(doc.object(), &sessionError)) {
+            finishRefreshFailure(
+                sessionError.isEmpty()
+                    ? QStringLiteral("Unexpected account-session response.")
+                    : sessionError,
+                restoring);
+            return;
+        }
+        m_refreshInFlight = false;
+        m_refreshRestoring = false;
+        emit refreshInFlightChanged();
+        if (restoring) {
+            emit sessionRestored();
+        }
+        replayPendingRequests();
+    };
+    sessionRequest.onError = [this, restoring](const QString &sessionError) {
+        finishRefreshFailure(sessionError, restoring);
+    };
+    dispatchRequest(std::move(sessionRequest));
+}
+
+void ApiClient::finishRefreshFailure(const QString &error, bool restoring) {
+    const QString detail = error.trimmed().isEmpty()
+        ? QStringLiteral("This device was signed out.")
+        : error.trimmed();
+    const bool wasInFlight = m_refreshInFlight;
+    m_refreshInFlight = false;
+    m_refreshRestoring = false;
+    if (wasInFlight) {
+        emit refreshInFlightChanged();
+    }
+    clearAuthenticationState(true);
+    failPendingRequests(detail);
+    if (restoring) {
+        emit sessionRestoreFailed(detail);
+    }
+    emit authExpired(detail);
+}
+
+void ApiClient::replayPendingRequests() {
+    QList<PendingRequest> pending = std::move(m_pendingRequests);
+    m_pendingRequests.clear();
+    for (PendingRequest &request : pending) {
+        if (request.generation != m_requestGeneration) {
+            continue;
+        }
+        dispatchRequest(std::move(request));
+    }
+}
+
+void ApiClient::failPendingRequests(const QString &error) {
+    QList<PendingRequest> pending = std::move(m_pendingRequests);
+    m_pendingRequests.clear();
+    for (const PendingRequest &request : pending) {
+        const QVariantMap detail{
+            {"endpoint", request.path},
+            {"code", "auth_refresh_failed"},
+            {"message", error},
+        };
+        emitRequestError(request, detail, error);
+    }
+}
+
+void ApiClient::cancelOutstandingRequests(const QString &reason) {
+    ++m_requestGeneration;
+    const bool wasRefreshing = m_refreshInFlight;
+    m_refreshInFlight = false;
+    m_refreshRestoring = false;
+    m_profileSwitchInFlight = false;
+    m_logoutInFlight = false;
+    if (wasRefreshing) {
+        emit refreshInFlightChanged();
+    }
+    const QSet<QNetworkReply *> replies = m_activeReplies;
+    m_activeReplies.clear();
+    for (QNetworkReply *reply : replies) {
+        if (reply) {
+            reply->abort();
+        }
+    }
+    failPendingRequests(reason);
+}
+
+void ApiClient::clearAuthenticationState(bool clearRefreshToken) {
+    m_profileSwitchInFlight = false;
+    m_logoutInFlight = false;
+    setAuthToken(QString());
+    setAccessTokenExpiresAt(QString());
+    if (clearRefreshToken) {
+        setRefreshToken(QString());
+    }
+    setSessionState(QVariantMap());
+    if (!m_profiles.isEmpty()) {
+        m_profiles.clear();
+        emit profilesChanged();
+    }
+}
+
+bool ApiClient::applyTokenResponse(const QJsonObject &response, QString *error) {
+    const QString accessToken = response.value("access_token").toString();
+    const QString refreshToken = response.value("refresh_token").toString();
+    const QString accessExpiresAt = response.value("access_expires_at").toString();
+    const QString refreshExpiresAt = response.value("refresh_expires_at").toString();
+    const QString sessionId = response.value("session_id").toString();
+    const QString homeId = response.value("home_id").toString();
+    const QString profileId = response.value("profile_id").toString();
+    const QString role = response.value("role").toString();
+    const QJsonObject profile = response.value("profile").toObject();
+    const QDateTime expiry = QDateTime::fromString(accessExpiresAt, Qt::ISODate);
+    const QDateTime refreshExpiry = QDateTime::fromString(refreshExpiresAt, Qt::ISODate);
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    if (!isSafeToken(accessToken)
+        || !isSafeToken(refreshToken)
+        || !expiry.isValid()
+        || !refreshExpiry.isValid()
+        || expiry <= now
+        || refreshExpiry <= now
+        || sessionId.isEmpty()
+        || homeId.isEmpty()
+        || profileId.isEmpty()
+        || role.isEmpty()
+        || profile.value("id").toString() != profileId
+        || profile.value("display_name").toString().trimmed().isEmpty()
+        || profile.value("profile_type").toString().isEmpty()) {
+        if (error) {
+            *error = QStringLiteral("Invalid authentication response.");
+        }
+        return false;
+    }
+
+    QVariantMap state = sessionState();
+    if (state.value("active_profile_id").toString() != profileId) {
+        state.insert("capabilities", QStringList());
+        state.insert("capability_revision", 0);
+    }
+    state.insert("session_id", sessionId);
+    state.insert("home_id", homeId);
+    state.insert("active_profile_id", profileId);
+    state.insert("active_profile_name", profile.value("display_name").toString());
+    state.insert("active_profile_type", profile.value("profile_type").toString());
+    state.insert("role", role);
+    setAuthToken(accessToken);
+    setAccessTokenExpiresAt(accessExpiresAt);
+    setRefreshToken(refreshToken);
+    setSessionState(state);
+    if (error) {
+        error->clear();
+    }
+    return true;
+}
+
+bool ApiClient::applySessionResponse(const QJsonObject &response, QString *error) {
+    const QString sessionId = response.value("session_id").toString();
+    const QString homeId = response.value("home_id").toString();
+    const QString profileId = response.value("active_profile_id").toString();
+    const QString role = response.value("role").toString();
+    const QString accessExpiresAt = response.value("access_expires_at").toString();
+    const QJsonObject profile = response.value("profile").toObject();
+    const QJsonArray capabilitiesJson = response.value("capabilities").toArray();
+    const qint64 revision = response.value("capability_revision").toVariant().toLongLong();
+    const QDateTime expiry = QDateTime::fromString(accessExpiresAt, Qt::ISODate);
+    if (sessionId.isEmpty()
+        || homeId.isEmpty()
+        || profileId.isEmpty()
+        || role.isEmpty()
+        || !expiry.isValid()
+        || expiry <= QDateTime::currentDateTimeUtc()
+        || profile.value("id").toString() != profileId
+        || profile.value("display_name").toString().trimmed().isEmpty()
+        || profile.value("profile_type").toString().isEmpty()
+        || revision <= 0
+        || (!m_sessionId.isEmpty() && m_sessionId != sessionId)
+        || (!m_homeId.isEmpty() && m_homeId != homeId)) {
+        if (error) {
+            *error = QStringLiteral("Invalid account-session response.");
+        }
+        return false;
+    }
+    QStringList capabilities;
+    QSet<QString> uniqueCapabilities;
+    for (const QJsonValue &value : capabilitiesJson) {
+        const QString capability = value.toString().trimmed();
+        if (capability.isEmpty() || uniqueCapabilities.contains(capability)) {
+            if (error) {
+                *error = QStringLiteral("Invalid account-session capabilities.");
+            }
+            return false;
+        }
+        uniqueCapabilities.insert(capability);
+        capabilities.push_back(capability);
+    }
+    QVariantMap state{
+        {"session_id", sessionId},
+        {"home_id", homeId},
+        {"active_profile_id", profileId},
+        {"active_profile_name", profile.value("display_name").toString()},
+        {"active_profile_type", profile.value("profile_type").toString()},
+        {"role", role},
+        {"capabilities", capabilities},
+        {"capability_revision", revision},
+    };
+    setAccessTokenExpiresAt(accessExpiresAt);
+    setSessionState(state);
+    if (error) {
+        error->clear();
+    }
+    return true;
+}
+
+bool ApiClient::isPublicAuthPath(const QString &path) {
+    return path == "/api/v1/auth/login"
+        || path == "/api/v1/auth/signup"
+        || path == "/api/v1/auth/refresh"
+        || path.startsWith("/api/v1/auth/reset/");
+}
+
+bool ApiClient::canRefreshRequest(const QString &path) {
+    return !isPublicAuthPath(path);
+}
+
+void ApiClient::emitRequestError(
+    const PendingRequest &request,
+    const QVariantMap &errorDetail,
+    const QString &message) {
+    if (request.onError) {
+        request.onError(message);
+    }
+    if (request.path == "/api/v1/play") {
+        emit playbackFailed(errorDetail);
+    }
+    emit requestFailedDetailed(request.path, errorDetail);
+    emit requestFailed(request.path, message);
 }
