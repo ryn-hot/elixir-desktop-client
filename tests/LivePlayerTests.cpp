@@ -614,9 +614,8 @@ void LivePlayerTests::relayTokenIsHeaderScopedAndClearedBetweenLoads() {
   QCOMPARE(target.token,
            QByteArrayLiteral("elx-live-token-v1.test-secret-value"));
   QCOMPARE(target.url,
-           QUrl(QStringLiteral("https://server.example:8443/api/v1/live/") +
-                QStringLiteral("stream/") + kSessionId +
-                QStringLiteral("/master.m3u8")));
+           QUrl(QStringLiteral("https://server.example:8443/api/v1/live/sessions/") +
+                kSessionId + QStringLiteral("/delivery/hls/manifest.m3u8")));
   QVERIFY(!target.url.hasQuery());
 
   controller.stop();
