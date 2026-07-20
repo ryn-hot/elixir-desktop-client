@@ -45,6 +45,7 @@ ApplicationWindow {
             stackView.push(Qt.resolvedUrl("views/LiveView.qml"), {
                 stackView: stackView,
                 liveModel: liveCatalogModel,
+                client: apiClient,
                 playerController: livePlayerController,
                 serverBaseUrl: apiClient.baseUrl
             })
@@ -179,12 +180,21 @@ ApplicationWindow {
             }
             onExtensionsRequested: {
                 if (!stackView.currentItem) {
-                    stackView.push(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), { stackView: stackView })
+                    stackView.push(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), {
+                        stackView: stackView,
+                        openLiveRequested: root.openLive
+                    })
                 } else if (stackView.currentItem.objectName === "advancedExtensionsView" ||
                            stackView.currentItem.objectName === "extensionControlView") {
-                    stackView.replace(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), { stackView: stackView })
+                    stackView.replace(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), {
+                        stackView: stackView,
+                        openLiveRequested: root.openLive
+                    })
                 } else if (stackView.currentItem.objectName !== "extensionsView") {
-                    stackView.push(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), { stackView: stackView })
+                    stackView.push(Qt.resolvedUrl("views/ExtensionsRouteView.qml"), {
+                        stackView: stackView,
+                        openLiveRequested: root.openLive
+                    })
                 }
             }
             onFindMediaRequested: {

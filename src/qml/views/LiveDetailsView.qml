@@ -60,6 +60,7 @@ Item {
         if (stackView) {
             stackView.push(Qt.resolvedUrl("LivePlayerView.qml"), {
                 stackView: stackView,
+                liveModel: liveModel,
                 playerController: playerController,
                 providerId: providerId,
                 itemKey: itemKey,
@@ -400,6 +401,17 @@ Item {
                                 }
                             }
                         }
+                    }
+
+                    EmptyState {
+                        objectName: "liveDetailsNoStreams"
+                        Layout.fillWidth: true
+                        title: "No streams available"
+                        message: "No streams are available for this event right now."
+                        actionText: "Refresh"
+                        visible: Boolean(root.item.title)
+                                 && (root.liveModel.selectedStreams || []).length === 0
+                        onActionRequested: root.liveModel.loadItem(root.providerId, root.itemKey)
                     }
 
                     Item { Layout.preferredHeight: Theme.space8; Layout.preferredWidth: 1 }

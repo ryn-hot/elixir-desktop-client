@@ -11,6 +11,7 @@ Item {
     property string marketplaceTargetCapabilityFilter: ""
     property string marketplaceFilterLabel: ""
     property bool focusMarketplace: false
+    property var openLiveRequested: null
 
     Loader {
         id: extensionsLoader
@@ -35,6 +36,9 @@ Item {
             }
             if (item.focusMarketplace !== undefined) {
                 item.focusMarketplace = root.focusMarketplace
+            }
+            if (item.openLiveRequested !== undefined) {
+                item.openLiveRequested = root.openLiveRequested
             }
         }
     }

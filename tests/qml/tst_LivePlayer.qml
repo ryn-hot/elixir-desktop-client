@@ -25,7 +25,6 @@ TestCase {
         property string state: "idle"
         property bool seekable: false
         property bool recovering: false
-        property bool egressFallbackPending: false
         property int reconnectAttempt: 0
         property int reconnectSecondsRemaining: 0
         property int windowSeconds: 0
@@ -38,6 +37,9 @@ TestCase {
         property string selectedSourceKey: "lvk1.source.primaryfixture"
         property string selectedSourceLabel: "Primary"
         property string selectedSourceQuality: "1080p"
+        property string errorCode: ""
+        property string failureMessage: ""
+        property bool failureRetryable: false
         property string statusText: "Live"
         property int attachCalls: 0
         property int startCalls: 0
@@ -46,7 +48,6 @@ TestCase {
         property int observeCalls: 0
         property int cancelRecoveryCalls: 0
         property int retryRecoveryCalls: 0
-        property int confirmEgressFallbackCalls: 0
         property int selectTrackCalls: 0
         property int switchSourceCalls: 0
         property var attachedTarget: null
@@ -69,7 +70,6 @@ TestCase {
         function routeExited() { routeExitedCalls += 1 }
         function cancelRecovery() { cancelRecoveryCalls += 1 }
         function retryRecoveryNow() { retryRecoveryCalls += 1 }
-        function confirmEgressFallback() { confirmEgressFallbackCalls += 1 }
         function selectTrack(type, trackId) {
             selectTrackCalls += 1
             lastTrackSelection = {"type": type, "trackId": trackId}
@@ -111,7 +111,8 @@ TestCase {
             "label": "Primary", "quality": "1080p", "language": "en",
             "protocolHint": "hls"
         }]
-        function loadItem(provider, item) {}
+        property int loadItemCalls: 0
+        function loadItem(provider, item) { loadItemCalls += 1 }
         function cancelItemRequest() {}
     }
 
@@ -156,7 +157,6 @@ TestCase {
         controller.state = "idle"
         controller.seekable = false
         controller.recovering = false
-        controller.egressFallbackPending = false
         controller.reconnectAttempt = 0
         controller.reconnectSecondsRemaining = 0
         controller.windowSeconds = 0
@@ -167,6 +167,9 @@ TestCase {
         controller.preferredAudioTrack = ({})
         controller.preferredSubtitleTrack = ({})
         controller.selectedSourceKey = "lvk1.source.primaryfixture"
+        controller.errorCode = ""
+        controller.failureMessage = ""
+        controller.failureRetryable = false
         controller.attachCalls = 0
         controller.startCalls = 0
         controller.stopCalls = 0
@@ -174,7 +177,6 @@ TestCase {
         controller.observeCalls = 0
         controller.cancelRecoveryCalls = 0
         controller.retryRecoveryCalls = 0
-        controller.confirmEgressFallbackCalls = 0
         controller.selectTrackCalls = 0
         controller.switchSourceCalls = 0
         controller.attachedTarget = null
@@ -182,6 +184,7 @@ TestCase {
         controller.lastObservation = ({})
         controller.lastTrackSelection = ({})
         controller.lastSourceKey = ""
+        liveModel.loadItemCalls = 0
         streamSpy.target = null
         streamSpy.clear()
     }
@@ -198,6 +201,7 @@ TestCase {
             "streamOptionKey": streamKey,
             "eventTitle": "Championship Final",
             "expectedEndUtc": new Date("2026-07-12T23:00:00Z"),
+            "liveModel": liveModel,
             "playbackSurfaceComponent": fakeSurfaceComponent
         })
     }
@@ -331,6 +335,44 @@ TestCase {
         wait(0)
     }
 
+    function test_terminal_failure_uses_server_message_and_action() {
+        controller.state = "failed"
+        controller.errorCode = "LIVE_STREAM_UNAVAILABLE"
+        controller.failureMessage = "The requested Live source is not currently eligible."
+        controller.failureRetryable = false
+        var view = createPlayer(800, 600)
+        verify(view)
+        tryCompare(controller, "startCalls", 1)
+
+        var message = findChild(view, "livePlayerFailureMessage")
+        var retry = findChild(view, "livePlayerRetry")
+        var reload = findChild(view, "livePlayerReloadEvent")
+        compare(message.visible, true)
+        compare(message.text, controller.failureMessage)
+        compare(retry.visible, false)
+        compare(reload.visible, true)
+
+        mouseClick(reload)
+        compare(liveModel.loadItemCalls, 1)
+        compare(controller.routeExitedCalls, 1)
+        view.destroy()
+        wait(0)
+
+        controller.state = "failed"
+        controller.errorCode = "LIVE_PROVIDER_UNAVAILABLE"
+        controller.failureMessage = "The Live provider is unavailable."
+        controller.failureRetryable = true
+        var retryableView = createPlayer(800, 600)
+        verify(retryableView)
+        tryCompare(controller, "startCalls", 2)
+        retry = findChild(retryableView, "livePlayerRetry")
+        reload = findChild(retryableView, "livePlayerReloadEvent")
+        compare(retry.visible, true)
+        compare(reload.visible, false)
+        mouseClick(retry)
+        compare(controller.startCalls, 3)
+    }
+
     function test_stream_option_is_a_play_command() {
         var details = createTemporaryObject(detailsComponent, host, {
             "width": 900,
@@ -403,27 +445,4 @@ TestCase {
         compare(controller.cancelRecoveryCalls, 1)
     }
 
-    function test_egress_fallback_is_disclosed_before_playback() {
-        controller.state = "awaiting_egress_fallback"
-        controller.egressFallbackPending = true
-        var view = createPlayer(360, 640)
-        verify(view)
-        tryCompare(controller, "startCalls", 1)
-
-        var message = findChild(view, "liveEgressFallbackMessage")
-        var continueButton = findChild(view, "liveEgressFallbackContinue")
-        var cancelButton = findChild(view, "liveEgressFallbackCancel")
-        compare(message.visible, true)
-        verify(message.text.indexOf("regular network connection") >= 0)
-        compare(continueButton.visible, true)
-        compare(cancelButton.visible, true)
-        verify(cancelButton.x + cancelButton.width <= view.width + 1)
-
-        mouseClick(continueButton)
-        compare(controller.confirmEgressFallbackCalls, 1)
-        mouseClick(cancelButton)
-        compare(controller.stopCalls, 1)
-        view.destroy()
-        wait(0)
-    }
 }

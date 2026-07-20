@@ -63,6 +63,7 @@ Item {
         if (editMode !== "prefer_protected") {
             editAllowFallback = false
         }
+        scopeCombo.currentIndex = scopeType === "profile" ? 1 : 0
         modeCombo.currentIndex = modeIndex(editMode)
         profileCombo.currentIndex = profileIndex(editPolicyId)
     }

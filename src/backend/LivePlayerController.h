@@ -21,8 +21,6 @@ class LivePlayerController final : public QObject {
   Q_PROPERTY(QString playbackUrl READ playbackUrl NOTIFY sessionChanged)
   Q_PROPERTY(QString deliveryMode READ deliveryMode NOTIFY sessionChanged)
   Q_PROPERTY(QString egressMode READ egressMode NOTIFY egressChanged)
-  Q_PROPERTY(bool egressFallbackPending READ egressFallbackPending NOTIFY
-                 egressChanged)
   Q_PROPERTY(bool seekable READ seekable NOTIFY liveWindowChanged)
   Q_PROPERTY(int windowSeconds READ windowSeconds NOTIFY liveWindowChanged)
   Q_PROPERTY(double distanceFromLiveEdge READ distanceFromLiveEdge NOTIFY
@@ -49,6 +47,8 @@ class LivePlayerController final : public QObject {
   Q_PROPERTY(
       QVariantList subtitleTracks READ subtitleTracks NOTIFY observationChanged)
   Q_PROPERTY(QString errorCode READ errorCode NOTIFY errorChanged)
+  Q_PROPERTY(QString failureMessage READ failureMessage NOTIFY errorChanged)
+  Q_PROPERTY(bool failureRetryable READ failureRetryable NOTIFY errorChanged)
   Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
 
 public:
@@ -63,7 +63,6 @@ public:
   [[nodiscard]] QString playbackUrl() const;
   [[nodiscard]] QString deliveryMode() const;
   [[nodiscard]] QString egressMode() const;
-  [[nodiscard]] bool egressFallbackPending() const;
   [[nodiscard]] bool seekable() const;
   [[nodiscard]] int windowSeconds() const;
   [[nodiscard]] double distanceFromLiveEdge() const;
@@ -80,6 +79,8 @@ public:
   [[nodiscard]] QVariantList audioTracks() const;
   [[nodiscard]] QVariantList subtitleTracks() const;
   [[nodiscard]] QString errorCode() const;
+  [[nodiscard]] QString failureMessage() const;
+  [[nodiscard]] bool failureRetryable() const;
   [[nodiscard]] QString statusText() const;
 
   Q_INVOKABLE bool attachPlayer(QObject *player);
@@ -97,7 +98,6 @@ public:
   Q_INVOKABLE double seekDeltaForWindowPosition(double seconds) const;
   Q_INVOKABLE void cancelRecovery();
   Q_INVOKABLE void retryRecoveryNow();
-  Q_INVOKABLE void confirmEgressFallback();
 
   [[nodiscard]] static int reconnectDelayMs(const QString &sessionId,
                                             int zeroBasedAttempt);
@@ -135,7 +135,9 @@ private:
                        const QString &requestedSourceKey = {});
   void resyncThen(ReconcileAction action, const QString &reason);
   void replayCreateForRecovery();
-  void finishRecoveryFailure(const QString &code, bool terminalFailure);
+  void finishRecoveryFailure(const QString &code, bool terminalFailure,
+                             const QString &message = {},
+                             bool retryable = false);
   void scheduleExpiryRefresh();
   void cancelRecoveryWork();
   void resetStableRecoveryState();
@@ -143,7 +145,9 @@ private:
   void closeSession(bool terminalState);
   void clearPlaybackSecrets();
   void setState(const QString &state);
-  void fail(const QString &code);
+  void fail(const QString &code, const QString &message = {},
+            bool retryable = false);
+  void setFailure(const QString &code, const QString &message, bool retryable);
   [[nodiscard]] QVariantMap capabilities() const;
   [[nodiscard]] QUrl
   validatedPlaybackUrl(const Live::SessionCreated &session) const;
@@ -183,7 +187,6 @@ private:
   QString m_playbackUrl;
   QString m_deliveryMode;
   QString m_egressMode;
-  bool m_egressFallbackPending{false};
   QByteArray m_sessionToken;
   QString m_sourceKey;
   QString m_sourceLabel;
@@ -206,6 +209,8 @@ private:
   QVariantList m_audioTracks;
   QVariantList m_subtitleTracks;
   QString m_errorCode;
+  QString m_failureMessage;
+  bool m_failureRetryable{false};
   QString m_title;
   QDateTime m_expectedEndUtc;
   QString m_serverScope;

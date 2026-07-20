@@ -10,6 +10,7 @@ Item {
     objectName: "liveView"
     required property var liveModel
     property var itemsModel: liveModel
+    property var client: null
     property StackView stackView: null
     property string serverBaseUrl: ""
     property var playerController: null
@@ -38,6 +39,12 @@ Item {
     }
     readonly property int gridColumns: Math.max(1, Math.floor((contentWidth + Theme.space16) / 292))
     readonly property real contentWidth: Math.max(0, width - pageMargin * 2)
+    readonly property bool canManageLiveEgress: client
+                                                    && client.homeRole === "owner"
+                                                    && client.capabilities
+                                                    && client.capabilities.indexOf("live_manage") >= 0
+                                                    && client.capabilities.indexOf("settings_manage") >= 0
+    readonly property var liveEgressStatus: client ? client.liveEgressStatus || ({}) : ({})
 
     Rectangle {
         anchors.fill: parent
@@ -67,6 +74,47 @@ Item {
                 return String(providers[i].name || "Live provider")
         }
         return "Live provider"
+    }
+
+    function egressModeStrength(mode) {
+        if (mode === "require_protected") return 2
+        if (mode === "prefer_protected") return 1
+        return 0
+    }
+
+    function selectedEgressMode() {
+        var selected = liveEgressStatus.defaultPolicy || ({ mode: "off" })
+        var selectedRank = 0
+        var assignments = liveEgressStatus.assignments || []
+        for (var i = 0; i < assignments.length; ++i) {
+            var assignment = assignments[i]
+            var rank = -1
+            if (String(assignment.scopeType || "") === "server_default") {
+                rank = 1
+            } else if (String(assignment.scopeType || "") === "profile"
+                       && String(assignment.scopeKey || "")
+                              === String(client ? client.activeProfileId || "" : "")) {
+                rank = 2
+            }
+            if (rank < 0) continue
+            var strength = egressModeStrength(String(assignment.mode || "off"))
+            var selectedStrength = egressModeStrength(String(selected.mode || "off"))
+            if (strength > selectedStrength || (strength === selectedStrength && rank >= selectedRank)) {
+                selected = assignment
+                selectedRank = rank
+            }
+        }
+        return String(selected.mode || "off")
+    }
+
+    function egressButtonText() {
+        if (client && client.liveEgressLoading && liveEgressStatus.enabled === undefined)
+            return "VPN: Loading"
+        if (liveEgressStatus.enabled === false) return "VPN: Unavailable"
+        var mode = selectedEgressMode()
+        if (mode === "require_protected") return "VPN: Required"
+        if (mode === "prefer_protected") return "VPN: Preferred"
+        return "VPN: Off"
     }
 
     function noticeText() {
@@ -113,6 +161,7 @@ Item {
 
     Component.onCompleted: {
         initialized = true
+        if (canManageLiveEgress) client.fetchLiveEgressStatus()
         if ((liveModel.providers || []).length === 0 && !liveModel.catalogIndexLoading) {
             liveModel.refreshIndex()
         } else {
@@ -135,7 +184,7 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: Theme.space16
+            spacing: root.width < 700 ? Theme.space8 : Theme.space16
 
             ColumnLayout {
                 Layout.fillWidth: true
@@ -158,6 +207,25 @@ Item {
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
+            }
+
+            ActionButton {
+                id: liveEgressPolicyButton
+                objectName: "liveEgressPolicyButton"
+                text: root.width < 520 ? "VPN" : root.egressButtonText()
+                iconSource: "qrc:/icons/settings.svg"
+                compact: true
+                visible: root.canManageLiveEgress
+                enabled: Boolean(root.client) && !root.client.liveEgressLoading
+                Accessible.name: root.egressButtonText() + ". Configure Live VPN routing"
+                onClicked: {
+                    if (root.liveEgressStatus.enabled === undefined)
+                        root.client.fetchLiveEgressStatus()
+                    liveEgressPolicyPopup.open()
+                }
+
+                ToolTip.visible: hovered
+                ToolTip.text: "Configure Live VPN routing"
             }
 
             ActionButton {
@@ -391,6 +459,44 @@ Item {
                     visible: root.liveModel.hasMore
                     onClicked: root.liveModel.loadMoreItems()
                 }
+            }
+        }
+    }
+
+    Popup {
+        id: liveEgressPolicyPopup
+        objectName: "liveEgressPolicyPopup"
+        parent: root
+        width: Math.min(620, root.width - root.pageMargin * 2)
+        height: Math.min(liveEgressSettings.implicitHeight + Theme.space24,
+                         root.height - Theme.space32)
+        x: Math.max(root.pageMargin, root.width - root.pageMargin - width)
+        y: Math.min(root.height - height - Theme.space16, Theme.space24 + Theme.space56)
+        padding: Theme.space12
+        modal: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: Theme.surfaceRaised
+            border.color: Theme.borderSubtle
+            radius: Theme.radius6
+        }
+
+        contentItem: Flickable {
+            contentWidth: width
+            contentHeight: liveEgressSettings.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {}
+
+            LiveNetworkSettingsView {
+                id: liveEgressSettings
+                objectName: "liveToolbarNetworkSettings"
+                width: parent.width
+                height: implicitHeight
+                client: root.client
+                scopeType: "profile"
             }
         }
     }

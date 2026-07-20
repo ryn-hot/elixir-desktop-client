@@ -235,6 +235,7 @@ if(BUILD_TESTING)
             c22ExpiryThresholdRefreshesBeforeHeartbeatMutation
             c22ExpectedEndAndExhaustionDoNotEnterRetryLoops
             c22RefreshFailureResyncsRevisionBeforeAutomaticFailover
+            c22DeliveryModeEscalationResetsPerRouteRecoveryState
             c22ReconnectPolicyIsBoundedAndCancellationStopsReloads
             c22RouteExitDiscardsDelayedRecoveryReplyAndToken)
     add_test(
@@ -247,17 +248,20 @@ if(BUILD_TESTING)
             LiveBrowse::test_loading_empty_and_unavailable_states
             LiveBrowse::test_partial_stale_and_error_notice_states
             LiveBrowse::test_event_card_keyboard_accessibility_and_long_text
+            LiveBrowse::test_live_vpn_policy_is_available_from_toolbar
             LiveBrowse::test_responsive_card_geometry
             LiveBrowse::test_extension_filter_types_render_native_controls
             LiveBrowse::test_malicious_metadata_is_rendered_as_plain_text
             LiveBrowse::test_theme_meets_normal_text_contrast
-            LiveBrowse::test_details_loading_error_and_long_metadata)
+            LiveBrowse::test_details_loading_error_and_long_metadata
+            Extensions::test_ready_live_provider_can_open_live)
     add_test(
         NAME c21-live-player-qml
         COMMAND elixir-client-qml-tests
             LivePlayer::test_start_observation_and_track_contract
             LivePlayer::test_dvr_controls_and_route_cleanup_are_live_native
             LivePlayer::test_non_seekable_and_terminal_states_have_no_finite_progress
+            LivePlayer::test_terminal_failure_uses_server_message_and_action
             LivePlayer::test_stream_option_is_a_play_command
             LivePlayer::test_compact_controls_stay_inside_view)
     add_test(

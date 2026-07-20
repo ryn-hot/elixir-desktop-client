@@ -195,15 +195,16 @@ QByteArray expiringCreatedResponse() {
   return QJsonDocument(object).toJson(QJsonDocument::Compact);
 }
 
-QByteArray errorResponse(const QString &code, bool retryable = true) {
+QByteArray errorResponse(
+    const QString &code, bool retryable = true,
+    const QString &message = QStringLiteral("Live recovery fixture failure")) {
   return QJsonDocument(
              QJsonObject{{QStringLiteral("data"), QJsonValue::Null},
                          {QStringLiteral("meta"), meta()},
                          {QStringLiteral("errors"),
                           QJsonArray{QJsonObject{
                               {QStringLiteral("code"), code},
-                              {QStringLiteral("message"),
-                               QStringLiteral("Live recovery fixture failure")},
+                              {QStringLiteral("message"), message},
                               {QStringLiteral("retryable"), retryable}}}}})
       .toJson(QJsonDocument::Compact);
 }
@@ -279,7 +280,8 @@ private slots:
   void init();
   void sessionContractsEnforceTokenModeAndUtcBounds();
   void serverPlaybackUrlIsBoundToExactSessionDeliveryRoute();
-  void n11DirectFallbackRequiresExplicitConfirmationBeforeLoad();
+  void sessionFailureRetainsMessageAndRetryability();
+  void n11AuthorizedDirectFallbackLoadsWithoutAnotherPrompt();
   void c30SourcesTrackPreferencesAndDvrBoundsAreStrict();
   void controllerCreatesHeartbeatsObservesAndClearsWithoutLibraryCalls();
   void relayTokenIsHeaderScopedAndClearedBetweenLoads();
@@ -291,6 +293,7 @@ private slots:
   void c22ExpiryThresholdRefreshesBeforeHeartbeatMutation();
   void c22ExpectedEndAndExhaustionDoNotEnterRetryLoops();
   void c22RefreshFailureResyncsRevisionBeforeAutomaticFailover();
+  void c22DeliveryModeEscalationResetsPerRouteRecoveryState();
   void c22ReconnectPolicyIsBoundedAndCancellationStopsReloads();
   void c22RouteExitDiscardsDelayedRecoveryReplyAndToken();
 
@@ -371,8 +374,32 @@ void LivePlayerTests::serverPlaybackUrlIsBoundToExactSessionDeliveryRoute() {
   QCOMPARE(target.loadCount, 0);
 }
 
-void LivePlayerTests::
-    n11DirectFallbackRequiresExplicitConfirmationBeforeLoad() {
+void LivePlayerTests::sessionFailureRetainsMessageAndRetryability() {
+  ApiClient auth;
+  auth.setBaseUrl(QStringLiteral("https://server.example"));
+  auth.setAuthToken(QStringLiteral("account-access-token"));
+  DeterministicScheduler scheduler;
+  ScriptedNetworkAccessManager network(scheduler);
+  network.enqueue(jsonResponse(
+      errorResponse(QStringLiteral("LIVE_STREAM_UNAVAILABLE"), false,
+                    QStringLiteral("The requested Live source is not currently eligible.")),
+      422));
+  LiveApiClient live(&auth, &network);
+  FakePlaybackTarget target;
+  LivePlayerController controller(&live, &target);
+
+  controller.start(kProviderId, QStringLiteral("lvk1.item.abcdefghijklmnop"),
+                   QStringLiteral("lvk1.stream.abcdefghijklmnop"));
+  scheduler.runDue();
+
+  QCOMPARE(controller.state(), QStringLiteral("failed"));
+  QCOMPARE(controller.errorCode(), QStringLiteral("LIVE_STREAM_UNAVAILABLE"));
+  QCOMPARE(controller.failureMessage(),
+           QStringLiteral("The requested Live source is not currently eligible."));
+  QVERIFY(!controller.failureRetryable());
+}
+
+void LivePlayerTests::n11AuthorizedDirectFallbackLoadsWithoutAnotherPrompt() {
   ApiClient auth;
   auth.setBaseUrl(QStringLiteral("https://server.example"));
   auth.setAuthToken(QStringLiteral("account-access-token"));
@@ -390,15 +417,8 @@ void LivePlayerTests::
   scheduler.runDue();
   scheduler.runDue();
 
-  QCOMPARE(controller.state(), QStringLiteral("awaiting_egress_fallback"));
-  QCOMPARE(controller.egressMode(), QStringLiteral("direct_fallback"));
-  QVERIFY(controller.egressFallbackPending());
-  QCOMPARE(target.loadCount, 0);
-  QCOMPARE(target.prepareCount, 0);
-
-  controller.confirmEgressFallback();
   QCOMPARE(controller.state(), QStringLiteral("loading"));
-  QVERIFY(!controller.egressFallbackPending());
+  QCOMPARE(controller.egressMode(), QStringLiteral("direct_fallback"));
   QCOMPARE(target.prepareCount, 1);
   QCOMPARE(target.loadCount, 1);
 
@@ -869,6 +889,47 @@ void LivePlayerTests::
            QStringLiteral("upstream_forbidden"));
   controller.stop();
   scheduler.runDue();
+}
+
+void LivePlayerTests::c22DeliveryModeEscalationResetsPerRouteRecoveryState() {
+  ApiClient auth;
+  auth.setBaseUrl(QStringLiteral("https://server.example"));
+  auth.setAuthToken(QStringLiteral("account-access-token"));
+  DeterministicScheduler scheduler;
+  ScriptedNetworkAccessManager network(scheduler);
+  network.enqueue(jsonResponse(createdResponse(false)));
+  network.enqueue(jsonResponse(detailResponse(4)));
+  network.enqueue(jsonResponse(
+      errorResponse(QStringLiteral("LIVE_STREAM_UNAVAILABLE")), 502));
+  network.enqueue(jsonResponse(detailResponse(6)));
+  network.enqueue(jsonResponse(
+      recoveredResponse(9, kSourceKey, QStringLiteral("Primary"),
+                        QByteArrayLiteral("route-escalation-token"))));
+  network.enqueue(jsonResponse(detailResponse(10)));
+  LiveApiClient live(&auth, &network);
+  FakePlaybackTarget target;
+  LivePlayerController controller(&live, &target);
+
+  controller.start(kProviderId, QStringLiteral("lvk1.item.abcdefghijklmnop"),
+                   QStringLiteral("lvk1.stream.abcdefghijklmnop"));
+  scheduler.runDue();
+  scheduler.runDue();
+  controller.observeMpv({{QStringLiteral("error"),
+                          QStringLiteral("HTTP error 401 Unauthorized")}});
+  scheduler.runDue();
+  scheduler.runDue();
+  scheduler.runDue();
+  scheduler.runDue();
+
+  QCOMPARE(controller.deliveryMode(), QStringLiteral("server_relay"));
+  QCOMPARE(controller.selectedSourceKey(), kSourceKey);
+  QCOMPARE(target.token, QByteArrayLiteral("route-escalation-token"));
+
+  controller.observeMpv({{QStringLiteral("error"),
+                          QStringLiteral("HTTP error 401 Unauthorized")}});
+  QCOMPARE(controller.state(), QStringLiteral("refreshing"));
+  QVERIFY(network.capturedRequests().last().url.path().endsWith(
+      QStringLiteral("/refresh")));
 }
 
 void LivePlayerTests::c22ManualSourceSwitchRotatesPlaybackExactlyOnce() {

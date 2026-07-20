@@ -15,6 +15,7 @@ Item {
     property string eventTitle: "Live event"
     property var expectedEndUtc: null
     property StackView stackView: null
+    property var liveModel: null
     property Component playbackSurfaceComponent: null
 
     property bool componentReady: false
@@ -28,13 +29,16 @@ Item {
     readonly property var playbackSurface: surfaceLoader.item
     readonly property bool activeSession: ["creating_session", "loading", "playing",
                                            "buffering", "paused", "reconnecting",
-                                           "refreshing", "switching_source",
-                                           "awaiting_egress_fallback"].indexOf(
+                                           "refreshing", "switching_source"].indexOf(
                                               String(playerController.state || "")) >= 0
     readonly property bool recovering: Boolean(playerController.recovering)
     readonly property bool paused: String(playerController.state || "") === "paused"
     readonly property bool terminal: ["ended", "unavailable", "failed"].indexOf(
                                          String(playerController.state || "")) >= 0
+    readonly property bool reloadEventRecommended: ["LIVE_STREAM_UNAVAILABLE",
+                                                     "LIVE_STREAM_EXPIRED",
+                                                     "LIVE_PROTOCOL_UNSUPPORTED"].indexOf(
+                                                        String(playerController.errorCode || "")) >= 0
 
     Rectangle {
         anchors.fill: parent
@@ -219,6 +223,13 @@ Item {
         if (stackView) stackView.pop()
     }
 
+    function reloadEvent() {
+        if (liveModel && typeof liveModel.loadItem === "function") {
+            liveModel.loadItem(providerId, itemKey)
+        }
+        exitRoute(false)
+    }
+
     function toggleFullscreen() {
         var window = root.Window.window
         if (!window) return
@@ -339,7 +350,7 @@ Item {
         border.color: Theme.borderSubtle
         visible: ["creating_session", "loading", "buffering", "reconnecting",
                   "refreshing", "switching_source", "ended", "unavailable",
-                  "failed", "awaiting_egress_fallback"].indexOf(
+                  "failed"].indexOf(
                      String(playerController.state || "")) >= 0
 
         ColumnLayout {
@@ -360,8 +371,6 @@ Item {
                 objectName: "livePlayerStateText"
                 Layout.fillWidth: true
                 text: {
-                    if (playerController.state === "awaiting_egress_fallback")
-                        return "Protected connection unavailable"
                     if (playerController.state === "ended") return "Event ended"
                     if (playerController.state === "unavailable") return "Stream unavailable"
                     if (playerController.state === "failed") return "Playback failed"
@@ -374,33 +383,16 @@ Item {
                 wrapMode: Text.Wrap
             }
             Label {
-                objectName: "liveEgressFallbackMessage"
+                objectName: "livePlayerFailureMessage"
                 Layout.fillWidth: true
-                text: "Continue using the server's regular network connection, or cancel playback."
-                visible: playerController.state === "awaiting_egress_fallback"
+                text: String(playerController.failureMessage || "")
+                textFormat: Text.PlainText
+                visible: root.terminal && text !== ""
                 color: Theme.textSecondary
                 font.pixelSize: 12
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 Accessible.name: text
-            }
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                spacing: Theme.space8
-                visible: playerController.state === "awaiting_egress_fallback"
-                ActionButton {
-                    objectName: "liveEgressFallbackContinue"
-                    text: "Continue direct"
-                    variant: "primary"
-                    Accessible.name: "Continue without protected connection"
-                    onClicked: playerController.confirmEgressFallback()
-                }
-                ActionButton {
-                    objectName: "liveEgressFallbackCancel"
-                    text: "Cancel"
-                    Accessible.name: "Cancel Live playback"
-                    onClicked: root.exitRoute(true)
-                }
             }
             Label {
                 objectName: "liveReconnectCountdown"
@@ -436,11 +428,18 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
                 text: "Retry"
                 variant: "primary"
-                visible: playerController.state === "unavailable"
-                         || playerController.state === "failed"
+                visible: root.terminal && Boolean(playerController.failureRetryable)
                 onClicked: playerController.start(root.providerId, root.itemKey,
                                                    root.streamOptionKey, root.eventTitle,
                                                    root.expectedEndUtc)
+            }
+            ActionButton {
+                objectName: "livePlayerReloadEvent"
+                Layout.alignment: Qt.AlignHCenter
+                text: "Reload event"
+                variant: "primary"
+                visible: root.terminal && root.reloadEventRecommended
+                onClicked: root.reloadEvent()
             }
         }
     }
@@ -454,7 +453,6 @@ Item {
         height: root.playerController.seekable && root.playerController.windowSeconds > 0 ? 132 : 82
         color: "#D9000000"
         visible: root.controlsVisible && !root.terminal && !root.recovering
-                 && !root.playerController.egressFallbackPending
 
         ColumnLayout {
             anchors.fill: parent

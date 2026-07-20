@@ -43,6 +43,36 @@ TestCase {
         property int refreshIndexCalls: 0
         property int selectCatalogCalls: 0
         property int loadItemCalls: 0
+        property string homeRole: "owner"
+        property var capabilities: ["live_manage", "settings_manage"]
+        property string activeProfileId: "30000000-0000-4000-8000-000000000003"
+        property bool liveEgressLoading: false
+        property int fetchLiveEgressCalls: 0
+        property var liveEgressStatus: ({
+            enabled: true,
+            ready: true,
+            activeBindings: 0,
+            availableCapacity: 6,
+            defaultPolicy: { mode: "off", policyId: "", allowFallback: false },
+            profiles: [{
+                id: "warp-default",
+                name: "WARP",
+                kind: "warp",
+                selectableByProfiles: true
+            }],
+            assignments: [{
+                id: "80000000-0000-4000-8000-000000000008",
+                scopeType: "profile",
+                scopeKey: "30000000-0000-4000-8000-000000000003",
+                mode: "require_protected",
+                policyId: "warp-default",
+                allowFallback: false,
+                revision: 3
+            }]
+        })
+
+        signal liveEgressChanged()
+        signal requestFailed(string endpoint, string error)
 
         function refreshIndex() { refreshIndexCalls += 1 }
         function selectCatalog(providerId, catalogId, filters) {
@@ -55,6 +85,9 @@ TestCase {
         function loadItem(providerId, itemKey) { loadItemCalls += 1 }
         function cancelItemRequest() { itemLoading = false }
         function cancel() { itemLoading = false }
+        function fetchLiveEgressStatus() { fetchLiveEgressCalls += 1 }
+        function updateLiveEgressPolicy(scopeType, scopeId, mode, policyId,
+                                        allowFallback, expectedRevision) {}
     }
 
     Component {
@@ -97,6 +130,10 @@ TestCase {
         mock.refreshIndexCalls = 0
         mock.selectCatalogCalls = 0
         mock.loadItemCalls = 0
+        mock.homeRole = "owner"
+        mock.capabilities = ["live_manage", "settings_manage"]
+        mock.liveEgressLoading = false
+        mock.fetchLiveEgressCalls = 0
         itemRequestedSpy.target = null
         itemRequestedSpy.clear()
     }
@@ -142,6 +179,7 @@ TestCase {
             "width": width,
             "height": height,
             "liveModel": mock,
+            "client": mock,
             "itemsModel": rows,
             "serverBaseUrl": ""
         })
@@ -224,6 +262,31 @@ TestCase {
         keyClick(Qt.Key_Space)
         compare(itemRequestedSpy.count, 1)
         compare(itemRequestedSpy.signalArguments[0][1], "lvk1.item.fixture-key-value")
+    }
+
+    function test_live_vpn_policy_is_available_from_toolbar() {
+        readyFixture()
+        var view = createLiveView(900, 700)
+        verify(view)
+        compare(mock.fetchLiveEgressCalls, 1)
+
+        var button = findChild(view, "liveEgressPolicyButton")
+        verify(button.visible)
+        compare(button.text, "VPN: Required")
+        verify(button.Accessible.name.indexOf("VPN: Required") >= 0)
+
+        mouseClick(button)
+        var popup = findChild(view, "liveEgressPolicyPopup")
+        tryCompare(popup, "opened", true)
+        verify(findChild(view, "liveToolbarNetworkSettings"))
+        compare(findChild(view, "liveEgressScopeCombo").currentIndex, 1)
+        compare(findChild(view, "liveEgressModeCombo").currentIndex, 2)
+        verify(popup.width <= view.width)
+        verify(popup.height <= view.height)
+
+        popup.close()
+        mock.homeRole = "admin"
+        tryCompare(button, "visible", false)
     }
 
     function test_responsive_card_geometry_data() {
@@ -374,6 +437,21 @@ TestCase {
         verify(title.width <= details.width)
         verify(description.width <= details.width)
         compare(findChild(details, "liveDetailsContent").visible, true)
+
+        mock.selectedStreams = []
+        var noStreams = createTemporaryObject(detailsViewComponent, host, {
+            "width": 800,
+            "height": 700,
+            "liveModel": mock,
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
+            "itemKey": "lvk1.item.fixture-key-value"
+        })
+        verify(noStreams)
+        var noStreamsState = findChild(noStreams, "liveDetailsNoStreams")
+        compare(noStreamsState.visible, true)
+        var beforeRefresh = mock.loadItemCalls
+        noStreamsState.actionRequested()
+        compare(mock.loadItemCalls, beforeRefresh + 1)
     }
 
     function test_visual_evidence() {

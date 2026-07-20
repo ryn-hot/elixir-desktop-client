@@ -47,6 +47,25 @@ bool terminal(const QString &state) {
          state == QStringLiteral("failed");
 }
 
+QString fallbackFailureMessage(const QString &code) {
+  if (code == QStringLiteral("LIVE_STREAM_UNAVAILABLE") ||
+      code == QStringLiteral("LIVE_STREAM_EXPIRED")) {
+    return QStringLiteral(
+        "This stream is no longer available. Reload the event to see current options.");
+  }
+  if (code == QStringLiteral("LIVE_PROTOCOL_UNSUPPORTED")) {
+    return QStringLiteral("This stream is not compatible with this client.");
+  }
+  if (code == QStringLiteral("LIVE_FAILOVER_EXHAUSTED")) {
+    return QStringLiteral("Playback could not recover using the available sources.");
+  }
+  if (code == QStringLiteral("LIVE_SESSION_EXPIRED") ||
+      code == QStringLiteral("LIVE_SESSION_NOT_FOUND")) {
+    return QStringLiteral("This Live session has ended. Reload the event to try again.");
+  }
+  return QStringLiteral("Playback could not be completed.");
+}
+
 QString boundedTrackText(const QVariant &value, qsizetype maximum) {
   const QString text = value.toString();
   if (text.isEmpty() || text.size() > maximum || text.trimmed() != text) {
@@ -146,9 +165,6 @@ qint64 LivePlayerController::revision() const { return m_revision; }
 QString LivePlayerController::playbackUrl() const { return m_playbackUrl; }
 QString LivePlayerController::deliveryMode() const { return m_deliveryMode; }
 QString LivePlayerController::egressMode() const { return m_egressMode; }
-bool LivePlayerController::egressFallbackPending() const {
-  return m_egressFallbackPending;
-}
 bool LivePlayerController::seekable() const { return m_seekable; }
 int LivePlayerController::windowSeconds() const { return m_windowSeconds; }
 double LivePlayerController::distanceFromLiveEdge() const {
@@ -190,6 +206,12 @@ QVariantList LivePlayerController::subtitleTracks() const {
   return m_subtitleTracks;
 }
 QString LivePlayerController::errorCode() const { return m_errorCode; }
+QString LivePlayerController::failureMessage() const {
+  return m_failureMessage;
+}
+bool LivePlayerController::failureRetryable() const {
+  return m_failureRetryable;
+}
 
 QString LivePlayerController::statusText() const {
   if (m_state == QStringLiteral("playing")) {
@@ -207,9 +229,6 @@ QString LivePlayerController::statusText() const {
   }
   if (m_state == QStringLiteral("switching_source")) {
     return QStringLiteral("Switching source");
-  }
-  if (m_state == QStringLiteral("awaiting_egress_fallback")) {
-    return QStringLiteral("Connection choice required");
   }
   if (m_state == QStringLiteral("creating_session") ||
       m_state == QStringLiteral("loading")) {
@@ -258,6 +277,8 @@ void LivePlayerController::start(const QString &providerId,
   m_idempotencyKey =
       QStringLiteral("live-%1").arg(QUuid::createUuid().toString(QUuid::Id128));
   m_errorCode.clear();
+  m_failureMessage.clear();
+  m_failureRetryable = false;
   emit errorChanged();
   if (!m_api || !m_target) {
     fail(QStringLiteral("LIVE_CLIENT_PLAYER_UNAVAILABLE"));
@@ -670,6 +691,7 @@ bool LivePlayerController::applySession(const Live::SessionCreated &session,
     return false;
   }
   const QString previousSource = m_sourceKey;
+  const QString previousDeliveryMode = m_deliveryMode;
   if (initial) {
     m_sessionId = session.sessionId;
     m_serverScope = m_api->serverBaseUrl();
@@ -679,8 +701,6 @@ bool LivePlayerController::applySession(const Live::SessionCreated &session,
   m_playbackUrl = url.toString(QUrl::FullyEncoded);
   m_deliveryMode = session.deliveryMode;
   m_egressMode = session.egress.mode;
-  m_egressFallbackPending =
-      session.egress.mode == QStringLiteral("direct_fallback");
   erase(&m_sessionToken);
   m_sessionToken = session.sessionToken;
   m_seekable = session.live.seekable;
@@ -689,7 +709,8 @@ bool LivePlayerController::applySession(const Live::SessionCreated &session,
                            session.trackPreferences);
   m_expiresAtUtc = session.expiresAtUtc;
   m_lowLatency = session.live.targetLatencySeconds.has_value();
-  if (!initial && previousSource != m_sourceKey) {
+  if (!initial && (previousSource != m_sourceKey ||
+                   previousDeliveryMode != m_deliveryMode)) {
     m_refreshAttemptedForSource = false;
     m_reconnectAttempt = 0;
   }
@@ -706,12 +727,7 @@ bool LivePlayerController::applySession(const Live::SessionCreated &session,
   emit liveWindowChanged();
   m_heartbeatTimer.start(session.heartbeatIntervalSeconds * 1000);
   emit egressChanged();
-  if (m_egressFallbackPending) {
-    m_target->clearLivePlayback();
-    setState(QStringLiteral("awaiting_egress_fallback"));
-  } else {
-    beginPlaybackLoad(url);
-  }
+  beginPlaybackLoad(url);
   scheduleExpiryRefresh();
   sendHeartbeatNow();
   return true;
@@ -726,17 +742,6 @@ void LivePlayerController::beginPlaybackLoad(const QUrl &url) {
   m_target->loadLiveUrl(url);
   emit playbackLoadRequested(url);
   setState(QStringLiteral("loading"));
-}
-
-void LivePlayerController::confirmEgressFallback() {
-  if (!m_egressFallbackPending ||
-      m_state != QStringLiteral("awaiting_egress_fallback")) {
-    return;
-  }
-  const QUrl url(m_playbackUrl);
-  m_egressFallbackPending = false;
-  emit egressChanged();
-  beginPlaybackLoad(url);
 }
 
 void LivePlayerController::applySourceAndTrackState(
@@ -909,10 +914,12 @@ void LivePlayerController::replayCreateForRecovery() {
 }
 
 void LivePlayerController::finishRecoveryFailure(const QString &code,
-                                                 bool terminalFailure) {
-  m_errorCode = code.isEmpty() ? QStringLiteral("LIVE_CLIENT_RECOVERY_FAILED")
-                               : code.left(128);
-  emit errorChanged();
+                                                 bool terminalFailure,
+                                                 const QString &message,
+                                                 bool retryable) {
+  setFailure(code.isEmpty() ? QStringLiteral("LIVE_CLIENT_RECOVERY_FAILED")
+                            : code,
+             message, retryable);
   cancelRecoveryWork();
   if (terminalFailure) {
     closeSession(false);
@@ -989,6 +996,9 @@ QString LivePlayerController::classifyMpvError(const QString &error) const {
 void LivePlayerController::handleFailure(quint64 requestId, quint64 generation,
                                          const QVariantMap &error) {
   const QString code = error.value(QStringLiteral("code")).toString().left(128);
+  const QString message =
+      error.value(QStringLiteral("message")).toString().left(512);
+  const bool retryable = error.value(QStringLiteral("retryable")).toBool();
   if (requestId == m_endRequest) {
     if (code == QStringLiteral("LIVE_SESSION_NOT_FOUND") ||
         code == QStringLiteral("LIVE_SESSION_EXPIRED")) {
@@ -1011,7 +1021,7 @@ void LivePlayerController::handleFailure(quint64 requestId, quint64 generation,
     if (code == QStringLiteral("LIVE_FAILOVER_EXHAUSTED") ||
         code == QStringLiteral("LIVE_SESSION_EXPIRED") ||
         code == QStringLiteral("LIVE_SESSION_NOT_FOUND")) {
-      finishRecoveryFailure(code, true);
+      finishRecoveryFailure(code, true, message, retryable);
     } else if (code == QStringLiteral("LIVE_CLIENT_NETWORK")) {
       replayCreateForRecovery();
     } else if (action == RecoveryAction::Refresh) {
@@ -1033,12 +1043,12 @@ void LivePlayerController::handleFailure(quint64 requestId, quint64 generation,
     if (code == QStringLiteral("LIVE_SESSION_EXPIRED") ||
         code == QStringLiteral("LIVE_SESSION_NOT_FOUND") ||
         code == QStringLiteral("LIVE_FAILOVER_EXHAUSTED")) {
-      finishRecoveryFailure(code, true);
+      finishRecoveryFailure(code, true, message, retryable);
     } else if (code == QStringLiteral("LIVE_CLIENT_NETWORK") &&
                action != ReconcileAction::ReplayCreate) {
       replayCreateForRecovery();
     } else {
-      finishRecoveryFailure(code, true);
+      finishRecoveryFailure(code, true, message, retryable);
     }
     return;
   }
@@ -1052,9 +1062,9 @@ void LivePlayerController::handleFailure(quint64 requestId, quint64 generation,
       m_controlRequest = m_api->getSession(m_sessionId, m_generation);
     } else if (code == QStringLiteral("LIVE_SESSION_EXPIRED") ||
                code == QStringLiteral("LIVE_SESSION_NOT_FOUND")) {
-      finishRecoveryFailure(code, true);
+      finishRecoveryFailure(code, true, message, retryable);
     } else {
-      fail(code);
+      fail(code, message, retryable);
     }
     return;
   }
@@ -1063,7 +1073,7 @@ void LivePlayerController::handleFailure(quint64 requestId, quint64 generation,
     return;
   }
   m_createRequest = 0;
-  fail(code);
+  fail(code, message, retryable);
 }
 
 void LivePlayerController::closeSession(bool terminalState) {
@@ -1095,7 +1105,6 @@ void LivePlayerController::clearPlaybackSecrets() {
   m_playbackUrl.clear();
   m_deliveryMode.clear();
   m_egressMode.clear();
-  m_egressFallbackPending = false;
   m_sourceKey.clear();
   m_sourceLabel.clear();
   m_sourceQuality.clear();
@@ -1145,9 +1154,21 @@ void LivePlayerController::setState(const QString &state) {
   emit stateChanged();
 }
 
-void LivePlayerController::fail(const QString &code) {
-  m_errorCode = code.isEmpty() ? QStringLiteral("LIVE_CLIENT_FAILED") : code;
+void LivePlayerController::setFailure(const QString &code, const QString &message,
+                                      bool retryable) {
+  m_errorCode = code.isEmpty() ? QStringLiteral("LIVE_CLIENT_FAILED")
+                               : code.left(128);
+  m_failureMessage = message.trimmed().left(512);
+  if (m_failureMessage.isEmpty()) {
+    m_failureMessage = fallbackFailureMessage(m_errorCode);
+  }
+  m_failureRetryable = retryable;
   emit errorChanged();
+}
+
+void LivePlayerController::fail(const QString &code, const QString &message,
+                                bool retryable) {
+  setFailure(code, message, retryable);
   closeSession(false);
   setState(QStringLiteral("failed"));
 }

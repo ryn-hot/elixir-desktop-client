@@ -37,6 +37,7 @@ Item {
     property string postInstallPollExtensionId: ""
     property int postInstallPollAttempts: 0
     property int postInstallPollMaxAttempts: 45
+    property var openLiveRequested: null
 
     function refreshLiveExtensionState() {
         if (apiClient.authToken === "") {
@@ -847,6 +848,31 @@ Item {
             }
         }
         return { label: label, action: action }
+    }
+
+    function isLiveProviderExtension(extensionId) {
+        var extension = installedExtension(extensionId)
+        var manifest = manifestFor(extension)
+        var provides = manifest && manifest.provides ? manifest.provides : []
+        for (var i = 0; i < provides.length; ++i) {
+            if (String(provides[i].capability || "") === "live.catalog_provider") {
+                return true
+            }
+        }
+        return false
+    }
+
+    function canOpenLiveForCard(card) {
+        return Boolean(card && card.status
+                       && String(card.status.code || "") === "ready"
+                       && typeof root.openLiveRequested === "function"
+                       && isLiveProviderExtension(extensionIdFor(card.entry)))
+    }
+
+    function openLiveForCard() {
+        if (typeof root.openLiveRequested === "function") {
+            root.openLiveRequested()
+        }
     }
 
     function canCreateDefaultInstance(card, actionSpec) {
@@ -1661,7 +1687,7 @@ Item {
                         }
 
                         Rectangle {
-                            radius: Theme.radiusPill
+                            radius: Theme.radiusSmall
                             color: Qt.rgba(
                                 root.runtimeStatusAccent().r,
                                 root.runtimeStatusAccent().g,
@@ -2540,6 +2566,26 @@ Item {
                                             contentItem: Label {
                                                 text: parent.text
                                                 color: Theme.textPrimary
+                                                font.pixelSize: 11
+                                                font.family: Theme.fontBody
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                        }
+
+                                        Button {
+                                            objectName: "extensionsOpenLiveButton"
+                                            text: "Open Live"
+                                            visible: root.canOpenLiveForCard(modelData)
+                                            onClicked: root.openLiveForCard()
+                                            background: Rectangle {
+                                                radius: Theme.radiusSmall
+                                                color: Theme.accent
+                                                border.color: Theme.accent
+                                            }
+                                            contentItem: Label {
+                                                text: parent.text
+                                                color: "#141414"
                                                 font.pixelSize: 11
                                                 font.family: Theme.fontBody
                                                 horizontalAlignment: Text.AlignHCenter
