@@ -122,7 +122,7 @@ LivePlayerController::LivePlayerController(LiveApiClient *api, QObject *parent)
 LivePlayerController::LivePlayerController(LiveApiClient *api,
                                            LivePlaybackTarget *target,
                                            QObject *parent)
-    : QObject(parent), m_api(api), m_target(target) {
+    : QObject(parent), m_api(api), m_injectedTarget(target) {
   m_heartbeatTimer.setSingleShot(false);
   connect(&m_heartbeatTimer, &QTimer::timeout, this,
           &LivePlayerController::sendHeartbeatNow);
@@ -248,18 +248,20 @@ bool LivePlayerController::attachPlayer(QObject *player) {
   if (!mpv) {
     return false;
   }
-  if (m_target && m_target != mpv) {
-    m_target->clearLivePlayback();
+  auto *nextTarget = static_cast<LivePlaybackTarget *>(mpv);
+  if (auto *currentTarget = playbackTarget();
+      currentTarget && currentTarget != nextTarget) {
+    currentTarget->clearLivePlayback();
   }
   m_mpv = mpv;
-  m_target = mpv;
-  connect(mpv, &QObject::destroyed, this, [this, mpv]() {
-    if (m_mpv == mpv) {
-      m_mpv = nullptr;
-      m_target = nullptr;
-    }
-  });
   return true;
+}
+
+LivePlaybackTarget *LivePlayerController::playbackTarget() const {
+  if (m_mpv) {
+    return static_cast<LivePlaybackTarget *>(m_mpv.data());
+  }
+  return m_injectedTarget;
 }
 
 void LivePlayerController::start(const QString &providerId,
@@ -280,7 +282,7 @@ void LivePlayerController::start(const QString &providerId,
   m_failureMessage.clear();
   m_failureRetryable = false;
   emit errorChanged();
-  if (!m_api || !m_target) {
+  if (!m_api || !playbackTarget()) {
     fail(QStringLiteral("LIVE_CLIENT_PLAYER_UNAVAILABLE"));
     return;
   }
@@ -681,7 +683,7 @@ void LivePlayerController::handleRecovered(
 
 bool LivePlayerController::applySession(const Live::SessionCreated &session,
                                         bool initial) {
-  if (!m_api || !m_target || session.revision < 1 ||
+  if (!m_api || !playbackTarget() || session.revision < 1 ||
       (!initial &&
        (session.sessionId != m_sessionId || session.revision < m_revision))) {
     return false;
@@ -734,12 +736,13 @@ bool LivePlayerController::applySession(const Live::SessionCreated &session,
 }
 
 void LivePlayerController::beginPlaybackLoad(const QUrl &url) {
-  if (!m_target || !url.isValid()) {
+  auto *target = playbackTarget();
+  if (!target || !url.isValid()) {
     fail(QStringLiteral("LIVE_CLIENT_PLAYBACK_URL_REJECTED"));
     return;
   }
-  m_target->prepareLivePlayback(m_sessionToken, m_deliveryMode, m_lowLatency);
-  m_target->loadLiveUrl(url);
+  target->prepareLivePlayback(m_sessionToken, m_deliveryMode, m_lowLatency);
+  target->loadLiveUrl(url);
   emit playbackLoadRequested(url);
   setState(QStringLiteral("loading"));
 }
@@ -764,7 +767,7 @@ void LivePlayerController::applySourceAndTrackState(
 }
 
 void LivePlayerController::beginTransportRecovery(const QString &reason) {
-  if (!m_api || !m_target || m_sessionId.isEmpty() || m_revision < 1 ||
+  if (!m_api || !playbackTarget() || m_sessionId.isEmpty() || m_revision < 1 ||
       terminal(m_state) || m_recoveryRequest != 0 || m_reconcileRequest != 0 ||
       m_reconnectTimer.isActive()) {
     return;
@@ -797,7 +800,8 @@ void LivePlayerController::beginTransportRecovery(const QString &reason) {
 }
 
 void LivePlayerController::performTransportReconnect() {
-  if (!m_target || m_sessionId.isEmpty() || m_playbackUrl.isEmpty() ||
+  auto *target = playbackTarget();
+  if (!target || m_sessionId.isEmpty() || m_playbackUrl.isEmpty() ||
       m_recoveryRequest != 0 || m_reconcileRequest != 0) {
     return;
   }
@@ -810,8 +814,8 @@ void LivePlayerController::performTransportReconnect() {
   m_countdownTimer.stop();
   m_reconnectSecondsRemaining = 0;
   emit recoveryChanged();
-  m_target->prepareLivePlayback(m_sessionToken, m_deliveryMode, m_lowLatency);
-  m_target->loadLiveUrl(url);
+  target->prepareLivePlayback(m_sessionToken, m_deliveryMode, m_lowLatency);
+  target->loadLiveUrl(url);
   emit playbackLoadRequested(url);
   setState(QStringLiteral("loading"));
   sendHeartbeatNow();
@@ -1098,8 +1102,8 @@ void LivePlayerController::clearPlaybackSecrets() {
   if (controlRequest != 0 && m_api) {
     m_api->cancel(controlRequest);
   }
-  if (m_target) {
-    m_target->clearLivePlayback();
+  if (auto *target = playbackTarget()) {
+    target->clearLivePlayback();
   }
   erase(&m_sessionToken);
   m_playbackUrl.clear();

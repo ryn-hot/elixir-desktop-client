@@ -278,6 +278,7 @@ class LivePlayerTests final : public QObject {
 private slots:
   void initTestCase();
   void init();
+  void destroyedAttachedPlayerIsNotReused();
   void sessionContractsEnforceTokenModeAndUtcBounds();
   void serverPlaybackUrlIsBoundToExactSessionDeliveryRoute();
   void sessionFailureRetainsMessageAndRetryability();
@@ -311,6 +312,17 @@ void LivePlayerTests::initTestCase() {
 }
 
 void LivePlayerTests::init() { QSettings().clear(); }
+
+void LivePlayerTests::destroyedAttachedPlayerIsNotReused() {
+  LivePlayerController controller(nullptr);
+  auto *first = new MpvItem;
+  QVERIFY(controller.attachPlayer(first));
+  delete first;
+
+  auto *second = new MpvItem;
+  QVERIFY(controller.attachPlayer(second));
+  delete second;
+}
 
 void LivePlayerTests::sessionContractsEnforceTokenModeAndUtcBounds() {
   auto direct = Live::parseSessionCreated(

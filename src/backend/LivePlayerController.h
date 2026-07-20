@@ -154,6 +154,7 @@ private:
   [[nodiscard]] bool requestIsCurrent(quint64 requestId,
                                       quint64 generation) const;
   [[nodiscard]] QString playerState() const;
+  [[nodiscard]] LivePlaybackTarget *playbackTarget() const;
   void applySourceAndTrackState(const Live::SelectedSource &selectedSource,
                                 const QList<Live::SelectedSource> &sources,
                                 const Live::TrackPreferences &preferences);
@@ -165,7 +166,7 @@ private:
   void retryPendingEnd();
 
   LiveApiClient *m_api{nullptr};
-  LivePlaybackTarget *m_target{nullptr};
+  LivePlaybackTarget *m_injectedTarget{nullptr};
   QPointer<MpvItem> m_mpv;
   QTimer m_heartbeatTimer;
   QTimer m_stallTimer;
