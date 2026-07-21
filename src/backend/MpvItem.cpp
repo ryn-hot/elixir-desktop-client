@@ -1,5 +1,6 @@
 #include "backend/MpvItem.h"
 
+#include <MpvQt/mpvcontroller.h>
 #include <QDir>
 #include <QFileInfo>
 #include <QStringList>
@@ -7,8 +8,23 @@
 #include <QVariantList>
 
 MpvItem::MpvItem(QQuickItem *parent) : MpvAbstractItem(parent) {
-  // Inherit MpvAbstractItem behavior; QML can call
-  // getProperty/setPropertyAsync/commandAsync.
+  auto *controller = mpvController();
+  connect(controller, &MpvController::fileStarted, this, [this]() {
+    if (m_liveProfileActive) {
+      emit liveFileStarted();
+    }
+  });
+  connect(controller, &MpvController::fileLoaded, this, [this]() {
+    if (m_liveProfileActive) {
+      emit liveFileLoaded();
+    }
+  });
+  connect(controller, &MpvController::endFile, this,
+          [this](const QString &reason) {
+            if (m_liveProfileActive) {
+              emit liveFileEnded(reason);
+            }
+          });
 }
 
 QString MpvItem::delivery() const { return m_delivery; }
@@ -87,11 +103,13 @@ void MpvItem::loadLiveUrl(const QUrl &url) {
 }
 
 void MpvItem::clearLivePlayback() {
+  const bool wasActive = m_liveProfileActive;
+  m_liveProfileActive = false;
   setAuthorizationHeader(QString());
-  if (m_liveProfileActive) {
+  if (wasActive) {
+    commandAsync(QStringList{QStringLiteral("stop")});
     setPropertyAsync(QStringLiteral("cache-secs"), 20);
     setPropertyAsync(QStringLiteral("demuxer-readahead-secs"), 10);
-    m_liveProfileActive = false;
     emit liveProfileChanged();
   }
   setDelivery(QString());

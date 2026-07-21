@@ -237,6 +237,8 @@ if(BUILD_TESTING)
             c22RefreshFailureResyncsRevisionBeforeAutomaticFailover
             c22DeliveryModeEscalationResetsPerRouteRecoveryState
             c22ReconnectPolicyIsBoundedAndCancellationStopsReloads
+            c22AdvancingPlaybackSuppressesStaleBufferingSignals
+            c22MpvLifecycleEventsOwnTransportRecovery
             c22RouteExitDiscardsDelayedRecoveryReplyAndToken)
     add_test(
         NAME c30-live-player

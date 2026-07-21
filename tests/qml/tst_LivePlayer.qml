@@ -123,7 +123,7 @@ TestCase {
                 "core-idle": false,
                 "paused-for-cache": false,
                 "pause": false,
-                "eof-reached": false,
+                "vo-configured": true,
                 "time-pos": 90,
                 "duration": 100,
                 "demuxer-cache-time": 100,
@@ -137,7 +137,11 @@ TestCase {
             })
             property var setCalls: []
             property var commands: []
-            function getProperty(name) { return values[name] }
+            property var getCalls: []
+            function getProperty(name) {
+                getCalls = getCalls.concat([name])
+                return values[name]
+            }
             function setPropertyAsync(name, value) {
                 setCalls = setCalls.concat([{"name": name, "value": value}])
                 var next = Object.assign({}, values)
@@ -226,7 +230,9 @@ TestCase {
         compare(controller.lastObservation.subtitleTracks.length, 1)
         compare(controller.lastObservation.audioTrackId, "1")
         compare(controller.lastObservation.subtitleTrackId, "2")
-        compare(controller.lastObservation.error, "")
+        compare(controller.lastObservation.playbackPositionSeconds, 90)
+        verify(view.playbackSurface.getCalls.indexOf("error") === -1)
+        verify(view.playbackSurface.getCalls.indexOf("eof-reached") === -1)
         compare(findChild(view, "liveWindowSlider").visible, true)
         view.destroy()
         wait(0)
@@ -437,12 +443,16 @@ TestCase {
 
         mouseClick(retryNow)
         compare(controller.retryRecoveryCalls, 1)
+        view.samplePlayback()
+        compare(view.playbackEstablished, true)
+        compare(findChild(view, "livePlayerStateOverlay").visible, false)
+        compare(countdown.visible, false)
+        compare(retryNow.visible, false)
+        compare(cancel.visible, false)
         controller.state = "refreshing"
         controller.reconnectSecondsRemaining = 0
         controller.statusText = "Refreshing stream"
         tryCompare(retryNow, "visible", false)
-        mouseClick(cancel)
-        compare(controller.cancelRecoveryCalls, 1)
     }
 
 }

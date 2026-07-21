@@ -129,6 +129,10 @@ private:
                      const QVariantMap &error);
   bool applySession(const Live::SessionCreated &session, bool initial);
   void beginPlaybackLoad(const QUrl &url);
+  void handleMpvFileStarted();
+  void handleMpvFileLoaded();
+  void handleMpvFileEnded(const QString &reason);
+  void resetPlaybackObservation();
   void beginTransportRecovery(const QString &reason);
   void performTransportReconnect();
   void requestRefresh(const QString &reason);
@@ -228,4 +232,7 @@ private:
   int m_failoverAttempts{0};
   bool m_refreshAttemptedForSource{false};
   bool m_lowLatency{false};
+  bool m_mpvFileLoaded{false};
+  bool m_playbackPositionValid{false};
+  double m_lastPlaybackPosition{0.0};
 };

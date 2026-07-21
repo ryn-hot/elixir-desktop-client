@@ -42,6 +42,9 @@ public:
 signals:
   void deliveryChanged();
   void liveProfileChanged();
+  void liveFileStarted();
+  void liveFileLoaded();
+  void liveFileEnded(const QString &reason);
 
 private:
   QString m_delivery;

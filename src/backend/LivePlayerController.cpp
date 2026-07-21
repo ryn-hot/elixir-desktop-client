@@ -25,7 +25,7 @@ constexpr auto kPendingSessionKey = "live/pendingEndSessionId";
 constexpr auto kPendingRevisionKey = "live/pendingEndRevision";
 constexpr auto kPendingServerKey = "live/pendingEndServer";
 constexpr auto kPendingAccountSessionKey = "live/pendingEndAccountSession";
-constexpr int kStallWindowMs = 5'000;
+constexpr int kStallWindowMs = 15'000;
 constexpr int kStablePlaybackMs = 10'000;
 constexpr int kRefreshLeadMs = 60'000;
 constexpr int kMaximumClientFailovers = 2;
@@ -253,7 +253,16 @@ bool LivePlayerController::attachPlayer(QObject *player) {
       currentTarget && currentTarget != nextTarget) {
     currentTarget->clearLivePlayback();
   }
+  if (m_mpv && m_mpv != mpv) {
+    disconnect(m_mpv, nullptr, this, nullptr);
+  }
   m_mpv = mpv;
+  connect(mpv, &MpvItem::liveFileStarted, this,
+          &LivePlayerController::handleMpvFileStarted, Qt::UniqueConnection);
+  connect(mpv, &MpvItem::liveFileLoaded, this,
+          &LivePlayerController::handleMpvFileLoaded, Qt::UniqueConnection);
+  connect(mpv, &MpvItem::liveFileEnded, this,
+          &LivePlayerController::handleMpvFileEnded, Qt::UniqueConnection);
   return true;
 }
 
@@ -349,7 +358,22 @@ void LivePlayerController::observeMpv(const QVariantMap &observation) {
   const bool pausedForCache =
       observation.value(QStringLiteral("pausedForCache")).toBool();
   const bool paused = observation.value(QStringLiteral("paused")).toBool();
-  const bool nextBuffering = !paused && (coreIdle || pausedForCache);
+  bool positionValid = false;
+  const double playbackPosition =
+      observation.value(QStringLiteral("playbackPositionSeconds"))
+          .toDouble(&positionValid);
+  positionValid = positionValid && std::isfinite(playbackPosition) &&
+                  playbackPosition >= 0.0;
+  const bool positionAdvanced =
+      positionValid &&
+      (!m_playbackPositionValid ||
+       std::abs(playbackPosition - m_lastPlaybackPosition) >= 0.05);
+  if (positionValid) {
+    m_lastPlaybackPosition = playbackPosition;
+    m_playbackPositionValid = true;
+  }
+  const bool nextBuffering = !paused && !positionAdvanced &&
+                             (pausedForCache || (m_mpvFileLoaded && coreIdle));
   const double distance =
       observation.value(QStringLiteral("distanceFromLiveEdgeSeconds"))
           .toDouble();
@@ -397,6 +421,14 @@ void LivePlayerController::observeMpv(const QVariantMap &observation) {
     return;
   }
   if (recovering()) {
+    return;
+  }
+  const bool playbackReady =
+      m_mpvFileLoaded || positionValid || (!coreIdle && !pausedForCache);
+  if (!playbackReady && !paused && !nextBuffering) {
+    m_stallTimer.stop();
+    m_stableTimer.stop();
+    setState(QStringLiteral("loading"));
     return;
   }
   if (nextBuffering) {
@@ -744,10 +776,63 @@ void LivePlayerController::beginPlaybackLoad(const QUrl &url) {
     fail(QStringLiteral("LIVE_CLIENT_PLAYBACK_URL_REJECTED"));
     return;
   }
+  resetPlaybackObservation();
   target->prepareLivePlayback(m_sessionToken, m_deliveryMode, m_lowLatency);
   target->loadLiveUrl(url);
   emit playbackLoadRequested(url);
   setState(QStringLiteral("loading"));
+}
+
+void LivePlayerController::handleMpvFileStarted() {
+  if (m_sessionId.isEmpty()) {
+    return;
+  }
+  resetPlaybackObservation();
+}
+
+void LivePlayerController::handleMpvFileLoaded() {
+  if (m_sessionId.isEmpty() || terminal(m_state)) {
+    return;
+  }
+  m_mpvFileLoaded = true;
+  m_stallTimer.stop();
+  if (!recovering()) {
+    setState(QStringLiteral("playing"));
+    if (!m_stableTimer.isActive()) {
+      m_stableTimer.start();
+    }
+  }
+}
+
+void LivePlayerController::handleMpvFileEnded(const QString &reason) {
+  if (m_sessionId.isEmpty()) {
+    return;
+  }
+  const QString normalized = reason.trimmed().toLower();
+  if (normalized == QStringLiteral("stop") ||
+      normalized == QStringLiteral("quit") ||
+      normalized == QStringLiteral("redirect")) {
+    return;
+  }
+  resetPlaybackObservation();
+  if (normalized == QStringLiteral("eof")) {
+    const bool expected =
+        m_expectedEndUtc.isValid() &&
+        QDateTime::currentDateTimeUtc() >= m_expectedEndUtc.addSecs(-30);
+    if (expected) {
+      closeSession(true);
+      return;
+    }
+  }
+  beginTransportRecovery(QStringLiteral("transport"));
+}
+
+void LivePlayerController::resetPlaybackObservation() {
+  m_stallTimer.stop();
+  m_stableTimer.stop();
+  m_mpvFileLoaded = false;
+  m_playbackPositionValid = false;
+  m_lastPlaybackPosition = 0.0;
 }
 
 void LivePlayerController::applySourceAndTrackState(
@@ -817,6 +902,7 @@ void LivePlayerController::performTransportReconnect() {
   m_countdownTimer.stop();
   m_reconnectSecondsRemaining = 0;
   emit recoveryChanged();
+  resetPlaybackObservation();
   target->prepareLivePlayback(m_sessionToken, m_deliveryMode, m_lowLatency);
   target->loadLiveUrl(url);
   emit playbackLoadRequested(url);
@@ -1132,6 +1218,7 @@ void LivePlayerController::clearPlaybackSecrets() {
   m_failoverAttempts = 0;
   m_refreshAttemptedForSource = false;
   m_lowLatency = false;
+  resetPlaybackObservation();
   m_seekable = false;
   m_windowSeconds = 0;
   m_distanceFromLiveEdge = 0.0;

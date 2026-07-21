@@ -25,6 +25,7 @@ Item {
     property string preferenceSourceKey: ""
     property bool audioPreferenceApplied: false
     property bool subtitlePreferenceApplied: false
+    property bool playbackEstablished: false
 
     readonly property var playbackSurface: surfaceLoader.item
     readonly property bool activeSession: ["creating_session", "loading", "playing",
@@ -35,6 +36,12 @@ Item {
     readonly property bool paused: String(playerController.state || "") === "paused"
     readonly property bool terminal: ["ended", "unavailable", "failed"].indexOf(
                                          String(playerController.state || "")) >= 0
+    readonly property bool blockingStatusVisible: terminal
+                                                   || (!playbackEstablished
+                                                       && ["creating_session", "loading", "buffering",
+                                                           "reconnecting", "refreshing",
+                                                           "switching_source"].indexOf(
+                                                              String(playerController.state || "")) >= 0)
     readonly property bool reloadEventRecommended: ["LIVE_STREAM_UNAVAILABLE",
                                                      "LIVE_STREAM_EXPIRED",
                                                      "LIVE_PROTOCOL_UNSUPPORTED"].indexOf(
@@ -64,8 +71,7 @@ Item {
     }
 
     function finiteNumber(value) {
-        var number = Number(value)
-        return isFinite(number) ? number : null
+        return typeof value === "number" && isFinite(value) ? value : null
     }
 
     function trackLabel(track) {
@@ -109,12 +115,17 @@ Item {
         var tracks = readProperty("track-list", [])
         var audio = tracksOfType(tracks, "audio")
         var subtitles = tracksOfType(tracks, "sub")
+        var coreIdle = Boolean(readProperty("core-idle", false))
+        var pausedForCache = Boolean(readProperty("paused-for-cache", false))
+        if (readProperty("vo-configured", false) === true
+                || (position !== null && position > 0)) {
+            playbackEstablished = true
+        }
         playerController.observeMpv({
-            "coreIdle": Boolean(readProperty("core-idle", false)),
-            "pausedForCache": Boolean(readProperty("paused-for-cache", false)),
+            "coreIdle": coreIdle,
+            "pausedForCache": pausedForCache,
             "paused": Boolean(readProperty("pause", false)),
-            "eofReached": Boolean(readProperty("eof-reached", false)),
-            "error": String(readProperty("error", "") || ""),
+            "playbackPositionSeconds": position,
             "distanceFromLiveEdgeSeconds": Math.max(0, distance),
             "audioTracks": audio,
             "subtitleTracks": subtitles,
@@ -271,7 +282,7 @@ Item {
         anchors.right: parent.right
         height: 92
         color: "#B8000000"
-        visible: root.controlsVisible || root.terminal
+        visible: root.controlsVisible || root.recovering || root.terminal
 
         RowLayout {
             anchors.fill: parent
@@ -342,16 +353,14 @@ Item {
     }
 
     Rectangle {
+        objectName: "livePlayerStateOverlay"
         anchors.centerIn: parent
         width: Math.min(parent.width - Theme.space32, 420)
         height: stateColumn.implicitHeight + Theme.space32
         radius: Theme.radius8
         color: Theme.overlayStrong
         border.color: Theme.borderSubtle
-        visible: ["creating_session", "loading", "buffering", "reconnecting",
-                  "refreshing", "switching_source", "ended", "unavailable",
-                  "failed"].indexOf(
-                     String(playerController.state || "")) >= 0
+        visible: root.blockingStatusVisible
 
         ColumnLayout {
             id: stateColumn
@@ -401,7 +410,7 @@ Item {
                       ? (playerController.reconnectSecondsRemaining > 0
                          ? "Retrying in " + playerController.reconnectSecondsRemaining + "s"
                          : "Retrying now") : ""
-                visible: text !== ""
+                visible: root.blockingStatusVisible && text !== ""
                 color: Theme.textSecondary
                 font.pixelSize: 12
                 horizontalAlignment: Text.AlignHCenter
@@ -409,7 +418,7 @@ Item {
             RowLayout {
                 Layout.alignment: Qt.AlignHCenter
                 spacing: Theme.space8
-                visible: root.recovering
+                visible: root.blockingStatusVisible && root.recovering
                 ActionButton {
                     objectName: "liveRecoveryRetryNow"
                     text: "Retry now"

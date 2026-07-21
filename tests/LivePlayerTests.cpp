@@ -298,6 +298,8 @@ private slots:
   void c22DeliveryModeEscalationResetsPerRouteRecoveryState();
   void c22ReconnectPolicyIsBoundedAndCancellationStopsReloads();
   void c22RouteExitDiscardsDelayedRecoveryReplyAndToken();
+  void c22AdvancingPlaybackSuppressesStaleBufferingSignals();
+  void c22MpvLifecycleEventsOwnTransportRecovery();
 
 private:
   QTemporaryDir m_settingsDirectory;
@@ -1191,6 +1193,84 @@ void LivePlayerTests::c22RouteExitDiscardsDelayedRecoveryReplyAndToken() {
   QCOMPARE(controller.state(), QStringLiteral("idle"));
   QCOMPARE(target.loadCount, 1);
   QVERIFY(target.token.isEmpty());
+}
+
+void LivePlayerTests::c22AdvancingPlaybackSuppressesStaleBufferingSignals() {
+  ApiClient auth;
+  auth.setBaseUrl(QStringLiteral("https://server.example"));
+  auth.setAuthToken(QStringLiteral("account-access-token"));
+  DeterministicScheduler scheduler;
+  ScriptedNetworkAccessManager network(scheduler);
+  network.enqueue(jsonResponse(createdResponse()));
+  network.enqueue(jsonResponse(detailResponse(4)));
+  network.enqueue(emptyResponse());
+  LiveApiClient live(&auth, &network);
+  FakePlaybackTarget target;
+  LivePlayerController controller(&live, &target);
+  controller.start(kProviderId, QStringLiteral("lvk1.item.abcdefghijklmnop"),
+                   QStringLiteral("lvk1.stream.abcdefghijklmnop"));
+  scheduler.runDue();
+  scheduler.runDue();
+
+  controller.observeMpv({
+      {QStringLiteral("coreIdle"), true},
+      {QStringLiteral("pausedForCache"), true},
+      {QStringLiteral("playbackPositionSeconds"), 10.0},
+  });
+  QCOMPARE(controller.state(), QStringLiteral("playing"));
+  QVERIFY(!controller.buffering());
+
+  controller.observeMpv({
+      {QStringLiteral("coreIdle"), true},
+      {QStringLiteral("pausedForCache"), true},
+      {QStringLiteral("playbackPositionSeconds"), 10.0},
+  });
+  QCOMPARE(controller.state(), QStringLiteral("buffering"));
+
+  controller.observeMpv({
+      {QStringLiteral("coreIdle"), true},
+      {QStringLiteral("pausedForCache"), true},
+      {QStringLiteral("playbackPositionSeconds"), 10.5},
+  });
+  QCOMPARE(controller.state(), QStringLiteral("playing"));
+  QVERIFY(!controller.buffering());
+  controller.stop();
+  scheduler.runDue();
+}
+
+void LivePlayerTests::c22MpvLifecycleEventsOwnTransportRecovery() {
+  ApiClient auth;
+  auth.setBaseUrl(QStringLiteral("https://server.example"));
+  auth.setAuthToken(QStringLiteral("account-access-token"));
+  DeterministicScheduler scheduler;
+  ScriptedNetworkAccessManager network(scheduler);
+  network.enqueue(jsonResponse(createdResponse()));
+  network.enqueue(jsonResponse(detailResponse(4)));
+  network.enqueue(emptyResponse());
+  LiveApiClient live(&auth, &network);
+  FakePlaybackTarget target;
+  LivePlayerController controller(&live, &target);
+  controller.start(kProviderId, QStringLiteral("lvk1.item.abcdefghijklmnop"),
+                   QStringLiteral("lvk1.stream.abcdefghijklmnop"));
+  scheduler.runDue();
+  scheduler.runDue();
+
+  MpvItem player;
+  QVERIFY(controller.attachPlayer(&player));
+  QVERIFY(QMetaObject::invokeMethod(&player, "liveFileLoaded",
+                                    Qt::DirectConnection));
+  QCOMPARE(controller.state(), QStringLiteral("playing"));
+  QVERIFY(QMetaObject::invokeMethod(&player, "liveFileEnded",
+                                    Qt::DirectConnection,
+                                    Q_ARG(QString, QStringLiteral("stop"))));
+  QCOMPARE(controller.state(), QStringLiteral("playing"));
+  QVERIFY(QMetaObject::invokeMethod(&player, "liveFileEnded",
+                                    Qt::DirectConnection,
+                                    Q_ARG(QString, QStringLiteral("error"))));
+  QCOMPARE(controller.state(), QStringLiteral("reconnecting"));
+  QCOMPARE(controller.reconnectAttempt(), 1);
+  controller.stop();
+  scheduler.runDue();
 }
 
 QTEST_GUILESS_MAIN(LivePlayerTests)
