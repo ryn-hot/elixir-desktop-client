@@ -268,11 +268,14 @@ void LivePlayerController::start(const QString &providerId,
                                  const QString &itemKey,
                                  const QString &streamOptionKey,
                                  const QString &title,
-                                 const QDateTime &expectedEndUtc) {
+                                 const QVariant &expectedEndUtc) {
   closeSession(false);
   ++m_generation;
   m_title = title.left(256);
-  m_expectedEndUtc = expectedEndUtc.toUTC();
+  const QDateTime parsedExpectedEndUtc = expectedEndUtc.toDateTime();
+  m_expectedEndUtc = parsedExpectedEndUtc.isValid()
+                         ? parsedExpectedEndUtc.toUTC()
+                         : QDateTime{};
   m_providerId = providerId;
   m_itemKey = itemKey;
   m_streamOptionKey = streamOptionKey;

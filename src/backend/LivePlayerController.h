@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
+#include <QVariant>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -87,7 +88,7 @@ public:
   Q_INVOKABLE void start(const QString &providerId, const QString &itemKey,
                          const QString &streamOptionKey,
                          const QString &title = {},
-                         const QDateTime &expectedEndUtc = {});
+                         const QVariant &expectedEndUtc = {});
   Q_INVOKABLE void stop();
   Q_INVOKABLE void routeExited();
   Q_INVOKABLE void sendHeartbeatNow();

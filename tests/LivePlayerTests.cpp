@@ -279,6 +279,7 @@ private slots:
   void initTestCase();
   void init();
   void destroyedAttachedPlayerIsNotReused();
+  void nullableExpectedEndStartsPlaybackThroughMetaObject();
   void sessionContractsEnforceTokenModeAndUtcBounds();
   void serverPlaybackUrlIsBoundToExactSessionDeliveryRoute();
   void sessionFailureRetainsMessageAndRetryability();
@@ -322,6 +323,35 @@ void LivePlayerTests::destroyedAttachedPlayerIsNotReused() {
   auto *second = new MpvItem;
   QVERIFY(controller.attachPlayer(second));
   delete second;
+}
+
+void LivePlayerTests::nullableExpectedEndStartsPlaybackThroughMetaObject() {
+  ApiClient auth;
+  auth.setBaseUrl(QStringLiteral("https://server.example"));
+  auth.setAuthToken(QStringLiteral("account-access-token"));
+  DeterministicScheduler scheduler;
+  ScriptedNetworkAccessManager network(scheduler);
+  network.enqueue(jsonResponse(createdResponse(false)));
+  network.enqueue(jsonResponse(detailResponse()));
+  LiveApiClient live(&auth, &network);
+  FakePlaybackTarget target;
+  LivePlayerController controller(&live, &target);
+
+  const bool invoked = QMetaObject::invokeMethod(
+      &controller, "start", Qt::DirectConnection,
+      Q_ARG(QString, kProviderId),
+      Q_ARG(QString, QStringLiteral("lvk1.item.abcdefghijklmnop")),
+      Q_ARG(QString, QStringLiteral("lvk1.stream.abcdefghijklmnop")),
+      Q_ARG(QString, QStringLiteral("Unscheduled Live event")),
+      Q_ARG(QVariant, QVariant{}));
+  QVERIFY(invoked);
+  QCOMPARE(controller.state(), QStringLiteral("creating_session"));
+
+  scheduler.runDue();
+  scheduler.runDue();
+  QCOMPARE(controller.state(), QStringLiteral("loading"));
+  QCOMPARE(target.prepareCount, 1);
+  QCOMPARE(target.loadCount, 1);
 }
 
 void LivePlayerTests::sessionContractsEnforceTokenModeAndUtcBounds() {
