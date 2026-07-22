@@ -1068,10 +1068,12 @@ QVariantMap ApiMeta::toVariantMap() const {
 QVariantMap Provider::toVariantMap() const {
   return {
       {QStringLiteral("providerId"), providerId},
+      {QStringLiteral("instanceId"), instanceId},
       {QStringLiteral("extensionId"), extensionId},
       {QStringLiteral("name"), name},
       {QStringLiteral("readiness"), readiness},
       {QStringLiteral("disabledReason"), disabledReason},
+      {QStringLiteral("accountState"), accountState},
       {QStringLiteral("contractVersion"), contractVersion},
       {QStringLiteral("itemTypes"), itemTypes},
       {QStringLiteral("protocols"), protocols},
@@ -1260,19 +1262,27 @@ ParseResult<ProvidersEnvelope> parseProviders(const QJsonDocument &document) {
             const QJsonObject object = value.toObject();
             if (!parseUuid(object, QStringLiteral("providerId"),
                            &provider->providerId, parseError, path) ||
-                !parseOptionalString(object, QStringLiteral("extensionId"),
-                                     &provider->extensionId, parseError, path,
-                                     256) ||
+                !parseUuid(object, QStringLiteral("instanceId"),
+                           &provider->instanceId, parseError, path) ||
+                !parseString(object, QStringLiteral("extensionId"),
+                             &provider->extensionId, parseError, path, 1,
+                             128) ||
                 !parseString(object, QStringLiteral("name"), &provider->name,
                              parseError, path, 0, kShortTextMax) ||
                 !parseEnum(object, QStringLiteral("readiness"),
                            &provider->readiness, parseError, path,
                            {QStringLiteral("ready"), QStringLiteral("degraded"),
+                            QStringLiteral("needs_account"),
                             QStringLiteral("unavailable"),
                             QStringLiteral("disabled")}) ||
                 !parseOptionalString(object, QStringLiteral("disabledReason"),
                                      &provider->disabledReason, parseError,
                                      path, 256) ||
+                !parseEnum(object, QStringLiteral("accountState"),
+                           &provider->accountState, parseError, path,
+                           {QStringLiteral("not_required"),
+                            QStringLiteral("needs_account"),
+                            QStringLiteral("connected")}) ||
                 !parseInt(object, QStringLiteral("contractVersion"),
                           &provider->contractVersion, parseError, path) ||
                 provider->contractVersion != 1 ||

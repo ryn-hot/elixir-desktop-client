@@ -16,6 +16,8 @@ namespace {
 
 const QString kProviderId =
     QStringLiteral("0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d");
+const QString kInstanceId =
+    QStringLiteral("a7fbc769-ef8b-4220-a7da-93c58e329091");
 const QString kProfileId =
     QStringLiteral("56bb1365-f71d-4a09-88aa-754f37cad251");
 const QString kSessionId =
@@ -74,11 +76,14 @@ QByteArray providersEnvelope() {
                  {QStringLiteral("data"),
                   QJsonArray{QJsonObject{
                       {QStringLiteral("providerId"), kProviderId},
+                      {QStringLiteral("instanceId"), kInstanceId},
                       {QStringLiteral("extensionId"),
                        QStringLiteral("sports.fixture")},
                       {QStringLiteral("name"),
                        QStringLiteral("Fixture Sports")},
                       {QStringLiteral("readiness"), QStringLiteral("ready")},
+                      {QStringLiteral("accountState"),
+                       QStringLiteral("not_required")},
                       {QStringLiteral("disabledReason"), QJsonValue::Null},
                       {QStringLiteral("contractVersion"), 1},
                       {QStringLiteral("itemTypes"),
@@ -351,6 +356,20 @@ void LiveClientTests::
   QVERIFY2(parsedProviders, qPrintable(parsedProviders.error));
   QCOMPARE(parsedProviders.value->data.first().name,
            QStringLiteral("Fixture Sports"));
+  QCOMPARE(parsedProviders.value->data.first().instanceId, kInstanceId);
+  QCOMPARE(parsedProviders.value->data.first().accountState,
+           QStringLiteral("not_required"));
+
+  provider.insert(QStringLiteral("readiness"),
+                  QStringLiteral("needs_account"));
+  provider.insert(QStringLiteral("accountState"),
+                  QStringLiteral("needs_account"));
+  providerData[0] = provider;
+  providers.insert(QStringLiteral("data"), providerData);
+  const auto needsAccount = Live::parseProviders(QJsonDocument(providers));
+  QVERIFY2(needsAccount, qPrintable(needsAccount.error));
+  QCOMPARE(needsAccount.value->data.first().accountState,
+           QStringLiteral("needs_account"));
 
   const auto parsedCatalogs =
       Live::parseCatalogs(QJsonDocument::fromJson(catalogsEnvelope()));

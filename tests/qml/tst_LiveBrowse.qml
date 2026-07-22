@@ -143,8 +143,11 @@ TestCase {
     function readyFixture() {
         mock.providers = [{
             "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
+            "instanceId": "80000000-0000-4000-8000-000000000008",
+            "extensionId": "fixture.live.provider",
             "name": "Fixture Sports",
-            "readiness": "ready"
+            "readiness": "ready",
+            "accountState": "not_required"
         }]
         mock.catalogs = [{
             "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
@@ -242,6 +245,52 @@ TestCase {
         compare(findChild(view, "liveNoticeBanner").visible, false)
         tryCompare(findChild(view, "livePageError"), "visible", true)
         verify(findChild(view, "livePageContent").height > 0)
+    }
+
+    function test_account_required_states_use_native_connect_and_reconnect_copy() {
+        mock.providers = [{
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
+            "instanceId": "80000000-0000-4000-8000-000000000008",
+            "extensionId": "fixture.live.provider",
+            "name": "Fixture Premium",
+            "readiness": "needs_account",
+            "accountState": "needs_account"
+        }]
+        var missing = createLiveView(900, 600)
+        verify(missing)
+        var unavailable = findChild(missing, "liveProvidersUnavailable")
+        tryCompare(unavailable, "visible", true)
+        compare(unavailable.title, "Live provider needs an account")
+        compare(unavailable.actionText, "Connect account")
+
+        mock.providers = [{
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
+            "instanceId": "80000000-0000-4000-8000-000000000008",
+            "extensionId": "fixture.live.provider",
+            "name": "Fixture Premium",
+            "readiness": "ready",
+            "accountState": "connected"
+        }]
+        mock.catalogs = [{
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
+            "catalogId": "premium",
+            "name": "Premium",
+            "filters": []
+        }]
+        mock.selectedProviderId = "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d"
+        mock.selectedCatalogId = "premium"
+        mock.lastError = {
+            "code": "LIVE_ACCOUNT_REQUIRED",
+            "message": "Connect or reconnect this Live provider account.",
+            "retryable": false,
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d"
+        }
+        var rejected = createLiveView(900, 600)
+        verify(rejected)
+        var pageError = findChild(rejected, "livePageError")
+        tryCompare(pageError, "visible", true)
+        compare(pageError.title, "Live provider needs an account")
+        compare(pageError.actionText, "Reconnect account")
     }
 
     function test_event_card_keyboard_accessibility_and_long_text() {

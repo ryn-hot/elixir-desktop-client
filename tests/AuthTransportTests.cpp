@@ -661,6 +661,116 @@ private slots:
         QCOMPARE(server.countPath("/api/v1/live/admin/egress"), 3);
     }
 
+    void lpi2_extension_account_setup_uses_exact_instance_paths() {
+        FakeHttpServer server;
+        QVERIFY(server.start());
+        const QString extensionId = QStringLiteral("example.live");
+        const QString instanceId =
+            QStringLiteral("80000000-0000-4000-8000-000000000008");
+        const QString setupId =
+            QStringLiteral("90000000-0000-4000-8000-000000000009");
+        const QByteArray controlPath = QByteArray(
+            "/api/v1/extensions/example.live/control-surface?instanceId=")
+            + instanceId.toUtf8();
+        const QByteArray actionPath = QByteArray(
+            "/api/v1/extensions/example.live/control-surface/actions/disconnect_live_account?instanceId=")
+            + instanceId.toUtf8();
+        const QByteArray setupPath = QByteArray(
+            "/api/v1/extensions/example.live/instances/")
+            + instanceId.toUtf8() + "/account-setup";
+        const QByteArray statusPath = setupPath + "/" + setupId.toUtf8();
+        const QJsonObject surface{
+            {"extensionId", extensionId},
+            {"instanceId", instanceId},
+            {"sections", QJsonArray{}},
+            {"actions", QJsonArray{}},
+        };
+        server.setHandler([
+            controlPath, actionPath, setupPath, statusPath, surface,
+            extensionId, instanceId, setupId
+        ](const HttpRequest &request) {
+            if (request.path == controlPath && request.method == "GET") {
+                return HttpResponse{200, jsonBody(surface), 0};
+            }
+            if (request.path == actionPath && request.method == "POST") {
+                return HttpResponse{
+                    200,
+                    jsonBody(QJsonObject{
+                        {"success", true},
+                        {"message", "Account disconnected."},
+                        {"controlSurface", surface},
+                    }),
+                    0,
+                };
+            }
+            if (request.path == setupPath && request.method == "POST") {
+                return HttpResponse{
+                    200,
+                    jsonBody(QJsonObject{
+                        {"setupId", setupId},
+                        {"extensionId", extensionId},
+                        {"instanceId", instanceId},
+                        {"configureUrl", "https://provider.example/configure"},
+                    }),
+                    0,
+                };
+            }
+            if (request.path == statusPath && request.method == "GET") {
+                return HttpResponse{
+                    200,
+                    jsonBody(QJsonObject{
+                        {"setupId", setupId},
+                        {"extensionId", extensionId},
+                        {"instanceId", instanceId},
+                        {"status", "completed"},
+                        {"completed", true},
+                    }),
+                    0,
+                };
+            }
+            return HttpResponse{404, R"({"message":"not found"})", 0};
+        });
+
+        ApiClient client;
+        client.setBaseUrl(server.baseUrl());
+        client.setAuthToken(QStringLiteral("owner-access"));
+        client.setAccessTokenExpiresAt(futureTimestamp());
+        QSignalSpy surfaceChanged(&client, &ApiClient::extensionControlSurfaceChanged);
+        QSignalSpy actionCompleted(&client, &ApiClient::extensionControlActionCompleted);
+        QSignalSpy setupStarted(&client, &ApiClient::extensionAccountSetupStarted);
+        QSignalSpy setupStatus(&client, &ApiClient::extensionAccountSetupStatusReceived);
+        QSignalSpy setupCompleted(&client, &ApiClient::extensionAccountSetupCompleted);
+        QSignalSpy failures(&client, &ApiClient::requestFailed);
+
+        client.fetchExtensionControlSurfaceForInstance(extensionId, instanceId);
+        QTRY_COMPARE_WITH_TIMEOUT(surfaceChanged.count(), 1, 5000);
+        client.invokeExtensionControlActionForInstance(
+            extensionId,
+            instanceId,
+            QStringLiteral("disconnect_live_account"));
+        QTRY_COMPARE_WITH_TIMEOUT(actionCompleted.count(), 1, 5000);
+        client.startExtensionAccountSetup(extensionId, instanceId);
+        QTRY_COMPARE_WITH_TIMEOUT(setupStarted.count(), 1, 5000);
+        QCOMPARE(setupStarted.first().at(2).toString(), setupId);
+        client.checkExtensionAccountSetup(extensionId, instanceId, setupId);
+        QTRY_COMPARE_WITH_TIMEOUT(setupStatus.count(), 1, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(setupCompleted.count(), 1, 5000);
+        QCOMPARE(setupStatus.first().at(3).toBool(), true);
+        QCOMPARE(failures.count(), 0);
+
+        QCOMPARE(server.countPath(controlPath), 1);
+        QCOMPARE(server.countPath(actionPath), 1);
+        QCOMPARE(server.countPath(setupPath), 1);
+        QCOMPARE(server.countPath(statusPath), 1);
+        for (const HttpRequest &request : server.requests()) {
+            QCOMPARE(request.headers.value("authorization"),
+                     QByteArray("Bearer owner-access"));
+        }
+        const HttpRequest *action = findRequest(server.requests(), actionPath);
+        QVERIFY(action);
+        QCOMPARE(QJsonDocument::fromJson(action->body).object(), QJsonObject{});
+    }
+
 private:
     QTemporaryDir m_settingsDirectory;
 };

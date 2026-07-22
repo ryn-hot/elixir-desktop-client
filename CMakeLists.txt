@@ -239,6 +239,7 @@ if(BUILD_TESTING)
             c22ReconnectPolicyIsBoundedAndCancellationStopsReloads
             c22AdvancingPlaybackSuppressesStaleBufferingSignals
             c22MpvLifecycleEventsOwnTransportRecovery
+            lpi2AccountRequiredDoesNotRetryOrFailOver
             c22RouteExitDiscardsDelayedRecoveryReplyAndToken)
     add_test(
         NAME c30-live-player
@@ -249,6 +250,7 @@ if(BUILD_TESTING)
         COMMAND elixir-client-qml-tests
             LiveBrowse::test_loading_empty_and_unavailable_states
             LiveBrowse::test_partial_stale_and_error_notice_states
+            LiveBrowse::test_account_required_states_use_native_connect_and_reconnect_copy
             LiveBrowse::test_event_card_keyboard_accessibility_and_long_text
             LiveBrowse::test_live_vpn_policy_is_available_from_toolbar
             LiveBrowse::test_responsive_card_geometry
@@ -256,7 +258,8 @@ if(BUILD_TESTING)
             LiveBrowse::test_malicious_metadata_is_rendered_as_plain_text
             LiveBrowse::test_theme_meets_normal_text_contrast
             LiveBrowse::test_details_loading_error_and_long_metadata
-            Extensions::test_ready_live_provider_can_open_live)
+            Extensions::test_ready_live_provider_can_open_live
+            Extensions::test_live_account_actions_target_the_exact_instance)
     add_test(
         NAME c21-live-player-qml
         COMMAND elixir-client-qml-tests
@@ -264,6 +267,7 @@ if(BUILD_TESTING)
             LivePlayer::test_dvr_controls_and_route_cleanup_are_live_native
             LivePlayer::test_non_seekable_and_terminal_states_have_no_finite_progress
             LivePlayer::test_terminal_failure_uses_server_message_and_action
+            LivePlayer::test_account_required_retries_once_after_matching_setup_completion
             LivePlayer::test_stream_option_is_a_play_command
             LivePlayer::test_compact_controls_stay_inside_view)
     add_test(

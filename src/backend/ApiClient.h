@@ -296,11 +296,24 @@ public:
     Q_INVOKABLE void clearDesiredBlueprints(const QString &applied = QString());
     Q_INVOKABLE void fetchExtensionStatusSummary();
     Q_INVOKABLE void fetchExtensionControlSurface(const QString &extensionId);
+    Q_INVOKABLE void fetchExtensionControlSurfaceForInstance(
+        const QString &extensionId, const QString &instanceId);
     Q_INVOKABLE void updateExtensionControlSurfaceSettings(const QString &extensionId, const QVariantMap &values);
+    Q_INVOKABLE void updateExtensionControlSurfaceSettingsForInstance(
+        const QString &extensionId, const QString &instanceId,
+        const QVariantMap &values);
     Q_INVOKABLE void invokeExtensionControlAction(
         const QString &extensionId,
         const QString &actionId,
         const QVariantMap &params = QVariantMap());
+    Q_INVOKABLE void invokeExtensionControlActionForInstance(
+        const QString &extensionId, const QString &instanceId,
+        const QString &actionId, const QVariantMap &params = QVariantMap());
+    Q_INVOKABLE void startExtensionAccountSetup(
+        const QString &extensionId, const QString &instanceId);
+    Q_INVOKABLE void checkExtensionAccountSetup(
+        const QString &extensionId, const QString &instanceId,
+        const QString &setupId);
     Q_INVOKABLE void fetchDownloaderProfile();
     Q_INVOKABLE void updateDownloaderProfile(const QString &profile);
     Q_INVOKABLE void fetchNetworkProtectionStatus();
@@ -511,6 +524,15 @@ signals:
         const QString &extensionId,
         const QString &actionId,
         const QString &message);
+    void extensionAccountSetupStarted(
+        const QString &extensionId, const QString &instanceId,
+        const QString &setupId, const QString &configureUrl);
+    void extensionAccountSetupStatusReceived(
+        const QString &extensionId, const QString &instanceId,
+        const QString &setupId, bool completed);
+    void extensionAccountSetupCompleted(
+        const QString &extensionId, const QString &instanceId,
+        const QString &setupId);
     void secretRotated(const QString &secretId, const QString &value);
     void desiredBlueprintsCleared(int deleted);
     void runsCleared(int deleted);

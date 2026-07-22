@@ -10,6 +10,7 @@ Item {
     objectName: "extensionControlView"
     property StackView stackView: null
     property string extensionId: ""
+    property string instanceId: ""
     property var pendingAction: null
     property var pendingSecretAction: null
     property var actionSecretValues: ({})
@@ -19,10 +20,19 @@ Item {
     property string activeActionId: ""
     property string activeActionLabel: ""
     property string activeActionDescription: ""
+    property string activeAccountSetupId: ""
+    property bool accountSetupStarting: false
+    property bool accountSetupCheckPending: false
+    property int accountSetupPollFailures: 0
+    property bool componentReady: false
 
     function controlSurface() {
         var surface = apiClient.extensionControlSurface || {}
         if (String(surface.extensionId || "") !== String(extensionId || "")) {
+            return null
+        }
+        if (instanceId !== ""
+                && String(surface.instanceId || "") !== String(instanceId)) {
             return null
         }
         return surface
@@ -32,7 +42,11 @@ Item {
         if (apiClient.authToken === "" || extensionId === "") {
             return
         }
-        apiClient.fetchExtensionControlSurface(extensionId)
+        if (instanceId !== "") {
+            apiClient.fetchExtensionControlSurfaceForInstance(extensionId, instanceId)
+        } else {
+            apiClient.fetchExtensionControlSurface(extensionId)
+        }
         apiClient.fetchInstanceSecrets()
     }
 
@@ -576,7 +590,13 @@ Item {
             return
         }
         beginActionRequest(action)
-        apiClient.invokeExtensionControlAction(extensionId, String(action.id || ""), params)
+        if (instanceId !== "") {
+            apiClient.invokeExtensionControlActionForInstance(
+                        extensionId, instanceId, String(action.id || ""), params)
+        } else {
+            apiClient.invokeExtensionControlAction(
+                        extensionId, String(action.id || ""), params)
+        }
     }
 
     function runAction(action, extraParams) {
@@ -599,6 +619,24 @@ Item {
             return
         }
         var params = mergeActionParams(action, extraParams)
+        if (String(params.accountSetup || "").toLowerCase() === "external") {
+            var setupInstanceId = instanceId !== ""
+                    ? instanceId : String(params.instanceId || "")
+            if (setupInstanceId === "") {
+                actionToast.show("This provider instance is not ready for account setup.")
+                return
+            }
+            if (accountSetupStarting || activeAccountSetupId !== "") {
+                return
+            }
+            if (instanceId === "") {
+                instanceId = setupInstanceId
+            }
+            accountSetupStarting = true
+            accountSetupPollFailures = 0
+            apiClient.startExtensionAccountSetup(extensionId, setupInstanceId)
+            return
+        }
         if (actionPromptFields(action).length > 0) {
             openActionPrompt(action, params)
             return
@@ -700,7 +738,12 @@ Item {
         }
         var payload = {}
         payload[String(field.id || "")] = value
-        apiClient.updateExtensionControlSurfaceSettings(extensionId, payload)
+        if (instanceId !== "") {
+            apiClient.updateExtensionControlSurfaceSettingsForInstance(
+                        extensionId, instanceId, payload)
+        } else {
+            apiClient.updateExtensionControlSurfaceSettings(extensionId, payload)
+        }
     }
 
     function fieldCurrentOptionIndex(field) {
@@ -716,10 +759,25 @@ Item {
         return -1
     }
 
-    Component.onCompleted: refreshSurface()
+    Component.onCompleted: {
+        componentReady = true
+        refreshSurface()
+    }
     onExtensionIdChanged: {
         controlSurfacePollTimer.stop()
-        refreshSurface()
+        accountSetupPollTimer.stop()
+        activeAccountSetupId = ""
+        accountSetupStarting = false
+        accountSetupCheckPending = false
+        if (componentReady) refreshSurface()
+    }
+    onInstanceIdChanged: {
+        controlSurfacePollTimer.stop()
+        accountSetupPollTimer.stop()
+        activeAccountSetupId = ""
+        accountSetupStarting = false
+        accountSetupCheckPending = false
+        if (componentReady) refreshSurface()
     }
 
     Connections {
@@ -752,7 +810,67 @@ Item {
             root.scheduleControlSurfacePolling()
         }
 
+        function onExtensionAccountSetupStarted(targetExtensionId, targetInstanceId,
+                                                setupId, configureUrl) {
+            if (String(targetExtensionId || "") !== String(root.extensionId || "")
+                    || String(targetInstanceId || "") !== String(root.instanceId || "")) {
+                return
+            }
+            root.accountSetupStarting = false
+            root.activeAccountSetupId = String(setupId || "")
+            root.accountSetupPollFailures = 0
+            root.browserOpenUrl(configureUrl)
+            actionToast.show("Finish connecting the account in your browser.")
+            accountSetupPollTimer.restart()
+        }
+
+        function onExtensionAccountSetupStatusReceived(targetExtensionId, targetInstanceId,
+                                                        setupId, completed) {
+            if (String(targetExtensionId || "") !== String(root.extensionId || "")
+                    || String(targetInstanceId || "") !== String(root.instanceId || "")
+                    || String(setupId || "") !== String(root.activeAccountSetupId || "")) {
+                return
+            }
+            root.accountSetupCheckPending = false
+            root.accountSetupPollFailures = 0
+            if (!completed) {
+                accountSetupPollTimer.restart()
+            }
+        }
+
+        function onExtensionAccountSetupCompleted(targetExtensionId, targetInstanceId,
+                                                   setupId) {
+            if (String(targetExtensionId || "") !== String(root.extensionId || "")
+                    || String(targetInstanceId || "") !== String(root.instanceId || "")
+                    || String(setupId || "") !== String(root.activeAccountSetupId || "")) {
+                return
+            }
+            accountSetupPollTimer.stop()
+            root.accountSetupCheckPending = false
+            root.activeAccountSetupId = ""
+            actionToast.show("Account connected.")
+            root.refreshSurface()
+            apiClient.fetchExtensionStatusSummary()
+        }
+
         function onRequestFailed(endpoint, error) {
+            var setupPrefix = "/api/v1/extensions/" + root.extensionId
+                    + "/instances/" + root.instanceId + "/account-setup"
+            if (root.extensionId !== "" && root.instanceId !== ""
+                    && endpoint.indexOf(setupPrefix) === 0) {
+                root.accountSetupStarting = false
+                root.accountSetupCheckPending = false
+                if (root.activeAccountSetupId !== ""
+                        && root.accountSetupPollFailures < 2) {
+                    root.accountSetupPollFailures += 1
+                    accountSetupPollTimer.restart()
+                    return
+                }
+                accountSetupPollTimer.stop()
+                root.activeAccountSetupId = ""
+                actionToast.show(error)
+                return
+            }
             var prefix = "/api/v1/extensions/" + root.extensionId + "/control-surface"
             var actionPrefix = prefix + "/actions/"
             if (root.extensionId !== "" && endpoint.indexOf(actionPrefix) === 0) {
@@ -763,6 +881,24 @@ Item {
             if (root.extensionId !== "" && endpoint.indexOf(prefix) === 0) {
                 actionToast.show(error)
             }
+        }
+    }
+
+    Timer {
+        id: accountSetupPollTimer
+        interval: 1500
+        repeat: false
+        onTriggered: {
+            if (root.activeAccountSetupId === "" || root.accountSetupCheckPending
+                    || root.extensionId === "" || root.instanceId === ""
+                    || apiClient.authToken === "") {
+                return
+            }
+            root.accountSetupCheckPending = true
+            apiClient.checkExtensionAccountSetup(
+                        root.extensionId,
+                        root.instanceId,
+                        root.activeAccountSetupId)
         }
     }
 
@@ -958,7 +1094,7 @@ Item {
 
                     ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: Theme.spacingXSmall
+                        spacing: Theme.spacingSmall
 
                         Label {
                             Layout.fillWidth: true
@@ -1081,9 +1217,9 @@ Item {
                     Flow {
                         Layout.fillWidth: true
                         spacing: Theme.spacingSmall
-                        visible: root.controlSurface() &&
-                                 root.controlSurface().status.telemetry &&
-                                 (root.controlSurface().status.telemetry.metrics || []).length > 0
+                        visible: Boolean(root.controlSurface()
+                                         && root.controlSurface().status.telemetry
+                                         && (root.controlSurface().status.telemetry.metrics || []).length > 0)
 
                         Repeater {
                             model: root.controlSurface() && root.controlSurface().status.telemetry
@@ -1766,10 +1902,18 @@ Item {
                 return
             }
             root.beginActionRequest(root.pendingAction.action)
-            apiClient.invokeExtensionControlAction(
-                root.extensionId,
-                String(root.pendingAction.action.id || ""),
-                root.pendingAction.params || {})
+            if (root.instanceId !== "") {
+                apiClient.invokeExtensionControlActionForInstance(
+                            root.extensionId,
+                            root.instanceId,
+                            String(root.pendingAction.action.id || ""),
+                            root.pendingAction.params || {})
+            } else {
+                apiClient.invokeExtensionControlAction(
+                            root.extensionId,
+                            String(root.pendingAction.action.id || ""),
+                            root.pendingAction.params || {})
+            }
             root.pendingAction = null
         }
         onRejected: root.pendingAction = null

@@ -181,6 +181,16 @@ int main(int argc, char *argv[]) {
   LiveApiClient liveApiClient(&apiClient);
   LiveCatalogModel liveCatalogModel(&liveApiClient);
   LivePlayerController livePlayerController(&liveApiClient);
+  QObject::connect(
+      &apiClient, &ApiClient::extensionAccountSetupCompleted,
+      &liveCatalogModel,
+      [&liveCatalogModel](const QString &, const QString &, const QString &) {
+        liveCatalogModel.refreshIndex();
+        QTimer::singleShot(1500, &liveCatalogModel,
+                           [&liveCatalogModel]() {
+                             liveCatalogModel.refreshIndex();
+                           });
+      });
 
   const QString controlExpiry = sessionManager.controlPlaneExpiresAt();
   if (!sessionManager.controlPlaneToken().isEmpty() &&

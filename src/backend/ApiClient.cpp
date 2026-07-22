@@ -20,6 +20,40 @@
 namespace {
 constexpr int kMaxPendingAuthRequests = 256;
 
+QString encodedPathSegment(const QString &value) {
+    return QString::fromUtf8(QUrl::toPercentEncoding(value));
+}
+
+QString extensionControlPath(const QString &extensionId,
+                             const QString &instanceId = QString(),
+                             const QString &actionId = QString()) {
+    QString path = QString("/api/v1/extensions/%1/control-surface")
+                       .arg(encodedPathSegment(extensionId));
+    if (!actionId.trimmed().isEmpty()) {
+        path += QString("/actions/%1")
+                    .arg(encodedPathSegment(actionId.trimmed()));
+    }
+    QUrl url(path);
+    if (!instanceId.trimmed().isEmpty()) {
+        QUrlQuery query;
+        query.addQueryItem(QStringLiteral("instanceId"), instanceId.trimmed());
+        url.setQuery(query);
+    }
+    return url.toString(QUrl::FullyEncoded);
+}
+
+QString extensionAccountSetupPath(const QString &extensionId,
+                                  const QString &instanceId,
+                                  const QString &setupId = QString()) {
+    QString path = QString("/api/v1/extensions/%1/instances/%2/account-setup")
+                       .arg(encodedPathSegment(extensionId),
+                            encodedPathSegment(instanceId));
+    if (!setupId.trimmed().isEmpty()) {
+        path += "/" + encodedPathSegment(setupId.trimmed());
+    }
+    return path;
+}
+
 void addClientSessionContext(QJsonObject &body, bool includeRememberDevice) {
     if (includeRememberDevice) {
         body.insert("remember_device", true);
@@ -2375,6 +2409,12 @@ void ApiClient::fetchExtensionStatusSummary() {
 }
 
 void ApiClient::fetchExtensionControlSurface(const QString &extensionId) {
+    fetchExtensionControlSurfaceForInstance(extensionId, QString());
+}
+
+void ApiClient::fetchExtensionControlSurfaceForInstance(
+    const QString &extensionId,
+    const QString &instanceId) {
     const QString trimmed = extensionId.trimmed();
     if (trimmed.isEmpty()) {
         emit requestFailed("/api/v1/extensions/:id/control-surface", "Extension id is required.");
@@ -2386,7 +2426,7 @@ void ApiClient::fetchExtensionControlSurface(const QString &extensionId) {
     }
     sendRequest(
         "GET",
-        QString("/api/v1/extensions/%1/control-surface").arg(trimmed),
+        extensionControlPath(trimmed, instanceId),
         QJsonObject(),
         [this](const QJsonDocument &doc) {
             if (!doc.isObject()) {
@@ -2416,6 +2456,14 @@ void ApiClient::fetchExtensionControlSurface(const QString &extensionId) {
 void ApiClient::updateExtensionControlSurfaceSettings(
     const QString &extensionId,
     const QVariantMap &values) {
+    updateExtensionControlSurfaceSettingsForInstance(
+        extensionId, QString(), values);
+}
+
+void ApiClient::updateExtensionControlSurfaceSettingsForInstance(
+    const QString &extensionId,
+    const QString &instanceId,
+    const QVariantMap &values) {
     const QString trimmed = extensionId.trimmed();
     if (trimmed.isEmpty()) {
         emit requestFailed("/api/v1/extensions/:id/control-surface", "Extension id is required.");
@@ -2429,7 +2477,7 @@ void ApiClient::updateExtensionControlSurfaceSettings(
     body.insert("values", QJsonObject::fromVariantMap(values));
     sendRequest(
         "PUT",
-        QString("/api/v1/extensions/%1/control-surface").arg(trimmed),
+        extensionControlPath(trimmed, instanceId),
         body,
         [this](const QJsonDocument &doc) {
             if (!doc.isObject()) {
@@ -2460,6 +2508,15 @@ void ApiClient::invokeExtensionControlAction(
     const QString &extensionId,
     const QString &actionId,
     const QVariantMap &params) {
+    invokeExtensionControlActionForInstance(
+        extensionId, QString(), actionId, params);
+}
+
+void ApiClient::invokeExtensionControlActionForInstance(
+    const QString &extensionId,
+    const QString &instanceId,
+    const QString &actionId,
+    const QVariantMap &params) {
     const QString trimmedExtensionId = extensionId.trimmed();
     const QString trimmedActionId = actionId.trimmed();
     if (trimmedExtensionId.isEmpty() || trimmedActionId.isEmpty()) {
@@ -2478,8 +2535,8 @@ void ApiClient::invokeExtensionControlAction(
     }
     sendRequest(
         "POST",
-        QString("/api/v1/extensions/%1/control-surface/actions/%2")
-            .arg(trimmedExtensionId, trimmedActionId),
+        extensionControlPath(
+            trimmedExtensionId, instanceId, trimmedActionId),
         body,
         [this, trimmedExtensionId, trimmedActionId](const QJsonDocument &doc) {
             if (!doc.isObject()) {
@@ -2507,6 +2564,83 @@ void ApiClient::invokeExtensionControlAction(
             if (m_extensionControlLoading) {
                 m_extensionControlLoading = false;
                 emit extensionControlLoadingChanged();
+            }
+        });
+}
+
+void ApiClient::startExtensionAccountSetup(
+    const QString &extensionId,
+    const QString &instanceId) {
+    const QString trimmedExtensionId = extensionId.trimmed();
+    const QString trimmedInstanceId = instanceId.trimmed();
+    const QString endpoint = extensionAccountSetupPath(
+        trimmedExtensionId, trimmedInstanceId);
+    if (trimmedExtensionId.isEmpty() || trimmedInstanceId.isEmpty()) {
+        emit requestFailed(endpoint, "Extension and instance ids are required.");
+        return;
+    }
+    sendRequest(
+        "POST",
+        endpoint,
+        QJsonObject(),
+        [this, trimmedExtensionId, trimmedInstanceId, endpoint](
+            const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(endpoint, "Account setup response was not an object.");
+                return;
+            }
+            const QJsonObject object = doc.object();
+            const QString setupId = object.value("setupId").toString().trimmed();
+            const QString configureUrl =
+                object.value("configureUrl").toString().trimmed();
+            if (setupId.isEmpty() || configureUrl.isEmpty()) {
+                emit requestFailed(endpoint, "Account setup response was incomplete.");
+                return;
+            }
+            emit extensionAccountSetupStarted(
+                trimmedExtensionId,
+                trimmedInstanceId,
+                setupId,
+                configureUrl);
+        });
+}
+
+void ApiClient::checkExtensionAccountSetup(
+    const QString &extensionId,
+    const QString &instanceId,
+    const QString &setupId) {
+    const QString trimmedExtensionId = extensionId.trimmed();
+    const QString trimmedInstanceId = instanceId.trimmed();
+    const QString trimmedSetupId = setupId.trimmed();
+    const QString endpoint = extensionAccountSetupPath(
+        trimmedExtensionId, trimmedInstanceId, trimmedSetupId);
+    if (trimmedExtensionId.isEmpty() || trimmedInstanceId.isEmpty()
+        || trimmedSetupId.isEmpty()) {
+        emit requestFailed(endpoint, "Extension, instance, and setup ids are required.");
+        return;
+    }
+    sendRequest(
+        "GET",
+        endpoint,
+        QJsonObject(),
+        [this, trimmedExtensionId, trimmedInstanceId, trimmedSetupId, endpoint](
+            const QJsonDocument &doc) {
+            if (!doc.isObject()) {
+                emit requestFailed(endpoint, "Account setup status was not an object.");
+                return;
+            }
+            const QJsonObject object = doc.object();
+            const bool completed = object.value("completed").toBool(false);
+            emit extensionAccountSetupStatusReceived(
+                trimmedExtensionId,
+                trimmedInstanceId,
+                trimmedSetupId,
+                completed);
+            if (completed) {
+                emit extensionAccountSetupCompleted(
+                    trimmedExtensionId,
+                    trimmedInstanceId,
+                    trimmedSetupId);
             }
         });
 }

@@ -16,6 +16,7 @@ Item {
     property var expectedEndUtc: null
     property StackView stackView: null
     property var liveModel: null
+    property var client: null
     property Component playbackSurfaceComponent: null
 
     property bool componentReady: false
@@ -25,6 +26,7 @@ Item {
     property bool audioPreferenceApplied: false
     property bool subtitlePreferenceApplied: false
     property bool playbackEstablished: false
+    property string retriedAccountSetupId: ""
 
     readonly property var playbackSurface: surfaceLoader.item
     readonly property bool activeSession: ["creating_session", "loading", "playing",
@@ -45,6 +47,9 @@ Item {
                                                      "LIVE_STREAM_EXPIRED",
                                                      "LIVE_PROTOCOL_UNSUPPORTED"].indexOf(
                                                         String(playerController.errorCode || "")) >= 0
+    readonly property bool accountRequired: String(playerController.errorCode || "")
+                                            === "LIVE_ACCOUNT_REQUIRED"
+    readonly property var currentProvider: provider()
 
     Rectangle {
         anchors.fill: parent
@@ -60,6 +65,24 @@ Item {
         playbackStarted = true
         playerController.start(providerId, itemKey, streamOptionKey,
                                eventTitle, expectedEndUtc)
+    }
+
+    function provider() {
+        var providers = liveModel ? liveModel.providers || [] : []
+        for (var i = 0; i < providers.length; ++i) {
+            if (String(providers[i].providerId || "") === String(providerId || ""))
+                return providers[i]
+        }
+        return null
+    }
+
+    function openProviderAccount() {
+        if (!stackView || !currentProvider) return
+        stackView.push(Qt.resolvedUrl("ExtensionControlView.qml"), {
+            stackView: stackView,
+            extensionId: String(currentProvider.extensionId || ""),
+            instanceId: String(currentProvider.instanceId || "")
+        })
     }
 
     function readProperty(name, fallback) {
@@ -258,6 +281,37 @@ Item {
         }
     }
 
+    Connections {
+        target: root.client
+        enabled: Boolean(root.client)
+
+        function onExtensionAccountSetupCompleted(extensionId, instanceId, setupId) {
+            if (!root.accountRequired || !root.currentProvider
+                    || String(extensionId || "")
+                       !== String(root.currentProvider.extensionId || "")
+                    || String(instanceId || "")
+                       !== String(root.currentProvider.instanceId || "")
+                    || String(setupId || "") === root.retriedAccountSetupId) {
+                return
+            }
+            root.retriedAccountSetupId = String(setupId || "")
+            accountRetryTimer.restart()
+        }
+    }
+
+    Timer {
+        id: accountRetryTimer
+        interval: 1500
+        repeat: false
+        onTriggered: {
+            if (root.routeClosed || !root.playerController || !root.accountRequired)
+                return
+            root.playerController.start(root.providerId, root.itemKey,
+                                        root.streamOptionKey, root.eventTitle,
+                                        root.expectedEndUtc)
+        }
+    }
+
     Loader {
         id: surfaceLoader
         objectName: "livePlaybackSurfaceLoader"
@@ -435,11 +489,22 @@ Item {
                 }
             }
             ActionButton {
+                objectName: "livePlayerAccount"
+                Layout.alignment: Qt.AlignHCenter
+                text: root.currentProvider
+                      && String(root.currentProvider.accountState || "") === "needs_account"
+                      ? "Connect account" : "Reconnect account"
+                variant: "primary"
+                visible: root.terminal && root.accountRequired && Boolean(root.currentProvider)
+                onClicked: root.openProviderAccount()
+            }
+            ActionButton {
                 objectName: "livePlayerRetry"
                 Layout.alignment: Qt.AlignHCenter
                 text: "Retry"
                 variant: "primary"
-                visible: root.terminal && Boolean(playerController.failureRetryable)
+                visible: root.terminal && !root.accountRequired
+                         && Boolean(playerController.failureRetryable)
                 onClicked: playerController.start(root.providerId, root.itemKey,
                                                    root.streamOptionKey, root.eventTitle,
                                                    root.expectedEndUtc)

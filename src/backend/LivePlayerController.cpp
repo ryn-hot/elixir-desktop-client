@@ -1091,7 +1091,9 @@ void LivePlayerController::handleFailure(quint64 requestId, quint64 generation,
     const bool manual =
         m_pendingRecoveryReason == QStringLiteral("manual_source_switch");
     m_recoveryRequest = 0;
-    if (code == QStringLiteral("LIVE_FAILOVER_EXHAUSTED") ||
+    if (code == QStringLiteral("LIVE_ACCOUNT_REQUIRED")) {
+      finishRecoveryFailure(code, true, message, false);
+    } else if (code == QStringLiteral("LIVE_FAILOVER_EXHAUSTED") ||
         code == QStringLiteral("LIVE_SESSION_EXPIRED") ||
         code == QStringLiteral("LIVE_SESSION_NOT_FOUND")) {
       finishRecoveryFailure(code, true, message, retryable);
@@ -1113,7 +1115,9 @@ void LivePlayerController::handleFailure(quint64 requestId, quint64 generation,
     const ReconcileAction action = m_reconcileAction;
     m_reconcileRequest = 0;
     m_reconcileAction = ReconcileAction::None;
-    if (code == QStringLiteral("LIVE_SESSION_EXPIRED") ||
+    if (code == QStringLiteral("LIVE_ACCOUNT_REQUIRED")) {
+      finishRecoveryFailure(code, true, message, false);
+    } else if (code == QStringLiteral("LIVE_SESSION_EXPIRED") ||
         code == QStringLiteral("LIVE_SESSION_NOT_FOUND") ||
         code == QStringLiteral("LIVE_FAILOVER_EXHAUSTED")) {
       finishRecoveryFailure(code, true, message, retryable);
@@ -1128,7 +1132,9 @@ void LivePlayerController::handleFailure(quint64 requestId, quint64 generation,
 
   if (requestId == m_controlRequest) {
     m_controlRequest = 0;
-    if (code == QStringLiteral("LIVE_CLIENT_NETWORK")) {
+    if (code == QStringLiteral("LIVE_ACCOUNT_REQUIRED")) {
+      fail(code, message, false);
+    } else if (code == QStringLiteral("LIVE_CLIENT_NETWORK")) {
       beginTransportRecovery(QStringLiteral("transport"));
     } else if (code == QStringLiteral("LIVE_SESSION_CONFLICT") && m_api &&
                !m_sessionId.isEmpty()) {

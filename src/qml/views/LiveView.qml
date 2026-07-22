@@ -37,6 +37,18 @@ Item {
         }
         return count
     }
+    readonly property var accountProblem: accountProblemForCurrentView()
+    readonly property var accountProvider: providerForId(
+                                               accountProblem
+                                               ? accountProblem.providerId : "")
+    readonly property var pageAccountProblem: String(
+                                                  liveModel.lastError
+                                                  ? liveModel.lastError.code : "")
+                                              === "LIVE_ACCOUNT_REQUIRED"
+                                              ? liveModel.lastError : null
+    readonly property var pageAccountProvider: providerForId(
+                                                   pageAccountProblem
+                                                   ? pageAccountProblem.providerId : "")
     readonly property int gridColumns: Math.max(1, Math.floor((contentWidth + Theme.space16) / 292))
     readonly property real contentWidth: Math.max(0, width - pageMargin * 2)
     readonly property bool canManageLiveEgress: client
@@ -68,12 +80,53 @@ Item {
     }
 
     function providerName(providerId) {
+        var provider = providerForId(providerId)
+        return provider ? String(provider.name || "Live provider") : "Live provider"
+    }
+
+    function providerForId(providerId) {
         var providers = liveModel.providers || []
         for (var i = 0; i < providers.length; ++i) {
             if (String(providers[i].providerId) === String(providerId))
-                return String(providers[i].name || "Live provider")
+                return providers[i]
         }
-        return "Live provider"
+        return null
+    }
+
+    function accountProblemForCurrentView() {
+        var current = liveModel.lastError || ({})
+        if (String(current.code || "") === "LIVE_ACCOUNT_REQUIRED") return current
+        var failures = liveModel.errors || []
+        for (var i = 0; i < failures.length; ++i) {
+            if (String(failures[i].code || "") === "LIVE_ACCOUNT_REQUIRED") return failures[i]
+        }
+        if (readyProviderCount === 0) {
+            var providers = liveModel.providers || []
+            for (var j = 0; j < providers.length; ++j) {
+                if (String(providers[j].accountState || "") === "needs_account") {
+                    return ({ "code": "LIVE_ACCOUNT_REQUIRED",
+                              "providerId": providers[j].providerId })
+                }
+            }
+        }
+        return null
+    }
+
+    function accountActionLabel(provider) {
+        var target = provider || accountProvider
+        return target
+                && String(target.accountState || "") === "needs_account"
+                ? "Connect account" : "Reconnect account"
+    }
+
+    function openProviderAccount(provider) {
+        var target = provider || accountProvider
+        if (!stackView || !target) return
+        stackView.push(Qt.resolvedUrl("ExtensionControlView.qml"), {
+            stackView: stackView,
+            extensionId: String(target.extensionId || ""),
+            instanceId: String(target.instanceId || "")
+        })
     }
 
     function egressModeStrength(mode) {
@@ -151,6 +204,7 @@ Item {
             stackView.push(Qt.resolvedUrl("LiveDetailsView.qml"), {
                 stackView: stackView,
                 liveModel: liveModel,
+                client: client,
                 playerController: playerController,
                 serverBaseUrl: serverBaseUrl,
                 providerId: providerId,
@@ -270,6 +324,13 @@ Item {
                     font.pixelSize: 12
                 }
                 ActionButton {
+                    text: root.accountActionLabel()
+                    compact: true
+                    variant: "primary"
+                    visible: Boolean(root.accountProblem && root.accountProvider)
+                    onClicked: root.openProviderAccount()
+                }
+                ActionButton {
                     text: "Retry"
                     compact: true
                     visible: Boolean(root.liveModel.lastError && root.liveModel.lastError.retryable)
@@ -307,13 +368,17 @@ Item {
             objectName: "liveProvidersUnavailable"
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignTop
-            title: "Live providers unavailable"
-            message: "Your installed Live providers are not ready."
-            actionText: "Retry"
+            title: root.accountProblem ? "Live provider needs an account"
+                                       : "Live providers unavailable"
+            message: root.accountProblem
+                     ? "Connect the provider account to load its Live catalogs."
+                     : "Your installed Live providers are not ready."
+            actionText: root.accountProblem ? root.accountActionLabel() : "Retry"
             visible: !root.liveModel.catalogIndexLoading
                      && (root.liveModel.providers || []).length > 0
                      && root.readyProviderCount === 0
-            onActionRequested: root.liveModel.refreshIndex()
+            onActionRequested: root.accountProblem ? root.openProviderAccount()
+                                                   : root.liveModel.refreshIndex()
         }
 
         EmptyState {
@@ -413,12 +478,16 @@ Item {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 height: implicitHeight
-                title: "Live provider unavailable"
+                title: root.pageAccountProblem ? "Live provider needs an account"
+                                               : "Live provider unavailable"
                 message: String(root.liveModel.lastError.message || "The selected catalog could not be loaded.")
-                actionText: "Retry"
+                actionText: root.pageAccountProblem
+                            ? root.accountActionLabel(root.pageAccountProvider) : "Retry"
                 visible: !root.liveModel.pageLoading && eventGrid.count === 0
                          && Boolean(root.liveModel.lastError.message)
-                onActionRequested: root.liveModel.refreshPage()
+                onActionRequested: root.pageAccountProblem
+                                   ? root.openProviderAccount(root.pageAccountProvider)
+                                   : root.liveModel.refreshPage()
             }
 
             EmptyState {

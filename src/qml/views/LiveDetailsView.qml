@@ -13,11 +13,17 @@ Item {
     required property string itemKey
     property StackView stackView: null
     property string serverBaseUrl: ""
+    property var client: null
     property var playerController: null
     signal backRequested()
     signal streamRequested(string providerId, string itemKey, string streamOptionKey)
 
     readonly property var item: liveModel.selectedItem || ({})
+    readonly property var currentProvider: provider()
+    readonly property bool accountRequired: String(
+                                                liveModel.lastError
+                                                ? liveModel.lastError.code : "")
+                                            === "LIVE_ACCOUNT_REQUIRED"
     readonly property int pageMargin: width < 700 ? Theme.space16 : Theme.space32
 
     Rectangle {
@@ -40,12 +46,26 @@ Item {
     }
 
     function providerName() {
+        var value = provider()
+        return value ? String(value.name || "Live provider") : "Live provider"
+    }
+
+    function provider() {
         var providers = liveModel.providers || []
         for (var i = 0; i < providers.length; ++i) {
             if (String(providers[i].providerId) === String(root.providerId))
-                return String(providers[i].name || "Live provider")
+                return providers[i]
         }
-        return "Live provider"
+        return null
+    }
+
+    function openProviderAccount() {
+        if (!stackView || !currentProvider) return
+        stackView.push(Qt.resolvedUrl("ExtensionControlView.qml"), {
+            stackView: stackView,
+            extensionId: String(currentProvider.extensionId || ""),
+            instanceId: String(currentProvider.instanceId || "")
+        })
     }
 
     function goBack() {
@@ -61,6 +81,7 @@ Item {
             stackView.push(Qt.resolvedUrl("LivePlayerView.qml"), {
                 stackView: stackView,
                 liveModel: liveModel,
+                client: client,
                 playerController: playerController,
                 providerId: providerId,
                 itemKey: itemKey,
@@ -139,13 +160,20 @@ Item {
             Layout.fillWidth: true
             Layout.leftMargin: root.pageMargin
             Layout.rightMargin: root.pageMargin
-            title: "Live details unavailable"
+            title: root.accountRequired ? "Live provider needs an account"
+                                        : "Live details unavailable"
             message: root.liveModel.lastError && root.liveModel.lastError.message
                      ? String(root.liveModel.lastError.message) : "This event could not be loaded."
-            actionText: "Retry"
+            actionText: root.accountRequired
+                        ? (root.currentProvider
+                           && String(root.currentProvider.accountState || "") === "needs_account"
+                           ? "Connect account" : "Reconnect account")
+                        : "Retry"
             visible: Boolean(!root.liveModel.itemLoading && !root.item.title
                              && root.liveModel.lastError && root.liveModel.lastError.message)
-            onActionRequested: root.liveModel.loadItem(root.providerId, root.itemKey)
+            onActionRequested: root.accountRequired ? root.openProviderAccount()
+                                                    : root.liveModel.loadItem(root.providerId,
+                                                                              root.itemKey)
         }
 
         ScrollView {

@@ -34,10 +34,12 @@ struct ApiMeta {
 
 struct Provider {
   QString providerId;
+  QString instanceId;
   QString extensionId;
   QString name;
   QString readiness;
   QString disabledReason;
+  QString accountState;
   int contractVersion{0};
   QStringList itemTypes;
   QStringList protocols;

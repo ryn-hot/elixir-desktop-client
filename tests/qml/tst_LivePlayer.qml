@@ -100,7 +100,13 @@ TestCase {
     QtObject {
         id: liveModel
         property bool itemLoading: false
-        property var providers: [{"providerId": testCase.providerId, "name": "Fixture Sports"}]
+        property var providers: [{
+            "providerId": testCase.providerId,
+            "instanceId": "80000000-0000-4000-8000-000000000008",
+            "extensionId": "fixture.live.provider",
+            "name": "Fixture Sports",
+            "accountState": "connected"
+        }]
         property var lastError: ({})
         property var selectedItem: ({
             "title": "Championship Final",
@@ -116,6 +122,12 @@ TestCase {
         property int loadItemCalls: 0
         function loadItem(provider, item) { loadItemCalls += 1 }
         function cancelItemRequest() {}
+    }
+
+    QtObject {
+        id: apiClient
+        signal extensionAccountSetupCompleted(string extensionId, string instanceId,
+                                              string setupId)
     }
 
     Component {
@@ -208,6 +220,7 @@ TestCase {
             "eventTitle": "Championship Final",
             "expectedEndUtc": new Date("2026-07-12T23:00:00Z"),
             "liveModel": liveModel,
+            "client": apiClient,
             "playbackSurfaceComponent": fakeSurfaceComponent
         })
     }
@@ -409,6 +422,38 @@ TestCase {
         compare(reload.visible, false)
         mouseClick(retry)
         compare(controller.startCalls, 3)
+    }
+
+    function test_account_required_retries_once_after_matching_setup_completion() {
+        controller.state = "failed"
+        controller.errorCode = "LIVE_ACCOUNT_REQUIRED"
+        controller.failureMessage = "Connect or reconnect this Live provider account."
+        controller.failureRetryable = false
+        var view = createPlayer(800, 600)
+        verify(view)
+        tryCompare(controller, "startCalls", 1)
+        compare(findChild(view, "livePlayerAccount").visible, true)
+        compare(findChild(view, "livePlayerAccount").text, "Reconnect account")
+        compare(findChild(view, "livePlayerRetry").visible, false)
+
+        apiClient.extensionAccountSetupCompleted(
+                    "other.live",
+                    "80000000-0000-4000-8000-000000000008",
+                    "90000000-0000-4000-8000-000000000009")
+        wait(50)
+        compare(controller.startCalls, 1)
+
+        apiClient.extensionAccountSetupCompleted(
+                    "fixture.live.provider",
+                    "80000000-0000-4000-8000-000000000008",
+                    "90000000-0000-4000-8000-000000000009")
+        tryCompare(controller, "startCalls", 2, 2500)
+        apiClient.extensionAccountSetupCompleted(
+                    "fixture.live.provider",
+                    "80000000-0000-4000-8000-000000000008",
+                    "90000000-0000-4000-8000-000000000009")
+        wait(1600)
+        compare(controller.startCalls, 2)
     }
 
     function test_stream_option_is_a_play_command() {

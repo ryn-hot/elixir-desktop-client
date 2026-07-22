@@ -285,6 +285,7 @@ private slots:
   void sessionContractsEnforceTokenModeAndUtcBounds();
   void serverPlaybackUrlIsBoundToExactSessionDeliveryRoute();
   void sessionFailureRetainsMessageAndRetryability();
+  void lpi2AccountRequiredDoesNotRetryOrFailOver();
   void n11AuthorizedDirectFallbackLoadsWithoutAnotherPrompt();
   void c30SourcesTrackPreferencesAndDvrBoundsAreStrict();
   void controllerCreatesHeartbeatsObservesAndClearsWithoutLibraryCalls();
@@ -443,6 +444,54 @@ void LivePlayerTests::sessionFailureRetainsMessageAndRetryability() {
   QCOMPARE(controller.failureMessage(),
            QStringLiteral("The requested Live source is not currently eligible."));
   QVERIFY(!controller.failureRetryable());
+}
+
+void LivePlayerTests::lpi2AccountRequiredDoesNotRetryOrFailOver() {
+  ApiClient auth;
+  auth.setBaseUrl(QStringLiteral("https://server.example"));
+  auth.setAuthToken(QStringLiteral("account-access-token"));
+  DeterministicScheduler scheduler;
+  ScriptedNetworkAccessManager network(scheduler);
+  network.enqueue(jsonResponse(createdResponse(true)));
+  network.enqueue(jsonResponse(detailResponse(4)));
+  network.enqueue(jsonResponse(
+      errorResponse(
+          QStringLiteral("LIVE_ACCOUNT_REQUIRED"),
+          false,
+          QStringLiteral("Connect or reconnect this Live provider account.")),
+      409));
+  network.enqueue(emptyResponse());
+  LiveApiClient live(&auth, &network);
+  FakePlaybackTarget target;
+  LivePlayerController controller(&live, &target);
+
+  controller.start(kProviderId, QStringLiteral("lvk1.item.abcdefghijklmnop"),
+                   QStringLiteral("lvk1.stream.abcdefghijklmnop"));
+  scheduler.runDue();
+  scheduler.runDue();
+  controller.observeMpv(
+      {{QStringLiteral("error"), QStringLiteral("HTTP 401 Unauthorized")}});
+  scheduler.runDue();
+  scheduler.runDue();
+
+  QCOMPARE(controller.state(), QStringLiteral("unavailable"));
+  QCOMPARE(controller.errorCode(), QStringLiteral("LIVE_ACCOUNT_REQUIRED"));
+  QVERIFY(!controller.failureRetryable());
+  const qsizetype requestCount = network.capturedRequests().size();
+  QVERIFY(std::any_of(
+      network.capturedRequests().cbegin(),
+      network.capturedRequests().cend(),
+      [](const CapturedNetworkRequest &request) {
+        return request.url.path().endsWith(QStringLiteral("/refresh"));
+      }));
+  QVERIFY(std::none_of(
+      network.capturedRequests().cbegin(),
+      network.capturedRequests().cend(),
+      [](const CapturedNetworkRequest &request) {
+        return request.url.path().endsWith(QStringLiteral("/failover"));
+      }));
+  scheduler.runDue();
+  QCOMPARE(network.capturedRequests().size(), requestCount);
 }
 
 void LivePlayerTests::n11AuthorizedDirectFallbackLoadsWithoutAnotherPrompt() {
