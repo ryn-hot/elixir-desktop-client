@@ -135,14 +135,26 @@ void LiveCatalogModel::setTimeZoneId(const QString &timeZoneId) {
 void LiveCatalogModel::refreshIndex() {
   beginNewGeneration();
   clearErrors();
+  const bool refreshSelectedPage =
+      !m_selectedProviderId.isEmpty() && !m_selectedCatalogId.isEmpty();
+  if (refreshSelectedPage) {
+    clearPage(true);
+    m_pageLoading = true;
+  }
   m_catalogIndexLoading = true;
   emit loadingChanged();
   m_providerRequestId =
       m_apiClient ? m_apiClient->listProviders(m_generation) : 0;
   m_catalogRequestId =
       m_apiClient ? m_apiClient->listCatalogs(m_generation) : 0;
+  if (m_apiClient && refreshSelectedPage) {
+    m_pageRequestId =
+        m_apiClient->listCatalogItems(m_selectedProviderId, m_selectedCatalogId,
+                                      m_filters, QString(), 40, m_generation);
+  }
   if (!m_apiClient) {
     m_catalogIndexLoading = false;
+    m_pageLoading = false;
     setError({
         {QStringLiteral("code"), QStringLiteral("LIVE_CLIENT_UNAVAILABLE")},
         {QStringLiteral("message"),
@@ -431,7 +443,9 @@ void LiveCatalogModel::cancelRequest(quint64 &requestId) {
 }
 
 void LiveCatalogModel::clearPage(bool preserveItems) {
-  m_nextCursor.clear();
+  if (!preserveItems) {
+    m_nextCursor.clear();
+  }
   m_stale = false;
   m_partial = false;
   m_selectedItem.clear();
@@ -465,13 +479,19 @@ void LiveCatalogModel::clearErrors() {
 void LiveCatalogModel::applyPage(const Live::CatalogPageEnvelope &envelope,
                                  bool append) {
   if (!append) {
-    beginResetModel();
-    m_items = envelope.items;
-    m_itemKeys.clear();
-    for (const Live::Item &item : m_items) {
-      m_itemKeys.insert(item.itemKey);
+    const bool preserveNewerRows =
+        envelope.meta.cacheState == QStringLiteral("stale") &&
+        envelope.items.isEmpty() && !m_items.isEmpty();
+    if (!preserveNewerRows) {
+      beginResetModel();
+      m_items = envelope.items;
+      m_itemKeys.clear();
+      for (const Live::Item &item : m_items) {
+        m_itemKeys.insert(item.itemKey);
+      }
+      endResetModel();
+      m_nextCursor = envelope.nextCursor;
     }
-    endResetModel();
   } else {
     QList<Live::Item> additions;
     for (const Live::Item &item : envelope.items) {
@@ -488,7 +508,9 @@ void LiveCatalogModel::applyPage(const Live::CatalogPageEnvelope &envelope,
       endInsertRows();
     }
   }
-  m_nextCursor = envelope.nextCursor;
+  if (append) {
+    m_nextCursor = envelope.nextCursor;
+  }
   m_stale = envelope.meta.cacheState == QStringLiteral("stale");
   m_partial = envelope.meta.partial;
   m_errors = Live::errorsToVariants(envelope.errors);

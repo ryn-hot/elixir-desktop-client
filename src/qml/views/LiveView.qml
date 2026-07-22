@@ -234,7 +234,7 @@ Item {
                 iconSource: "qrc:/icons/activity.svg"
                 compact: true
                 enabled: !root.liveModel.catalogIndexLoading && !root.liveModel.pageLoading
-                Accessible.name: "Refresh Live catalogs"
+                Accessible.name: "Refresh Live streams"
                 onClicked: root.liveModel.refreshIndex()
             }
         }
@@ -248,9 +248,12 @@ Item {
                    ? Theme.accentDangerSoft : (root.liveModel.stale ? Theme.accentInfoSoft : Theme.panelSoft)
             border.color: root.liveModel.lastError && root.liveModel.lastError.message
                           ? Theme.accentDanger : (root.liveModel.stale ? Theme.accentInfo : Theme.borderSubtle)
-            visible: (root.liveModel.lastError && root.liveModel.lastError.message)
-                     || root.liveModel.stale || root.liveModel.partial
-                     || (root.liveModel.errors || []).length > 0
+            visible: ((root.liveModel.lastError && root.liveModel.lastError.message)
+                      && eventGrid.count > 0)
+                     || (root.liveModel.stale && eventGrid.count > 0)
+                     || root.liveModel.partial
+                     || ((root.liveModel.errors || []).length > 0
+                         && !(root.liveModel.lastError && root.liveModel.lastError.message))
 
             RowLayout {
                 id: noticeRow
@@ -386,78 +389,101 @@ Item {
         }
 
         Item {
-            objectName: "livePageLoading"
+            id: livePageContent
+            objectName: "livePageContent"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: root.liveModel.pageLoading && eventGrid.count === 0
-            BusyIndicator {
-                anchors.centerIn: parent
-                running: parent.visible
-                Accessible.name: "Loading Live events"
-            }
-        }
+            implicitHeight: 180
+            visible: Boolean(root.liveModel.selectedCatalogId)
 
-        EmptyState {
-            objectName: "liveEmptyPage"
-            Layout.fillWidth: true
-            Layout.alignment: Qt.AlignTop
-            title: "Nothing live here"
-            message: "No events match the current catalog and filters."
-            actionText: "Refresh"
-            visible: root.liveModel.selectedCatalogId && !root.liveModel.pageLoading
-                     && eventGrid.count === 0 && !root.liveModel.lastError.message
-            onActionRequested: root.liveModel.refreshPage()
-        }
-
-        GridView {
-            id: eventGrid
-            objectName: "liveEventGrid"
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            visible: count > 0
-            clip: true
-            model: root.itemsModel
-            cellWidth: width / root.gridColumns
-            cellHeight: 248
-            keyNavigationEnabled: true
-            keyNavigationWraps: true
-            boundsBehavior: Flickable.StopAtBounds
-
-            delegate: LiveEventCard {
-                required property var model
-                width: Math.max(0, eventGrid.cellWidth - Theme.space16)
-                height: 232
-                itemData: ({
-                    "providerId": model.providerId,
-                    "itemKey": model.itemKey,
-                    "itemType": model.itemType,
-                    "title": model.title,
-                    "subtitle": model.subtitle,
-                    "description": model.description,
-                    "status": model.status,
-                    "poster": model.poster,
-                    "background": model.background,
-                    "logo": model.logo,
-                    "categories": model.categories,
-                    "badges": model.badges,
-                    "facts": model.facts
-                })
-                artworkSource: root.absoluteArtwork(model.background || model.poster)
-                timeText: root.formatEventTime(model.startsAtLocal, model.status)
-                sourceText: root.providerName(model.providerId)
-                onActivated: function(provider, key) { root.openItem(provider, key) }
-            }
-
-            footer: Item {
-                width: eventGrid.width
-                height: root.liveModel.hasMore ? 58 : Theme.space16
-                ActionButton {
-                    objectName: "liveLoadMore"
+            Item {
+                objectName: "livePageLoading"
+                anchors.fill: parent
+                visible: root.liveModel.pageLoading && eventGrid.count === 0
+                BusyIndicator {
                     anchors.centerIn: parent
-                    text: root.liveModel.loadingMore ? "Loading" : "Load more"
-                    enabled: !root.liveModel.loadingMore
-                    visible: root.liveModel.hasMore
-                    onClicked: root.liveModel.loadMoreItems()
+                    running: parent.visible
+                    Accessible.name: "Loading Live events"
+                }
+            }
+
+            EmptyState {
+                objectName: "livePageError"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: implicitHeight
+                title: "Live provider unavailable"
+                message: String(root.liveModel.lastError.message || "The selected catalog could not be loaded.")
+                actionText: "Retry"
+                visible: !root.liveModel.pageLoading && eventGrid.count === 0
+                         && Boolean(root.liveModel.lastError.message)
+                onActionRequested: root.liveModel.refreshPage()
+            }
+
+            EmptyState {
+                objectName: "liveEmptyPage"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: implicitHeight
+                title: "Nothing live here"
+                message: "No events match the current catalog and filters."
+                actionText: "Refresh"
+                visible: !root.liveModel.pageLoading && eventGrid.count === 0
+                         && !root.liveModel.lastError.message
+                onActionRequested: root.liveModel.refreshPage()
+            }
+
+            GridView {
+                id: eventGrid
+                objectName: "liveEventGrid"
+                anchors.fill: parent
+                visible: count > 0
+                clip: true
+                model: root.itemsModel
+                cellWidth: width / root.gridColumns
+                cellHeight: 248
+                keyNavigationEnabled: true
+                keyNavigationWraps: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                delegate: LiveEventCard {
+                    required property var model
+                    width: Math.max(0, eventGrid.cellWidth - Theme.space16)
+                    height: 232
+                    itemData: ({
+                        "providerId": model.providerId,
+                        "itemKey": model.itemKey,
+                        "itemType": model.itemType,
+                        "title": model.title,
+                        "subtitle": model.subtitle,
+                        "description": model.description,
+                        "status": model.status,
+                        "poster": model.poster,
+                        "background": model.background,
+                        "logo": model.logo,
+                        "categories": model.categories,
+                        "badges": model.badges,
+                        "facts": model.facts
+                    })
+                    artworkSource: root.absoluteArtwork(model.background || model.poster)
+                    timeText: root.formatEventTime(model.startsAtLocal, model.status)
+                    sourceText: root.providerName(model.providerId)
+                    onActivated: function(provider, key) { root.openItem(provider, key) }
+                }
+
+                footer: Item {
+                    width: eventGrid.width
+                    height: root.liveModel.hasMore ? 58 : Theme.space16
+                    ActionButton {
+                        objectName: "liveLoadMore"
+                        anchors.centerIn: parent
+                        text: root.liveModel.loadingMore ? "Loading" : "Load more"
+                        enabled: !root.liveModel.loadingMore
+                        visible: root.liveModel.hasMore
+                        onClicked: root.liveModel.loadMoreItems()
+                    }
                 }
             }
         }

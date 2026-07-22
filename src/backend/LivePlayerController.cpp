@@ -16,7 +16,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
 #include <utility>
 
 namespace {
@@ -27,7 +26,6 @@ constexpr auto kPendingServerKey = "live/pendingEndServer";
 constexpr auto kPendingAccountSessionKey = "live/pendingEndAccountSession";
 constexpr int kStallWindowMs = 15'000;
 constexpr int kStablePlaybackMs = 10'000;
-constexpr int kRefreshLeadMs = 60'000;
 constexpr int kMaximumClientFailovers = 2;
 constexpr std::array<int, 5> kReconnectCapsMs{1'000, 2'000, 4'000, 8'000,
                                               15'000};
@@ -147,9 +145,6 @@ LivePlayerController::LivePlayerController(LiveApiClient *api,
       m_countdownTimer.stop();
     }
   });
-  m_expiryTimer.setSingleShot(true);
-  connect(&m_expiryTimer, &QTimer::timeout, this,
-          &LivePlayerController::scheduleExpiryRefresh);
   m_stableTimer.setSingleShot(true);
   m_stableTimer.setInterval(kStablePlaybackMs);
   connect(&m_stableTimer, &QTimer::timeout, this,
@@ -327,6 +322,8 @@ void LivePlayerController::sendHeartbeatNow() {
        std::max(0.0, m_distanceFromLiveEdge)},
       {QStringLiteral("sourceKey"), m_sourceKey},
   };
+  const bool trackSelectionChanged =
+      m_trackSelectionVersion > m_sentTrackSelectionVersion;
   const auto addTrack =
       [&observation](const QString &prefix, const QString &trackId,
                      const QString &language, const QString &title) {
@@ -341,10 +338,12 @@ void LivePlayerController::sendHeartbeatNow() {
           observation.insert(prefix + QStringLiteral("Title"), title);
         }
       };
-  addTrack(QStringLiteral("audioTrack"), m_audioTrackId, m_audioTrackLanguage,
-           m_audioTrackTitle);
-  addTrack(QStringLiteral("subtitleTrack"), m_subtitleTrackId,
-           m_subtitleTrackLanguage, m_subtitleTrackTitle);
+  if (trackSelectionChanged) {
+    addTrack(QStringLiteral("audioTrack"), m_audioTrackId, m_audioTrackLanguage,
+             m_audioTrackTitle);
+    addTrack(QStringLiteral("subtitleTrack"), m_subtitleTrackId,
+             m_subtitleTrackLanguage, m_subtitleTrackTitle);
+  }
   m_controlRequest = m_api->heartbeatSession(m_sessionId, m_revision,
                                              observation, m_generation);
   m_sentTrackSelectionVersion = m_trackSelectionVersion;
@@ -481,7 +480,6 @@ void LivePlayerController::updateObservedTrackSelection(
   *currentId = trackId;
   *currentLanguage = language;
   *currentTitle = title;
-  ++m_trackSelectionVersion;
 }
 
 void LivePlayerController::selectTrack(const QString &type,
@@ -504,6 +502,7 @@ void LivePlayerController::selectTrack(const QString &type,
     return;
   }
   updateObservedTrackSelection(type, trackId, *tracks);
+  ++m_trackSelectionVersion;
   sendHeartbeatNow();
 }
 
@@ -727,7 +726,6 @@ bool LivePlayerController::applySession(const Live::SessionCreated &session,
   if (!url.isValid()) {
     return false;
   }
-  const QString previousSource = m_sourceKey;
   const QString previousDeliveryMode = m_deliveryMode;
   if (initial) {
     m_sessionId = session.sessionId;
@@ -744,9 +742,8 @@ bool LivePlayerController::applySession(const Live::SessionCreated &session,
   m_windowSeconds = session.live.windowSeconds.value_or(0);
   applySourceAndTrackState(session.selectedSource, session.availableSources,
                            session.trackPreferences);
-  m_expiresAtUtc = session.expiresAtUtc;
   m_lowLatency = session.live.targetLatencySeconds.has_value();
-  if (!initial && (previousSource != m_sourceKey ||
+  if (!initial && (m_recoveryAction == RecoveryAction::Failover ||
                    previousDeliveryMode != m_deliveryMode)) {
     m_refreshAttemptedForSource = false;
     m_reconnectAttempt = 0;
@@ -765,7 +762,6 @@ bool LivePlayerController::applySession(const Live::SessionCreated &session,
   m_heartbeatTimer.start(session.heartbeatIntervalSeconds * 1000);
   emit egressChanged();
   beginPlaybackLoad(url);
-  scheduleExpiryRefresh();
   sendHeartbeatNow();
   return true;
 }
@@ -1023,26 +1019,10 @@ void LivePlayerController::finishRecoveryFailure(const QString &code,
   }
 }
 
-void LivePlayerController::scheduleExpiryRefresh() {
-  m_expiryTimer.stop();
-  if (m_sessionId.isEmpty() || !m_expiresAtUtc.isValid()) {
-    return;
-  }
-  const qint64 untilRefresh =
-      QDateTime::currentDateTimeUtc().msecsTo(m_expiresAtUtc) - kRefreshLeadMs;
-  if (untilRefresh <= 0) {
-    requestRefresh(QStringLiteral("expiry_threshold"));
-    return;
-  }
-  m_expiryTimer.start(static_cast<int>(
-      std::min<qint64>(untilRefresh, std::numeric_limits<int>::max())));
-}
-
 void LivePlayerController::cancelRecoveryWork() {
   m_stallTimer.stop();
   m_reconnectTimer.stop();
   m_countdownTimer.stop();
-  m_expiryTimer.stop();
   m_stableTimer.stop();
   const quint64 recoveryRequest = m_recoveryRequest;
   const quint64 reconcileRequest = m_reconcileRequest;
@@ -1213,7 +1193,6 @@ void LivePlayerController::clearPlaybackSecrets() {
   m_streamOptionKey.clear();
   m_idempotencyKey.clear();
   m_pendingRecoveryReason.clear();
-  m_expiresAtUtc = {};
   m_reconnectAttempt = 0;
   m_failoverAttempts = 0;
   m_refreshAttemptedForSource = false;

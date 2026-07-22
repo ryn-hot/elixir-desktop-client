@@ -22,7 +22,6 @@ Item {
     property bool playbackStarted: false
     property bool routeClosed: false
     property bool controlsVisible: true
-    property string preferenceSourceKey: ""
     property bool audioPreferenceApplied: false
     property bool subtitlePreferenceApplied: false
     property bool playbackEstablished: false
@@ -164,12 +163,6 @@ Item {
     }
 
     function applyTrackPreferences(audio, subtitles) {
-        var sourceKey = String(playerController.selectedSourceKey || "")
-        if (preferenceSourceKey !== sourceKey) {
-            preferenceSourceKey = sourceKey
-            audioPreferenceApplied = false
-            subtitlePreferenceApplied = false
-        }
         if (!audioPreferenceApplied && audio.length > 0) {
             var preferredAudio = matchingTrack(playerController.preferredAudioTrack, audio)
             audioPreferenceApplied = true
@@ -254,6 +247,15 @@ Item {
     }
     Component.onDestruction: {
         if (!routeClosed && playerController) playerController.routeExited()
+    }
+
+    Connections {
+        target: root.playerController
+
+        function onPlaybackLoadRequested() {
+            root.audioPreferenceApplied = false
+            root.subtitlePreferenceApplied = false
+        }
     }
 
     Loader {

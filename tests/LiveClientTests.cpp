@@ -150,6 +150,23 @@ QByteArray pageEnvelope(
       .toJson(QJsonDocument::Compact);
 }
 
+QByteArray emptyPageEnvelope(const QString &cacheState) {
+  return QJsonDocument(
+             QJsonObject{
+                 {QStringLiteral("data"),
+                  QJsonObject{
+                      {QStringLiteral("providerId"), kProviderId},
+                      {QStringLiteral("catalogId"),
+                       QStringLiteral("live_events")},
+                      {QStringLiteral("items"), QJsonArray{}},
+                      {QStringLiteral("nextCursor"), QJsonValue::Null},
+                  }},
+                 {QStringLiteral("meta"), meta(cacheState)},
+                 {QStringLiteral("errors"), QJsonArray{}},
+             })
+      .toJson(QJsonDocument::Compact);
+}
+
 QByteArray itemEnvelope() {
   return QJsonDocument(
              QJsonObject{
@@ -314,6 +331,7 @@ private slots:
   void transportUsesBearerHeaderAndCancellationIsTerminal();
   void modelSuppressesOldGenerationAndConvertsUtcForDisplay();
   void modelSurfacesStructuredErrorsAndItemStreams();
+  void modelRefreshPreservesRowsAcrossTimeoutAndEmptyStalePage();
   void artworkAuthenticationPolicyIsExactOriginAndPath();
   void timezoneDstTransitionUsesSystemRules();
   void c31AdminTransportCoversEveryMutationAndCasBody();
@@ -501,6 +519,46 @@ void LiveClientTests::modelSurfacesStructuredErrorsAndItemStreams() {
                .value(QStringLiteral("streamOptionKey"))
                .toString(),
            QStringLiteral("lvk1.stream.primary-fixture"));
+}
+
+void LiveClientTests::
+    modelRefreshPreservesRowsAcrossTimeoutAndEmptyStalePage() {
+  ApiClient auth;
+  auth.setBaseUrl(QStringLiteral("https://server.example"));
+  auth.setAuthToken(QStringLiteral("test-access-token"));
+  DeterministicScheduler scheduler;
+  ScriptedNetworkAccessManager network(scheduler);
+  network.enqueue(jsonResponse(pageEnvelope(QStringLiteral("Current"))));
+  LiveApiClient live(&auth, &network);
+  LiveCatalogModel model(&live);
+
+  model.selectCatalog(kProviderId, QStringLiteral("live_events"));
+  scheduler.runDue();
+  QCOMPARE(model.rowCount(), 1);
+
+  network.enqueue(jsonResponse(providersEnvelope()));
+  network.enqueue(jsonResponse(catalogsEnvelope()));
+  network.enqueue(jsonResponse(errorEnvelope(), 504));
+  model.refreshIndex();
+  QVERIFY(model.catalogIndexLoading());
+  QVERIFY(model.pageLoading());
+  QCOMPARE(model.rowCount(), 1);
+  scheduler.runDue();
+  QCOMPARE(model.rowCount(), 1);
+  QCOMPARE(model.lastError().value(QStringLiteral("code")).toString(),
+           QStringLiteral("LIVE_PROVIDER_TIMEOUT"));
+
+  network.enqueue(jsonResponse(emptyPageEnvelope(QStringLiteral("stale"))));
+  model.refreshPage();
+  scheduler.runDue();
+  QCOMPARE(model.rowCount(), 1);
+  QVERIFY(model.stale());
+
+  network.enqueue(jsonResponse(emptyPageEnvelope(QStringLiteral("fresh"))));
+  model.refreshPage();
+  scheduler.runDue();
+  QCOMPARE(model.rowCount(), 0);
+  QVERIFY(!model.stale());
 }
 
 void LiveClientTests::artworkAuthenticationPolicyIsExactOriginAndPath() {

@@ -26,6 +26,8 @@ const QString kProviderId =
 const QString kSessionId =
     QStringLiteral("5ad4cbcb-45df-43af-896c-caba52ab56a4");
 const QString kSourceKey = QStringLiteral("lvk1.source.abcdefghijklmnopqrstuv");
+const QString kRotatedSourceKey =
+    QStringLiteral("lvk1.source.rotatedabcdefghijklmn");
 const QString kBackupSourceKey =
     QStringLiteral("lvk1.source.backupabcdefghijklmnop");
 
@@ -292,7 +294,7 @@ private slots:
   void c22RecoveryApiBuildsStrictRefreshAndManualFailoverRequests();
   void c22ControllerRefreshesThenFailsOverWithoutDuplicateActions();
   void c22ManualSourceSwitchRotatesPlaybackExactlyOnce();
-  void c22ExpiryThresholdRefreshesBeforeHeartbeatMutation();
+  void c22HealthyLeaseRenewalDoesNotReloadPlayback();
   void c22ExpectedEndAndExhaustionDoNotEnterRetryLoops();
   void c22RefreshFailureResyncsRevisionBeforeAutomaticFailover();
   void c22DeliveryModeEscalationResetsPerRouteRecoveryState();
@@ -833,10 +835,12 @@ void LivePlayerTests::
   ScriptedNetworkAccessManager network(scheduler);
   network.enqueue(jsonResponse(createdResponse(true)));
   network.enqueue(jsonResponse(detailResponse(4)));
-  network.enqueue(
-      jsonResponse(recoveredResponse(6, kSourceKey, QStringLiteral("Primary"),
-                                     QByteArrayLiteral("token-refresh-0001"))));
-  network.enqueue(jsonResponse(detailResponse(7)));
+  network.enqueue(jsonResponse(
+      recoveredResponse(6, kRotatedSourceKey, QStringLiteral("Primary"),
+                        QByteArrayLiteral("token-refresh-0001"))));
+  network.enqueue(jsonResponse(detailResponse(
+      7, QStringLiteral("playing"), kRotatedSourceKey,
+      QStringLiteral("Primary"))));
   network.enqueue(jsonResponse(
       recoveredResponse(10, kBackupSourceKey, QStringLiteral("Backup"),
                         QByteArrayLiteral("token-backup-00002"))));
@@ -862,6 +866,7 @@ void LivePlayerTests::
   scheduler.runDue();
   scheduler.runDue();
   QCOMPARE(controller.revision(), qint64{7});
+  QCOMPARE(controller.selectedSourceKey(), kRotatedSourceKey);
   QCOMPARE(target.token, QByteArrayLiteral("token-refresh-0001"));
 
   controller.observeMpv({{QStringLiteral("error"),
@@ -1022,17 +1027,15 @@ void LivePlayerTests::c22ManualSourceSwitchRotatesPlaybackExactlyOnce() {
   scheduler.runDue();
 }
 
-void LivePlayerTests::c22ExpiryThresholdRefreshesBeforeHeartbeatMutation() {
+void LivePlayerTests::c22HealthyLeaseRenewalDoesNotReloadPlayback() {
   ApiClient auth;
   auth.setBaseUrl(QStringLiteral("https://server.example"));
   auth.setAuthToken(QStringLiteral("account-access-token"));
   DeterministicScheduler scheduler;
   ScriptedNetworkAccessManager network(scheduler);
   network.enqueue(jsonResponse(expiringCreatedResponse()));
-  network.enqueue(jsonResponse(
-      recoveredResponse(5, kSourceKey, QStringLiteral("Primary"),
-                        QByteArrayLiteral("expiry-refresh-token"))));
-  network.enqueue(jsonResponse(detailResponse(6)));
+  network.enqueue(jsonResponse(detailResponse(4)));
+  network.enqueue(jsonResponse(detailResponse(5)));
   network.enqueue(emptyResponse());
   LiveApiClient live(&auth, &network);
   FakePlaybackTarget target;
@@ -1041,19 +1044,41 @@ void LivePlayerTests::c22ExpiryThresholdRefreshesBeforeHeartbeatMutation() {
                    QStringLiteral("lvk1.stream.abcdefghijklmnop"));
   scheduler.runDue();
   scheduler.runDue();
-  scheduler.runDue();
 
-  QCOMPARE(controller.revision(), qint64{6});
+  QCOMPARE(controller.revision(), qint64{4});
+  QCOMPARE(target.prepareCount, 1);
+  QCOMPARE(target.loadCount, 1);
+  QCOMPARE(network.capturedRequests().size(), 2);
   QCOMPARE(network.capturedRequests().at(1).url.path(),
            QStringLiteral("/api/v1/live/sessions/") + kSessionId +
-               QStringLiteral("/refresh"));
-  const QJsonObject refresh =
-      QJsonDocument::fromJson(network.capturedRequests().at(1).body).object();
-  QCOMPARE(refresh.value(QStringLiteral("expectedRevision")).toInteger(),
-           qint64{3});
-  QCOMPARE(refresh.value(QStringLiteral("reason")).toString(),
-           QStringLiteral("expiry_threshold"));
-  QCOMPARE(target.token, QByteArrayLiteral("expiry-refresh-token"));
+               QStringLiteral("/heartbeat"));
+
+  controller.observeMpv(
+      {{QStringLiteral("coreIdle"), false},
+       {QStringLiteral("pausedForCache"), false},
+       {QStringLiteral("paused"), false},
+       {QStringLiteral("playbackPositionSeconds"), 30.0},
+       {QStringLiteral("audioTracks"),
+        QVariantList{
+            QVariantMap{{QStringLiteral("id"), QStringLiteral("audio-1")},
+                        {QStringLiteral("language"), QStringLiteral("en")}}}},
+       {QStringLiteral("subtitleTracks"), QVariantList{}},
+       {QStringLiteral("audioTrackId"), QStringLiteral("audio-1")},
+       {QStringLiteral("subtitleTrackId"), QStringLiteral("no")}});
+  controller.sendHeartbeatNow();
+  scheduler.runDue();
+
+  QCOMPARE(controller.revision(), qint64{5});
+  QCOMPARE(target.prepareCount, 1);
+  QCOMPARE(target.loadCount, 1);
+  QCOMPARE(network.capturedRequests().size(), 3);
+  const QJsonObject renewedLease =
+      QJsonDocument::fromJson(network.capturedRequests().at(2).body).object();
+  QVERIFY(!renewedLease.contains(QStringLiteral("audioTrackId")));
+  QVERIFY(!renewedLease.contains(QStringLiteral("subtitleTrackId")));
+  for (const CapturedNetworkRequest &request : network.capturedRequests()) {
+    QVERIFY(!request.url.path().endsWith(QStringLiteral("/refresh")));
+  }
   controller.stop();
   scheduler.runDue();
 }

@@ -56,6 +56,8 @@ TestCase {
         property var lastTrackSelection: ({})
         property string lastSourceKey: ""
 
+        signal playbackLoadRequested(url playbackUrl)
+
         function attachPlayer(target) {
             attachCalls += 1
             attachedTarget = target
@@ -323,6 +325,36 @@ TestCase {
         view.samplePlayback()
         compare(controller.audioTracks.length, 1)
         compare(controller.selectTrackCalls, 2)
+    }
+
+    function test_heartbeat_source_key_rotation_does_not_reapply_tracks() {
+        controller.state = "playing"
+        controller.preferredAudioTrack = {
+            "trackId": "legacy-audio", "language": "es", "title": "Spanish"
+        }
+        controller.preferredSubtitleTrack = {
+            "trackId": "no", "language": "", "title": ""
+        }
+        var view = createPlayer(1280, 720)
+        verify(view)
+        tryCompare(controller, "startCalls", 1)
+
+        view.samplePlayback()
+        compare(controller.selectTrackCalls, 2)
+
+        for (var revision = 1; revision <= 5; ++revision) {
+            var rotatedKey = "lvk1.source.revision" + String(revision)
+            controller.selectedSourceKey = rotatedKey
+            controller.availableSources = [{
+                "sourceKey": rotatedKey, "label": "Primary", "quality": "1080p"
+            }]
+            view.samplePlayback()
+        }
+        compare(controller.selectTrackCalls, 2)
+
+        controller.playbackLoadRequested("https://server.example/live.m3u8")
+        view.samplePlayback()
+        compare(controller.selectTrackCalls, 4)
     }
 
     function test_non_seekable_and_terminal_states_have_no_finite_progress() {

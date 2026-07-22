@@ -226,15 +226,22 @@ TestCase {
         }]
         var view = createLiveView(900, 600)
         verify(view)
-        compare(findChild(view, "liveNoticeBanner").visible, true)
+        tryCompare(findChild(view, "liveNoticeBanner"), "visible", true)
         verify(findChild(view, "liveNoticeText").text.indexOf("Fixture Sports") >= 0)
         mock.errors = []
         mock.partial = false
         mock.stale = true
-        compare(findChild(view, "liveNoticeBanner").visible, true)
+        compare(findChild(view, "liveNoticeBanner").visible, false)
+        appendLongEvent()
+        tryCompare(findChild(view, "liveEventGrid"), "count", 1)
+        tryCompare(findChild(view, "liveNoticeBanner"), "visible", true)
+        rows.clear()
+        tryCompare(findChild(view, "liveEventGrid"), "count", 0)
         mock.stale = false
         mock.lastError = {"code": "LIVE_PROVIDER_TIMEOUT", "message": "Provider timed out", "retryable": true}
-        compare(findChild(view, "liveNoticeBanner").visible, true)
+        compare(findChild(view, "liveNoticeBanner").visible, false)
+        tryCompare(findChild(view, "livePageError"), "visible", true)
+        verify(findChild(view, "livePageContent").height > 0)
     }
 
     function test_event_card_keyboard_accessibility_and_long_text() {
@@ -246,7 +253,7 @@ TestCase {
         tryCompare(grid, "count", 1)
         var card = findChild(view, "liveEventCard")
         verify(card)
-        verify(card.width <= grid.width)
+        tryVerify(function() { return card.width > 0 && card.width <= grid.width }, 1000)
         verify(card.contentFits)
         compare(card.Accessible.name.indexOf("championship") >= 0, true)
         compare(card.Accessible.name, liveAccessibilityGolden.eventCard)
@@ -308,8 +315,7 @@ TestCase {
         var grid = findChild(view, "liveEventGrid")
         tryCompare(grid, "count", 1)
         var card = findChild(view, "liveEventCard")
-        verify(card.width > 0)
-        verify(card.width <= grid.width)
+        tryVerify(function() { return card.width > 0 && card.width <= grid.width }, 1000)
         verify(card.x >= 0)
         verify(card.x + card.width <= grid.width + 1)
     }

@@ -232,7 +232,7 @@ if(BUILD_TESTING)
             c22RecoveryApiBuildsStrictRefreshAndManualFailoverRequests
             c22ControllerRefreshesThenFailsOverWithoutDuplicateActions
             c22ManualSourceSwitchRotatesPlaybackExactlyOnce
-            c22ExpiryThresholdRefreshesBeforeHeartbeatMutation
+            c22HealthyLeaseRenewalDoesNotReloadPlayback
             c22ExpectedEndAndExhaustionDoNotEnterRetryLoops
             c22RefreshFailureResyncsRevisionBeforeAutomaticFailover
             c22DeliveryModeEscalationResetsPerRouteRecoveryState
@@ -269,7 +269,8 @@ if(BUILD_TESTING)
     add_test(
         NAME c22-live-recovery-qml
         COMMAND elixir-client-qml-tests
-            LivePlayer::test_recovery_countdown_actions_and_compact_geometry)
+            LivePlayer::test_recovery_countdown_actions_and_compact_geometry
+            LivePlayer::test_heartbeat_source_key_rotation_does_not_reapply_tracks)
     add_test(
         NAME c30-live-player-qml
         COMMAND elixir-client-qml-tests

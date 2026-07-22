@@ -143,7 +143,6 @@ private:
   void finishRecoveryFailure(const QString &code, bool terminalFailure,
                              const QString &message = {},
                              bool retryable = false);
-  void scheduleExpiryRefresh();
   void cancelRecoveryWork();
   void resetStableRecoveryState();
   [[nodiscard]] QString classifyMpvError(const QString &error) const;
@@ -177,7 +176,6 @@ private:
   QTimer m_stallTimer;
   QTimer m_reconnectTimer;
   QTimer m_countdownTimer;
-  QTimer m_expiryTimer;
   QTimer m_stableTimer;
   quint64 m_generation{0};
   quint64 m_createRequest{0};
@@ -226,7 +224,6 @@ private:
   QString m_streamOptionKey;
   QString m_idempotencyKey;
   QString m_pendingRecoveryReason;
-  QDateTime m_expiresAtUtc;
   int m_reconnectAttempt{0};
   int m_reconnectSecondsRemaining{0};
   int m_failoverAttempts{0};
