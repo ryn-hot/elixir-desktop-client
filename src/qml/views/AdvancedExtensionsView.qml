@@ -67,6 +67,15 @@ Item {
         return false
     }
 
+    function isExtensionUninstalling(extensionId) {
+        for (var i = 0; i < apiClient.extensionUninstallingIds.length; ++i) {
+            if (apiClient.extensionUninstallingIds[i] === extensionId) {
+                return true
+            }
+        }
+        return false
+    }
+
     function isBlueprintId(extensionId) {
         if (!extensionId) {
             return false
@@ -834,13 +843,17 @@ Item {
             }
         }
         function onRequestFailed(endpoint, error) {
+            if (endpoint.endsWith("/uninstall")) {
+                installedActionToast.show(error)
+            }
             if (endpoint === "/api/v1/extensions/downloaders/profile") {
                 downloaderProfileUpdating = false
                 pendingDownloaderProfile = ""
                 downloaderToast.show(error)
             }
             if (endpoint.indexOf("/api/v1/extensions/") === 0 &&
-                    endpoint !== "/api/v1/extensions/downloaders/profile") {
+                    endpoint !== "/api/v1/extensions/downloaders/profile" &&
+                    !endpoint.endsWith("/uninstall")) {
                 actionToast.show(error)
             }
             if (endpoint === "/api/v1/extensions/secrets" && planRefreshPendingCount > 0) {
@@ -849,6 +862,9 @@ Item {
                     finishSecretCreateBatch()
                 }
             }
+        }
+        function onExtensionUninstalled(extensionId, name) {
+            installedActionToast.show("Uninstalled " + (name !== "" ? name : extensionId) + ".")
         }
         function onExtensionsCatalogChanged() {
             actionToast.clear()
@@ -2556,6 +2572,13 @@ Item {
                         font.family: Theme.fontDisplay
                     }
 
+                    InlineToast {
+                        id: installedActionToast
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                    }
+
                     Repeater {
                         model: apiClient.extensionsInstalled
                         delegate: Rectangle {
@@ -2605,7 +2628,8 @@ Item {
 
                                 Button {
                                     text: modelData.enabled === true ? "Disable" : "Enable"
-                                    enabled: apiClient.authToken !== ""
+                                    enabled: apiClient.authToken !== "" &&
+                                             !root.isExtensionUninstalling(modelData.extension_id)
                                     onClicked: {
                                         if (modelData.enabled === true) {
                                             apiClient.disableExtension(modelData.extension_id)
@@ -2629,8 +2653,12 @@ Item {
                                 }
 
                                 Button {
-                                    text: "Uninstall"
-                                    enabled: apiClient.authToken !== ""
+                                    Layout.preferredWidth: 104
+                                    text: root.isExtensionUninstalling(modelData.extension_id)
+                                          ? "Uninstalling..."
+                                          : "Uninstall"
+                                    enabled: apiClient.authToken !== "" &&
+                                             !root.isExtensionUninstalling(modelData.extension_id)
                                     visible: !isCoreExtension(modelData.extension_id)
                                     onClicked: uninstallDialog.open()
                                     background: Rectangle {
@@ -2654,7 +2682,10 @@ Item {
                                 modal: true
                                 title: "Uninstall Extension"
                                 standardButtons: Dialog.Cancel | Dialog.Ok
-                                onAccepted: apiClient.uninstallExtension(modelData.extension_id)
+                                onAccepted: {
+                                    installedActionToast.clear()
+                                    apiClient.uninstallExtension(modelData.extension_id)
+                                }
                                 contentItem: ColumnLayout {
                                     spacing: Theme.spacingSmall
                                     Label {

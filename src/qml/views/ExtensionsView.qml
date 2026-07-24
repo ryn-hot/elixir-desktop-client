@@ -184,6 +184,9 @@ Item {
             return true
         }
         var severity = statusSeverityForItem(item)
+        if (severity === "progress") {
+            return true
+        }
         var action = statusActionForItem(item)
         if (severity === "attention" && action === "finish_setup") {
             return true
@@ -777,6 +780,9 @@ Item {
             return Theme.border
         }
         var code = String(status.code || "")
+        if (String(status.severity || "") === "progress") {
+            return Theme.accentInfo
+        }
         if (code === "runtime_status_stale" || code === "runtime_status_recovering") {
             return Theme.accent
         }
@@ -800,6 +806,9 @@ Item {
             return Theme.backgroundCardRaised
         }
         var code = String(status.code || "")
+        if (String(status.severity || "") === "progress") {
+            return Theme.accentInfoSoft
+        }
         if (code === "runtime_status_stale" || code === "runtime_status_recovering") {
             return Theme.accentSoft
         }
@@ -832,6 +841,9 @@ Item {
 
     function primaryActionFor(card) {
         if (!card || !card.status) {
+            return { label: "", action: "" }
+        }
+        if (String(card.status.severity || "") === "progress") {
             return { label: "", action: "" }
         }
         var label = String(card.status.actionLabel || "")
@@ -1088,7 +1100,11 @@ Item {
                 },
                 status: {
                     severity: severity,
-                    order: severity === "attention" ? 0 : (severity === "disabled" ? 2 : 1),
+                    order: severity === "progress"
+                           ? 0
+                           : (severity === "attention"
+                              ? 1
+                              : (severity === "disabled" ? 3 : 2)),
                     code: String(item.statusCode || ""),
                     label: String(item.label || "Ready"),
                     description: String(item.description || ""),
@@ -1121,9 +1137,16 @@ Item {
         })
     }
 
+    function progressCards() {
+        return installedCards().filter(function(item) {
+            return item.status.severity === "progress"
+        })
+    }
+
     function readyCards() {
         return installedCards().filter(function(item) {
             return item.status.severity !== "attention"
+                    && item.status.severity !== "progress"
         })
     }
 
@@ -1137,12 +1160,16 @@ Item {
             return "Checking extension status..."
         }
         var count = apiClient.extensionsNeedsAttentionCount
-        if (count === 0) {
-            return apiClient.extensionsInstalled.length === 0
-                   ? "Install extensions from the marketplace below."
-                   : "All extensions healthy"
+        if (count > 0) {
+            return count + " extension" + (count === 1 ? "" : "s") + " need attention"
         }
-        return count + " extension" + (count === 1 ? "" : "s") + " need attention"
+        var starting = progressCards().length
+        if (starting > 0) {
+            return starting + " extension" + (starting === 1 ? "" : "s") + " setting up"
+        }
+        return apiClient.extensionsInstalled.length === 0
+               ? "Install extensions from the marketplace below."
+               : "All extensions healthy"
     }
 
     function runtimeStatusVisible() {
@@ -1793,6 +1820,132 @@ Item {
                             font.pixelSize: 12
                             font.family: Theme.fontBody
                             visible: apiClient.extensionsInstalled.length === 0
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: Theme.spacingSmall
+                            visible: progressCards().length > 0
+
+                            Label {
+                                text: "Setting up"
+                                color: Theme.textPrimary
+                                font.pixelSize: 13
+                                font.family: Theme.fontDisplay
+                            }
+
+                            Repeater {
+                                model: root.progressCards()
+                                delegate: Rectangle {
+                                    id: progressCard
+                                    objectName: "extensionsProgressCard"
+                                    property color cardAccent: root.statusAccent(modelData.status)
+                                    Layout.fillWidth: true
+                                    radius: Theme.radiusMedium
+                                    color: Theme.backgroundCardRaised
+                                    border.color: Qt.rgba(
+                                                      cardAccent.r,
+                                                      cardAccent.g,
+                                                      cardAccent.b,
+                                                      0.42)
+                                    implicitHeight: progressContent.implicitHeight
+                                                    + Theme.spacingMedium * 2
+                                    height: implicitHeight
+                                    clip: true
+
+                                    Rectangle {
+                                        width: 3
+                                        anchors.left: parent.left
+                                        anchors.top: parent.top
+                                        anchors.bottom: parent.bottom
+                                        color: progressCard.cardAccent
+                                    }
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: parent.radius
+                                        color: root.statusTint(modelData.status)
+                                        opacity: 0.1
+                                    }
+
+                                    ColumnLayout {
+                                        id: progressContent
+                                        anchors.fill: parent
+                                        anchors.margins: Theme.spacingMedium
+                                        spacing: Theme.spacingSmall
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: Theme.spacingSmall
+
+                                            Label {
+                                                text: root.extensionName(modelData.entry)
+                                                color: Theme.textPrimary
+                                                font.pixelSize: 14
+                                                font.family: Theme.fontDisplay
+                                                Layout.fillWidth: true
+                                                elide: Text.ElideRight
+                                            }
+
+                                            Rectangle {
+                                                radius: Theme.radiusSmall
+                                                color: root.statusChipFill(modelData.status)
+                                                border.color: progressCard.cardAccent
+                                                implicitHeight: 26
+                                                implicitWidth: progressChipContent.implicitWidth + 12
+
+                                                RowLayout {
+                                                    id: progressChipContent
+                                                    anchors.centerIn: parent
+                                                    spacing: 5
+
+                                                    BusyIndicator {
+                                                        objectName: "extensionsProgressIndicator"
+                                                        running: true
+                                                        implicitWidth: 16
+                                                        implicitHeight: 16
+                                                        Layout.preferredWidth: 16
+                                                        Layout.preferredHeight: 16
+                                                    }
+
+                                                    Label {
+                                                        objectName: "extensionsProgressLabel"
+                                                        text: modelData.status.label
+                                                        color: progressCard.cardAccent
+                                                        font.pixelSize: 11
+                                                        font.family: Theme.fontBody
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: modelData.status.description
+                                            color: Theme.textSecondary
+                                            font.pixelSize: 12
+                                            font.family: Theme.fontBody
+                                            wrapMode: Text.WordWrap
+                                        }
+
+                                        RowLayout {
+                                            spacing: Theme.spacingSmall
+                                            Repeater {
+                                                model: [
+                                                    modelData.entry.version
+                                                        ? "v" + modelData.entry.version : "",
+                                                    root.kindLabel(modelData.entry),
+                                                    root.trustLabel(modelData.entry)
+                                                ]
+                                                delegate: PillTag {
+                                                    visible: modelData !== ""
+                                                    text: modelData
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         ColumnLayout {

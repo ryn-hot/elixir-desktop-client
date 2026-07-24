@@ -249,9 +249,11 @@ if(BUILD_TESTING)
         NAME c12-live-qml
         COMMAND elixir-client-qml-tests
             LiveBrowse::test_loading_empty_and_unavailable_states
+            LiveBrowse::test_unavailable_provider_retries_until_catalogs_become_ready
             LiveBrowse::test_partial_stale_and_error_notice_states
             LiveBrowse::test_account_required_states_use_native_connect_and_reconnect_copy
             LiveBrowse::test_event_card_keyboard_accessibility_and_long_text
+            LiveBrowse::test_unknown_channel_status_is_not_exposed_as_a_badge
             LiveBrowse::test_live_vpn_policy_is_available_from_toolbar
             LiveBrowse::test_responsive_card_geometry
             LiveBrowse::test_extension_filter_types_render_native_controls
@@ -259,6 +261,7 @@ if(BUILD_TESTING)
             LiveBrowse::test_theme_meets_normal_text_contrast
             LiveBrowse::test_details_loading_error_and_long_metadata
             Extensions::test_ready_live_provider_can_open_live
+            Extensions::test_live_provider_startup_is_dynamic_progress_not_needs_setup
             Extensions::test_live_account_actions_target_the_exact_instance)
     add_test(
         NAME c21-live-player-qml

@@ -4,14 +4,16 @@ import Elixir 1.0
 
 Rectangle {
     id: root
+    objectName: "liveStatusPill"
     property string status: "unknown"
     property string label: {
         if (status === "live") return "LIVE"
         if (status === "scheduled") return "UPCOMING"
         if (status === "ended") return "ENDED"
         if (status === "unavailable") return "UNAVAILABLE"
-        return "STATUS UNKNOWN"
+        return ""
     }
+    visible: label !== ""
 
     implicitWidth: statusLabel.implicitWidth + 14
     implicitHeight: 22
@@ -22,8 +24,7 @@ Rectangle {
         if (status === "ended") return Theme.surfaceRaised
         return Theme.surface
     }
-    border.color: status === "unknown" || status === "unavailable"
-                  ? Theme.borderSubtle : "transparent"
+    border.color: status === "unavailable" ? Theme.borderSubtle : "transparent"
 
     Label {
         id: statusLabel

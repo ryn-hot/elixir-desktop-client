@@ -19,7 +19,10 @@ AbstractButton {
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     Accessible.name: String(itemData.title || "Live event")
-    Accessible.description: [String(itemData.status || ""), root.timeText].filter(Boolean).join(", ")
+    Accessible.description: [
+        String(itemData.status || "") === "unknown" ? "" : String(itemData.status || ""),
+        root.timeText
+    ].filter(Boolean).join(", ")
     Accessible.role: Accessible.Button
     onClicked: activated(String(itemData.providerId || ""), String(itemData.itemKey || ""))
 

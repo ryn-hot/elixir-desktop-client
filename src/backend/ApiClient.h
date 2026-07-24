@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QSet>
+#include <QStringList>
 #include <QUrl>
 #include <QVariant>
 #include <functional>
@@ -34,6 +35,7 @@ class ApiClient : public QObject {
     Q_PROPERTY(QVariantList extensionsInstalled READ extensionsInstalled NOTIFY extensionsCatalogChanged)
     Q_PROPERTY(QVariantList extensionsAvailable READ extensionsAvailable NOTIFY extensionsCatalogChanged)
     Q_PROPERTY(QVariantList extensionsCore READ extensionsCore NOTIFY extensionsCatalogChanged)
+    Q_PROPERTY(QStringList extensionUninstallingIds READ extensionUninstallingIds NOTIFY extensionUninstallingChanged)
     Q_PROPERTY(QVariantList extensionsInstances READ extensionsInstances NOTIFY extensionsInstancesChanged)
     Q_PROPERTY(QVariantList extensionsSecrets READ extensionsSecrets NOTIFY extensionsSecretsChanged)
     Q_PROPERTY(QVariantMap extensionsPlan READ extensionsPlan NOTIFY extensionsPlanChanged)
@@ -143,6 +145,7 @@ public:
     QVariantList extensionsInstalled() const;
     QVariantList extensionsAvailable() const;
     QVariantList extensionsCore() const;
+    QStringList extensionUninstallingIds() const;
     QString extensionsLastRefreshedAt() const;
     QString extensionsLastRefreshSuccessAt() const;
     QString extensionsLastRefreshError() const;
@@ -462,6 +465,8 @@ signals:
     void clientCapabilitiesChanged();
     void networkTypeChanged();
     void extensionsCatalogChanged();
+    void extensionUninstallingChanged();
+    void extensionUninstalled(const QString &extensionId, const QString &name);
     void extensionsInstancesChanged();
     void extensionsSecretsChanged();
     void extensionsPlanChanged();
@@ -524,6 +529,10 @@ signals:
         const QString &extensionId,
         const QString &actionId,
         const QString &message);
+    void extensionControlSettingsUpdated(
+        const QString &extensionId,
+        const QString &instanceId,
+        const QStringList &fieldIds);
     void extensionAccountSetupStarted(
         const QString &extensionId, const QString &instanceId,
         const QString &setupId, const QString &configureUrl);
@@ -588,6 +597,8 @@ private:
     QString normalizeBaseUrl(const QString &value) const;
     QUrl makeUrl(const QString &path) const;
     void updateExtensionsCatalog(const QJsonObject &obj);
+    void setExtensionUninstalling(const QString &extensionId, bool uninstalling);
+    void removeInstalledExtension(const QString &extensionId);
     void updateExtensionsPlan(const QJsonObject &obj);
     void updateExtensionsRun(const QJsonObject &obj);
     void updateExtensionStatusSummary(const QJsonObject &obj);
@@ -625,6 +636,8 @@ private:
     void updateAcquisitionReviewDetail(const QJsonObject &obj);
     void updateAcquisitionSubscriptionCoverage(const QJsonObject &obj);
     void setAcquisitionReviewLoading(bool loading);
+    void finishMediaAcquisitionFetch();
+    void finishAcquisitionReleasesFetch();
     void sendRequest(
         const QString &method,
         const QString &path,
@@ -679,6 +692,8 @@ private:
     QVariantList m_extensionsInstalled;
     QVariantList m_extensionsAvailable;
     QVariantList m_extensionsCore;
+    QStringList m_extensionUninstallingIds;
+    quint64 m_extensionsCatalogRequestId = 0;
     QVariantList m_extensionsInstances;
     QVariantList m_extensionsSecrets;
     QVariantMap m_extensionsPlan;
@@ -695,6 +710,7 @@ private:
     QVariantMap m_extensionsRuntimeStatus;
     QVariantMap m_extensionControlSurface;
     bool m_extensionControlLoading = false;
+    quint64 m_extensionControlRequestId = 0;
     QString m_extensionsLastRefreshedAt;
     QString m_extensionsLastRefreshSuccessAt;
     QString m_extensionsLastRefreshError;
@@ -745,8 +761,16 @@ private:
     int m_mediaAcquisitionActiveCount = 0;
     int m_mediaAcquisitionDownloadingCount = 0;
     int m_mediaAcquisitionNeedsAttentionCount = 0;
+    bool m_mediaAcquisitionFetchInFlight = false;
+    bool m_mediaAcquisitionRefreshQueued = false;
+    int m_mediaAcquisitionQueuedLimit = 12;
     QVariantList m_acquisitionReviewReleases;
     QVariantMap m_acquisitionReviewDetail;
     QVariantMap m_acquisitionSubscriptionCoverage;
     bool m_acquisitionReviewLoading = false;
+    bool m_acquisitionReleasesFetchInFlight = false;
+    bool m_acquisitionReleasesRefreshQueued = false;
+    QString m_acquisitionReleasesQueuedState;
+    QString m_acquisitionReleasesQueuedSubscriptionId;
+    int m_acquisitionReleasesQueuedLimit = 50;
 };

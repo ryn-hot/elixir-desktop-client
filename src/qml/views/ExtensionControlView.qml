@@ -25,6 +25,12 @@ Item {
     property bool accountSetupCheckPending: false
     property int accountSetupPollFailures: 0
     property bool componentReady: false
+    property var fieldDraftValues: ({})
+    property string activeSettingsRequestId: ""
+    property var activeSettingsFieldIds: []
+    property string activeSettingsLabel: ""
+    property string activeSettingsState: ""
+    property string activeSettingsMessage: ""
 
     function controlSurface() {
         var surface = apiClient.extensionControlSurface || {}
@@ -332,6 +338,219 @@ Item {
         return text === "" ? "Not set" : text
     }
 
+    function fieldId(field) {
+        return String(field && field.id || "")
+    }
+
+    function hasFieldDraft(field) {
+        var key = fieldId(field)
+        return key !== "" && fieldDraftValues.hasOwnProperty(key)
+    }
+
+    function fieldEditorValue(field) {
+        var key = fieldId(field)
+        if (key !== "" && fieldDraftValues.hasOwnProperty(key)) {
+            return String(fieldDraftValues[key])
+        }
+        return editableFieldValue(field)
+    }
+
+    function clearSettingsFeedback() {
+        settingsFeedbackTimer.stop()
+        activeSettingsRequestId = ""
+        activeSettingsFieldIds = []
+        activeSettingsLabel = ""
+        activeSettingsState = ""
+        activeSettingsMessage = ""
+    }
+
+    function resetSettingsInteraction() {
+        clearSettingsFeedback()
+        fieldDraftValues = ({})
+    }
+
+    function setFieldDraftValue(field, value) {
+        var key = fieldId(field)
+        if (key === "") {
+            return
+        }
+        var next = {}
+        for (var currentKey in fieldDraftValues) {
+            if (fieldDraftValues.hasOwnProperty(currentKey)) {
+                next[currentKey] = fieldDraftValues[currentKey]
+            }
+        }
+        next[key] = String(value === undefined || value === null ? "" : value)
+        fieldDraftValues = next
+        if (activeSettingsState !== "saving"
+                && activeSettingsFieldIds.indexOf(key) >= 0) {
+            clearSettingsFeedback()
+        }
+    }
+
+    function fieldValuePresent(field) {
+        if (!field || field.value === undefined || field.value === null) {
+            return false
+        }
+        if (typeof field.value === "string") {
+            return String(field.value).trim() !== ""
+        }
+        if (typeof field.value === "boolean") {
+            return field.value
+        }
+        return true
+    }
+
+    function settingsRequestMatches(requestId) {
+        return activeSettingsRequestId !== ""
+                && activeSettingsRequestId === String(requestId || "")
+    }
+
+    function settingsButtonText(requestId, idleText) {
+        if (!settingsRequestMatches(requestId)) {
+            return String(idleText || "Save")
+        }
+        if (activeSettingsState === "saving") {
+            return "Saving..."
+        }
+        if (activeSettingsState === "saved") {
+            return requestId === "section:liveAccount" ? "Connected" : "Saved"
+        }
+        if (activeSettingsState === "error") {
+            return "Try again"
+        }
+        return String(idleText || "Save")
+    }
+
+    function settingsFeedbackColor(requestId) {
+        if (!settingsRequestMatches(requestId)) {
+            return Theme.textSecondary
+        }
+        if (activeSettingsState === "saved") {
+            return Theme.accentSuccess
+        }
+        if (activeSettingsState === "error") {
+            return Theme.accentDanger
+        }
+        return Theme.accentInfo
+    }
+
+    function beginSettingsRequest(requestId, fieldIds, label) {
+        settingsFeedbackTimer.stop()
+        activeSettingsRequestId = String(requestId || "")
+        activeSettingsFieldIds = fieldIds || []
+        activeSettingsLabel = String(label || "Settings")
+        activeSettingsState = "saving"
+        activeSettingsMessage = "Saving " + activeSettingsLabel + "..."
+    }
+
+    function sendSettingsUpdate(requestId, fieldIds, label, values) {
+        beginSettingsRequest(requestId, fieldIds, label)
+        if (instanceId !== "") {
+            apiClient.updateExtensionControlSurfaceSettingsForInstance(
+                        extensionId, instanceId, values)
+        } else {
+            apiClient.updateExtensionControlSurfaceSettings(extensionId, values)
+        }
+    }
+
+    function finishSettingsRequest() {
+        if (activeSettingsRequestId === "") {
+            return
+        }
+        activeSettingsState = "saved"
+        if (activeSettingsRequestId === "section:liveAccount") {
+            activeSettingsMessage = "Account details saved. Connecting the provider..."
+        } else {
+            activeSettingsMessage = activeSettingsLabel + " saved."
+        }
+        actionToast.show(activeSettingsMessage)
+        apiClient.fetchExtensionStatusSummary()
+        postActionRefreshPassesRemaining = 12
+        postActionRefreshTimer.restart()
+        settingsFeedbackTimer.restart()
+    }
+
+    function failSettingsRequest(message) {
+        if (activeSettingsRequestId === "") {
+            return
+        }
+        activeSettingsState = "error"
+        activeSettingsMessage = String(message || "The setting could not be saved.")
+        actionToast.show(activeSettingsMessage)
+    }
+
+    function isLiveAccountSection(section) {
+        return String(section && section.id || "") === "liveAccount"
+    }
+
+    function liveAccountConfigured(section) {
+        var fields = section && section.fields || []
+        for (var i = 0; i < fields.length; ++i) {
+            var field = fields[i]
+            if (field.required === true && !fieldValuePresent(field)) {
+                return false
+            }
+        }
+        return fields.length > 0
+    }
+
+    function liveAccountCanSubmit(section) {
+        var fields = section && section.fields || []
+        var hasChanges = false
+        for (var i = 0; i < fields.length; ++i) {
+            var field = fields[i]
+            var draftPresent = hasFieldDraft(field)
+            var draft = draftPresent ? String(fieldDraftValues[fieldId(field)] || "") : ""
+            hasChanges = hasChanges || draftPresent
+            if (field.required === true
+                    && !fieldValuePresent(field)
+                    && (!draftPresent || draft.trim() === "")) {
+                return false
+            }
+        }
+        return hasChanges
+    }
+
+    function submitLiveAccount(section) {
+        if (!isLiveAccountSection(section) || extensionId === "") {
+            return
+        }
+        var fields = section.fields || []
+        var values = {}
+        var fieldIds = []
+        for (var i = 0; i < fields.length; ++i) {
+            var field = fields[i]
+            var key = fieldId(field)
+            var draftPresent = hasFieldDraft(field)
+            var draft = draftPresent ? String(fieldDraftValues[key] || "") : ""
+            if (field.required === true
+                    && !fieldValuePresent(field)
+                    && (!draftPresent || draft.trim() === "")) {
+                actionToast.show("Enter " + String(field.label || key) + ".")
+                return
+            }
+            if (!draftPresent) {
+                continue
+            }
+            if (field.required === true && draft.trim() === "") {
+                actionToast.show("Enter " + String(field.label || key) + ".")
+                return
+            }
+            values[key] = normalizedFieldValue(field, draft)
+            fieldIds.push(key)
+        }
+        if (fieldIds.length === 0) {
+            actionToast.show("Enter the account details you want to save.")
+            return
+        }
+        sendSettingsUpdate(
+                    "section:liveAccount",
+                    fieldIds,
+                    "account details",
+                    values)
+    }
+
     function editableFieldValue(field) {
         if (!field) {
             return ""
@@ -392,6 +611,7 @@ Item {
             actionToast.show("Enter " + label + ".")
             return
         }
+        setFieldDraftValue(field, text)
         root.updateField(field, normalizedFieldValue(field, rawValue))
     }
 
@@ -736,14 +956,17 @@ Item {
         if (!field || field.readonly === true || extensionId === "") {
             return
         }
-        var payload = {}
-        payload[String(field.id || "")] = value
-        if (instanceId !== "") {
-            apiClient.updateExtensionControlSurfaceSettingsForInstance(
-                        extensionId, instanceId, payload)
-        } else {
-            apiClient.updateExtensionControlSurfaceSettings(extensionId, payload)
+        var key = fieldId(field)
+        if (key === "") {
+            return
         }
+        var payload = {}
+        payload[key] = value
+        sendSettingsUpdate(
+                    "field:" + key,
+                    [key],
+                    String(field.label || key),
+                    payload)
     }
 
     function fieldCurrentOptionIndex(field) {
@@ -769,6 +992,7 @@ Item {
         activeAccountSetupId = ""
         accountSetupStarting = false
         accountSetupCheckPending = false
+        resetSettingsInteraction()
         if (componentReady) refreshSurface()
     }
     onInstanceIdChanged: {
@@ -777,6 +1001,7 @@ Item {
         activeAccountSetupId = ""
         accountSetupStarting = false
         accountSetupCheckPending = false
+        resetSettingsInteraction()
         if (componentReady) refreshSurface()
     }
 
@@ -786,11 +1011,30 @@ Item {
         function onAuthTokenChanged() {
             if (apiClient.authToken !== "") {
                 root.refreshSurface()
+            } else {
+                root.resetSettingsInteraction()
             }
         }
 
         function onExtensionControlSurfaceChanged() {
             root.scheduleControlSurfacePolling()
+        }
+
+        function onExtensionControlSettingsUpdated(targetExtensionId,
+                                                   targetInstanceId,
+                                                   fieldIds) {
+            if (String(targetExtensionId || "") !== String(root.extensionId || "")
+                    || String(targetInstanceId || "") !== String(root.instanceId || "")
+                    || root.activeSettingsState !== "saving") {
+                return
+            }
+            var completedFieldIds = fieldIds || []
+            for (var i = 0; i < root.activeSettingsFieldIds.length; ++i) {
+                if (completedFieldIds.indexOf(root.activeSettingsFieldIds[i]) < 0) {
+                    return
+                }
+            }
+            root.finishSettingsRequest()
         }
 
         function onExtensionControlActionCompleted(targetExtensionId, actionId, message) {
@@ -878,6 +1122,14 @@ Item {
                 actionToast.show(error)
                 return
             }
+            var genericSettingsEndpoint = "/api/v1/extensions/:id/control-surface"
+            if (root.activeSettingsState === "saving"
+                    && (endpoint === genericSettingsEndpoint
+                        || (root.extensionId !== ""
+                            && endpoint.indexOf(prefix) === 0))) {
+                root.failSettingsRequest(error)
+                return
+            }
             if (root.extensionId !== "" && endpoint.indexOf(prefix) === 0) {
                 actionToast.show(error)
             }
@@ -919,6 +1171,17 @@ Item {
             apiClient.fetchExtensionStatusSummary()
             if (postActionRefreshPassesRemaining > 0) {
                 postActionRefreshTimer.restart()
+            }
+        }
+    }
+
+    Timer {
+        id: settingsFeedbackTimer
+        interval: 3500
+        repeat: false
+        onTriggered: {
+            if (root.activeSettingsState === "saved") {
+                root.clearSettingsFeedback()
             }
         }
     }
@@ -1284,6 +1547,9 @@ Item {
                 Repeater {
                     model: root.controlSurface() ? (root.controlSurface().sections || []) : []
                     delegate: Rectangle {
+                        id: sectionCard
+                        property var sectionData: modelData
+                        property bool liveAccountSection: root.isLiveAccountSection(sectionData)
                         Layout.fillWidth: true
                         radius: Theme.radiusLarge
                         color: Theme.backgroundCard
@@ -1531,19 +1797,43 @@ Item {
 
                                                 TextField {
                                                     id: inlineFieldEditor
+                                                    objectName: "extensionControlFieldEditor_"
+                                                                + String(fieldData.id || "")
                                                     Layout.fillWidth: true
-                                                    text: root.editableFieldValue(fieldData)
+                                                    text: root.fieldEditorValue(fieldData)
                                                     placeholderText: root.fieldEditPlaceholder(fieldData)
-                                                    echoMode: fieldData.secret === true ? TextInput.Password : TextInput.Normal
+                                                    echoMode: TextInput.Normal
                                                     enabled: !apiClient.extensionControlLoading
+                                                    onTextEdited: root.setFieldDraftValue(fieldData, text)
                                                     onAccepted: root.submitFieldEdit(fieldData, text)
                                                 }
 
                                                 Button {
-                                                    text: "Save"
+                                                    objectName: "extensionControlFieldSaveButton_"
+                                                                + String(fieldData.id || "")
+                                                    property string requestId: "field:"
+                                                                 + String(fieldData.id || "")
+                                                    Layout.preferredWidth: 96
+                                                    visible: !sectionCard.liveAccountSection
+                                                    text: root.settingsButtonText(requestId, "Save")
                                                     enabled: !apiClient.extensionControlLoading
+                                                             && !(root.settingsRequestMatches(requestId)
+                                                                  && root.activeSettingsState === "saving")
                                                     onClicked: root.submitFieldEdit(fieldData, inlineFieldEditor.text)
                                                 }
+                                            }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                visible: !sectionCard.liveAccountSection
+                                                         && root.settingsRequestMatches(
+                                                             "field:" + String(fieldData.id || ""))
+                                                text: visible ? root.activeSettingsMessage : ""
+                                                color: root.settingsFeedbackColor(
+                                                           "field:" + String(fieldData.id || ""))
+                                                font.pixelSize: 11
+                                                font.family: Theme.fontBody
+                                                wrapMode: Text.WordWrap
                                             }
 
                                             Label {
@@ -1557,6 +1847,51 @@ Item {
                                             }
                                         }
                                     }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingMedium
+                                visible: sectionCard.liveAccountSection
+                                         && (sectionCard.sectionData.fields || []).length > 0
+
+                                Button {
+                                    objectName: "extensionControlAccountSaveButton"
+                                    property string requestId: "section:liveAccount"
+                                    Layout.preferredWidth: 150
+                                    text: root.settingsButtonText(
+                                              requestId,
+                                              root.liveAccountConfigured(sectionCard.sectionData)
+                                              ? "Update account"
+                                              : "Connect account")
+                                    enabled: !apiClient.extensionControlLoading
+                                             && root.liveAccountCanSubmit(sectionCard.sectionData)
+                                             && !(root.settingsRequestMatches(requestId)
+                                                  && root.activeSettingsState === "saving")
+                                    onClicked: root.submitLiveAccount(sectionCard.sectionData)
+                                }
+
+                                BusyIndicator {
+                                    objectName: "extensionControlAccountSaveIndicator"
+                                    implicitWidth: 22
+                                    implicitHeight: 22
+                                    Layout.preferredWidth: 22
+                                    Layout.preferredHeight: 22
+                                    running: root.settingsRequestMatches("section:liveAccount")
+                                             && root.activeSettingsState === "saving"
+                                    opacity: running ? 1 : 0
+                                }
+
+                                Label {
+                                    objectName: "extensionControlAccountSaveFeedback"
+                                    Layout.fillWidth: true
+                                    visible: root.settingsRequestMatches("section:liveAccount")
+                                    text: visible ? root.activeSettingsMessage : ""
+                                    color: root.settingsFeedbackColor("section:liveAccount")
+                                    font.pixelSize: 11
+                                    font.family: Theme.fontBody
+                                    wrapMode: Text.WordWrap
                                 }
                             }
 
@@ -1833,9 +2168,7 @@ Item {
                                      || parent.fieldType === "number"
                             Layout.fillWidth: true
                             placeholderText: String(parent.fieldData.label || parent.fieldKey)
-                            echoMode: parent.fieldType === "password"
-                                      ? TextInput.Password
-                                      : TextInput.Normal
+                            echoMode: TextInput.Normal
                             inputMethodHints: parent.fieldType === "number"
                                               ? Qt.ImhDigitsOnly
                                               : Qt.ImhNone
@@ -1988,10 +2321,7 @@ Item {
                     TextField {
                         Layout.preferredWidth: 320
                         placeholderText: parent.fieldLabelText
-                        echoMode: parent.secretKey.toLowerCase().indexOf("password") >= 0
-                                  || parent.secretKey.toLowerCase().indexOf("api_key") >= 0
-                                  ? TextInput.Password
-                                  : TextInput.Normal
+                        echoMode: TextInput.Normal
                         text: root.actionSecretValue(parent.secretKey)
                         onTextChanged: root.setActionSecretValue(parent.secretKey, text)
                         color: Theme.textPrimary

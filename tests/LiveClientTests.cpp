@@ -334,6 +334,7 @@ private slots:
   void frozenEnvelopesParseStrictlyAndPreserveUnknownExtensionFields();
   void malformedMetaAndNonUtcDatesFailClosed();
   void transportUsesBearerHeaderAndCancellationIsTerminal();
+  void catalogFilterQueryPreservesLiteralPlus();
   void modelSuppressesOldGenerationAndConvertsUtcForDisplay();
   void modelSurfacesStructuredErrorsAndItemStreams();
   void modelRefreshPreservesRowsAcrossTimeoutAndEmptyStalePage();
@@ -440,6 +441,31 @@ void LiveClientTests::transportUsesBearerHeaderAndCancellationIsTerminal() {
   QCOMPARE(received.count(), 1);
   QCOMPARE(received.first().at(0).toULongLong(), successId);
   QCOMPARE(received.first().at(1).toULongLong(), quint64{8});
+}
+
+void LiveClientTests::catalogFilterQueryPreservesLiteralPlus() {
+  ApiClient auth;
+  auth.setBaseUrl(QStringLiteral("https://server.example"));
+  auth.setAuthToken(QStringLiteral("test-access-token"));
+  DeterministicScheduler scheduler;
+  ScriptedNetworkAccessManager network(scheduler);
+  network.enqueue(jsonResponse(pageEnvelope(QStringLiteral("Nature"))));
+  LiveApiClient live(&auth, &network);
+
+  const quint64 requestId = live.listCatalogItems(
+      kProviderId, QStringLiteral("live_events"),
+      {{QStringLiteral("category"), QStringLiteral("Animals + Nature")}},
+      QString(), 40, 1);
+
+  QVERIFY(requestId > 0);
+  QCOMPARE(network.capturedRequests().size(), 1);
+  const QString query =
+      network.capturedRequests().constFirst().url.query(QUrl::FullyEncoded);
+  QVERIFY2(
+      query.contains(QStringLiteral(
+          "filters[category]=Animals%20%2B%20Nature")),
+      qPrintable(query));
+  QVERIFY(!query.contains(QStringLiteral("Animals%20+%20Nature")));
 }
 
 void LiveClientTests::modelSuppressesOldGenerationAndConvertsUtcForDisplay() {

@@ -105,6 +105,11 @@ TestCase {
         Components.LiveFilterBar {}
     }
 
+    Component {
+        id: eventCardComponent
+        Components.LiveEventCard {}
+    }
+
     SignalSpy {
         id: itemRequestedSpy
         signalName: "itemRequested"
@@ -218,6 +223,46 @@ TestCase {
         compare(findChild(noEventsView, "liveEmptyPage").visible, true)
     }
 
+    function test_unavailable_provider_retries_until_catalogs_become_ready() {
+        mock.providers = [{
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
+            "name": "Starting provider",
+            "readiness": "unavailable"
+        }]
+        var view = createTemporaryObject(liveViewComponent, host, {
+            "width": 900,
+            "height": 600,
+            "liveModel": mock,
+            "client": mock,
+            "itemsModel": rows,
+            "serverBaseUrl": "",
+            "startupRefreshIntervalMs": 20,
+            "startupRefreshMaxAttempts": 2
+        })
+        verify(view)
+        compare(mock.refreshIndexCalls, 0)
+        tryVerify(function() { return mock.refreshIndexCalls > 0 }, 500)
+        verify(findChild(view, "liveStartupRefreshTimer"))
+
+        view.destroy()
+        resetMock()
+        readyFixture()
+        mock.catalogs = []
+        var emptyReadyView = createTemporaryObject(liveViewComponent, host, {
+            "width": 900,
+            "height": 600,
+            "liveModel": mock,
+            "client": mock,
+            "itemsModel": rows,
+            "serverBaseUrl": "",
+            "startupRefreshIntervalMs": 20,
+            "startupRefreshMaxAttempts": 2
+        })
+        verify(emptyReadyView)
+        wait(100)
+        compare(mock.refreshIndexCalls, 0)
+    }
+
     function test_partial_stale_and_error_notice_states() {
         readyFixture()
         mock.partial = true
@@ -318,6 +363,31 @@ TestCase {
         keyClick(Qt.Key_Space)
         compare(itemRequestedSpy.count, 1)
         compare(itemRequestedSpy.signalArguments[0][1], "lvk1.item.fixture-key-value")
+    }
+
+    function test_unknown_channel_status_is_not_exposed_as_a_badge() {
+        var card = createTemporaryObject(eventCardComponent, host, {
+            "width": 300,
+            "height": 232,
+            "itemData": {
+                "itemType": "channel",
+                "title": "Fixture Channel",
+                "status": "unknown"
+            }
+        })
+        verify(card)
+        var statusPill = findChild(card, "liveStatusPill")
+        verify(statusPill)
+        compare(statusPill.visible, false)
+        verify(card.Accessible.description.indexOf("unknown") < 0)
+
+        card.itemData = {
+            "itemType": "channel",
+            "title": "Fixture Channel",
+            "status": "unavailable"
+        }
+        tryCompare(statusPill, "visible", true)
+        compare(statusPill.label, "UNAVAILABLE")
     }
 
     function test_live_vpn_policy_is_available_from_toolbar() {

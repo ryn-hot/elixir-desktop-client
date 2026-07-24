@@ -27,6 +27,9 @@ TestCase {
         signal requestFailed(string endpoint, string error)
         signal extensionControlActionCompleted(string targetExtensionId,
                                                string actionId, string message)
+        signal extensionControlSettingsUpdated(string targetExtensionId,
+                                               string targetInstanceId,
+                                               var fieldIds)
         signal extensionAccountSetupStarted(string extensionId, string instanceId,
                                             string setupId, string configureUrl)
         signal extensionAccountSetupStatusReceived(string extensionId, string instanceId,
@@ -48,6 +51,7 @@ TestCase {
         property string lastExtensionId: ""
         property string lastInstanceId: ""
         property string lastActionId: ""
+        property var lastUpdateValues: ({})
         property var extensionsInstalled: [{
             "extension_id": "fixture.live.provider",
             "manifest_json": {
@@ -98,8 +102,14 @@ TestCase {
             exactUpdateCalls += 1
             lastExtensionId = extensionId
             lastInstanceId = instanceId
+            lastUpdateValues = values
         }
-        function updateExtensionControlSurfaceSettings() {}
+        function updateExtensionControlSurfaceSettings(extensionId, values) {
+            exactUpdateCalls += 1
+            lastExtensionId = extensionId
+            lastInstanceId = ""
+            lastUpdateValues = values
+        }
         function invokeExtensionControlActionForInstance(extensionId, instanceId, actionId, params) {
             exactActionCalls += 1
             lastExtensionId = extensionId
@@ -127,6 +137,21 @@ TestCase {
 
     function init() {
         apiClient.authToken = ""
+        apiClient.extensionsStatusItems = [{
+            "extensionId": "fixture.live.provider",
+            "name": "Fixture Live Provider",
+            "version": "1.0.0",
+            "kind": "module",
+            "trustLevel": "community",
+            "enabled": true,
+            "severity": "ready",
+            "statusCode": "ready",
+            "label": "Ready",
+            "description": "This extension is ready for Live.",
+            "primaryAction": "open",
+            "primaryActionLabel": "Open"
+        }]
+        apiClient.extensionsNeedsAttentionCount = 0
         apiClient.extensionControlSurface = ({})
         apiClient.exactFetchCalls = 0
         apiClient.exactUpdateCalls = 0
@@ -135,6 +160,7 @@ TestCase {
         apiClient.lastExtensionId = ""
         apiClient.lastInstanceId = ""
         apiClient.lastActionId = ""
+        apiClient.lastUpdateValues = ({})
     }
 
     function test_ready_live_provider_can_open_live() {
@@ -150,6 +176,44 @@ TestCase {
         tryVerify(function() { return openLive && openLive.visible })
         mouseClick(openLive)
         compare(openLiveCalls, 1)
+    }
+
+    function test_live_provider_startup_is_dynamic_progress_not_needs_setup() {
+        apiClient.authToken = "owner-access"
+        apiClient.extensionsStatusItems = [{
+            "extensionId": "fixture.live.provider",
+            "name": "Fixture Live Provider",
+            "version": "1.0.0",
+            "kind": "module",
+            "trustLevel": "community",
+            "enabled": true,
+            "severity": "progress",
+            "statusCode": "runtime_starting",
+            "label": "Connecting",
+            "description": "The Live provider is reachable and becoming ready.",
+            "primaryAction": "open",
+            "primaryActionLabel": "Open"
+        }]
+
+        var view = createTemporaryObject(extensionsViewComponent, host, {
+            "width": 1000,
+            "height": 800,
+            "openLiveRequested": function() { testCase.openLiveCalls += 1 }
+        })
+        verify(view)
+        compare(view.progressCards().length, 1)
+        compare(view.attentionCards().length, 0)
+
+        var card = findChild(view, "extensionsProgressCard")
+        var indicator = findChild(view, "extensionsProgressIndicator")
+        var label = findChild(view, "extensionsProgressLabel")
+        tryVerify(function() { return card && card.visible })
+        verify(indicator)
+        compare(indicator.running, true)
+        compare(label.text, "Connecting")
+
+        var openLive = findChild(view, "extensionsOpenLiveButton")
+        verify(!openLive || !openLive.visible)
     }
 
     function test_live_account_actions_target_the_exact_instance() {
@@ -203,5 +267,160 @@ TestCase {
         compare(apiClient.exactActionCalls, 1)
         compare(apiClient.lastActionId, "disconnect_live_account")
         compare(apiClient.lastInstanceId, instanceId)
+    }
+
+    function test_live_account_save_is_plaintext_batched_and_reports_progress() {
+        var extensionId = "fixture.live.provider"
+        var instanceId = "80000000-0000-4000-8000-000000000008"
+        var accountSection = {
+            "id": "liveAccount",
+            "title": "Account",
+            "description": "Connect the account used by this Live provider.",
+            "fields": [
+                {
+                    "id": "plutoUsername",
+                    "label": "Pluto TV email",
+                    "fieldType": "text",
+                    "value": null,
+                    "required": true,
+                    "readonly": false,
+                    "secret": true
+                },
+                {
+                    "id": "plutoPassword",
+                    "label": "Pluto TV password",
+                    "fieldType": "password",
+                    "value": null,
+                    "required": true,
+                    "readonly": false,
+                    "secret": true
+                }
+            ],
+            "entities": [],
+            "actions": []
+        }
+        apiClient.authToken = "owner-access"
+        apiClient.extensionControlSurface = {
+            "extensionId": extensionId,
+            "instanceId": instanceId,
+            "name": "Fixture Live Provider",
+            "version": "1.0.0",
+            "kind": "module",
+            "trustLevel": "community",
+            "enabled": true,
+            "status": {
+                "health": "needs_setup",
+                "summary": "Needs account",
+                "details": []
+            },
+            "sections": [accountSection],
+            "actions": []
+        }
+
+        var view = createTemporaryObject(extensionControlViewComponent, host, {
+            "width": 900,
+            "height": 700,
+            "extensionId": extensionId,
+            "instanceId": instanceId
+        })
+        verify(view)
+
+        var emailEditor = findChild(
+                    view, "extensionControlFieldEditor_plutoUsername")
+        var passwordEditor = findChild(
+                    view, "extensionControlFieldEditor_plutoPassword")
+        var connectButton = findChild(
+                    view, "extensionControlAccountSaveButton")
+        tryVerify(function() {
+            return emailEditor && passwordEditor && connectButton
+        })
+        compare(emailEditor.echoMode, TextInput.Normal)
+        compare(passwordEditor.echoMode, TextInput.Normal)
+
+        view.setFieldDraftValue(accountSection.fields[0], "viewer@example.com")
+        view.setFieldDraftValue(accountSection.fields[1], "plain-password")
+        compare(view.fieldEditorValue(accountSection.fields[0]),
+                "viewer@example.com")
+        compare(view.fieldEditorValue(accountSection.fields[1]),
+                "plain-password")
+        verify(view.liveAccountCanSubmit(accountSection))
+
+        view.submitLiveAccount(accountSection)
+        compare(apiClient.exactUpdateCalls, 1)
+        compare(apiClient.lastExtensionId, extensionId)
+        compare(apiClient.lastInstanceId, instanceId)
+        compare(apiClient.lastUpdateValues.plutoUsername, "viewer@example.com")
+        compare(apiClient.lastUpdateValues.plutoPassword, "plain-password")
+        compare(view.activeSettingsState, "saving")
+        compare(connectButton.text, "Saving...")
+
+        apiClient.extensionControlSettingsUpdated(
+                    extensionId,
+                    instanceId,
+                    ["plutoPassword", "plutoUsername"])
+        tryCompare(view, "activeSettingsState", "saved")
+        compare(connectButton.text, "Connected")
+        verify(view.activeSettingsMessage.indexOf("Connecting the provider") >= 0)
+        compare(view.fieldEditorValue(accountSection.fields[1]),
+                "plain-password")
+    }
+
+    function test_live_account_save_failure_is_visible_and_retryable() {
+        var extensionId = "fixture.live.provider"
+        var instanceId = "80000000-0000-4000-8000-000000000008"
+        var field = {
+            "id": "plutoPassword",
+            "label": "Pluto TV password",
+            "fieldType": "password",
+            "value": null,
+            "required": true,
+            "readonly": false,
+            "secret": true
+        }
+        var section = {
+            "id": "liveAccount",
+            "fields": [field]
+        }
+        apiClient.authToken = "owner-access"
+        apiClient.extensionControlSurface = {
+            "extensionId": extensionId,
+            "instanceId": instanceId,
+            "name": "Fixture Live Provider",
+            "version": "1.0.0",
+            "kind": "module",
+            "trustLevel": "community",
+            "enabled": true,
+            "status": {
+                "health": "needs_setup",
+                "summary": "Needs account",
+                "details": []
+            },
+            "sections": [section],
+            "actions": []
+        }
+
+        var view = createTemporaryObject(extensionControlViewComponent, host, {
+            "width": 900,
+            "height": 700,
+            "extensionId": extensionId,
+            "instanceId": instanceId
+        })
+        verify(view)
+        view.setFieldDraftValue(field, "plain-password")
+        view.submitLiveAccount(section)
+        compare(view.activeSettingsState, "saving")
+
+        apiClient.requestFailed(
+                    "/api/v1/extensions/" + extensionId
+                    + "/control-surface?instanceId=" + instanceId,
+                    "Pluto rejected those account details.")
+        tryCompare(view, "activeSettingsState", "error")
+        compare(view.activeSettingsMessage,
+                "Pluto rejected those account details.")
+        var connectButton = findChild(
+                    view, "extensionControlAccountSaveButton")
+        tryVerify(function() { return connectButton !== null })
+        compare(connectButton.text, "Try again")
+        compare(view.fieldEditorValue(field), "plain-password")
     }
 }

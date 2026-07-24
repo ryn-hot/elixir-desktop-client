@@ -661,6 +661,143 @@ private slots:
         QCOMPARE(server.countPath("/api/v1/live/admin/egress"), 3);
     }
 
+    void acquisition_polling_coalesces_overlapping_requests() {
+        FakeHttpServer server;
+        QVERIFY(server.start());
+        const QByteArray acquisitionPath = "/api/v1/find/acquisition?limit=12";
+        const QByteArray releasesPath =
+            "/api/v1/acquisition/releases?state=review_required&limit=50";
+        server.setHandler([acquisitionPath, releasesPath](const HttpRequest &request) {
+            if (request.path == acquisitionPath && request.method == "GET") {
+                return HttpResponse{
+                    200,
+                    jsonBody(QJsonObject{
+                        {"items", QJsonArray{}},
+                        {"activeCount", 0},
+                        {"downloadingCount", 0},
+                        {"needsAttentionCount", 0},
+                    }),
+                    150,
+                };
+            }
+            if (request.path == releasesPath && request.method == "GET") {
+                return HttpResponse{
+                    200,
+                    jsonBody(QJsonObject{{"releases", QJsonArray{}}}),
+                    150,
+                };
+            }
+            return HttpResponse{404, R"({"message":"not found"})", 0};
+        });
+
+        ApiClient client;
+        client.setBaseUrl(server.baseUrl());
+        client.setAuthToken(QStringLiteral("owner-access"));
+        client.setAccessTokenExpiresAt(futureTimestamp());
+        QSignalSpy failures(&client, &ApiClient::requestFailed);
+
+        for (int index = 0; index < 10; ++index) {
+            client.fetchMediaAcquisition();
+            client.fetchAcquisitionReleases(QStringLiteral("review_required"), QString(), 50);
+        }
+
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(acquisitionPath), 1, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(releasesPath), 1, 5000);
+        QTest::qWait(75);
+        QCOMPARE(server.countPath(acquisitionPath), 1);
+        QCOMPARE(server.countPath(releasesPath), 1);
+
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(acquisitionPath), 2, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(releasesPath), 2, 5000);
+        QTest::qWait(225);
+        QCOMPARE(server.countPath(acquisitionPath), 2);
+        QCOMPARE(server.countPath(releasesPath), 2);
+        QCOMPARE(failures.count(), 0);
+
+        client.fetchMediaAcquisition();
+        client.fetchAcquisitionReleases(QStringLiteral("review_required"), QString(), 50);
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(acquisitionPath), 3, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(releasesPath), 3, 5000);
+        QTest::qWait(175);
+        QCOMPARE(failures.count(), 0);
+    }
+
+    void extension_uninstall_is_single_flight() {
+        FakeHttpServer server;
+        QVERIFY(server.start());
+        const QString extensionId = QStringLiteral("elixir.live.sports_streams");
+        const QByteArray catalogPath = "/api/v1/extensions/catalog";
+        const QByteArray uninstallPath =
+            "/api/v1/extensions/elixir.live.sports_streams/uninstall";
+        int catalogRequestCount = 0;
+        server.setHandler([
+            &catalogRequestCount, catalogPath, uninstallPath, extensionId
+        ](const HttpRequest &request) {
+            if (request.path == catalogPath && request.method == "GET") {
+                ++catalogRequestCount;
+                const bool staleInstalledResponse = catalogRequestCount <= 2;
+                const QJsonArray installed = staleInstalledResponse
+                    ? QJsonArray{QJsonObject{
+                        {"extension_id", extensionId},
+                        {"name", "Sports Streams"},
+                        {"version", "0.2.3"},
+                        {"enabled", true},
+                    }}
+                    : QJsonArray{};
+                return HttpResponse{
+                    200,
+                    jsonBody(QJsonObject{
+                        {"installed", installed},
+                        {"available", QJsonArray{}},
+                        {"core_extensions", QJsonArray{}},
+                    }),
+                    catalogRequestCount == 2 ? 250 : 0,
+                };
+            }
+            if (request.path == uninstallPath && request.method == "POST") {
+                return HttpResponse{200, R"({"deleted":true})", 50};
+            }
+            if (request.path == "/api/v1/extensions/instances"
+                && request.method == "GET") {
+                return HttpResponse{200, "[]", 0};
+            }
+            if (request.path == "/api/v1/extensions/status-summary"
+                && request.method == "GET") {
+                return HttpResponse{200, "{}", 0};
+            }
+            return HttpResponse{404, R"({"message":"not found"})", 0};
+        });
+
+        ApiClient client;
+        client.setBaseUrl(server.baseUrl());
+        client.setAuthToken(QStringLiteral("owner-access"));
+        client.setAccessTokenExpiresAt(futureTimestamp());
+        QSignalSpy uninstalled(&client, &ApiClient::extensionUninstalled);
+        QSignalSpy failures(&client, &ApiClient::requestFailed);
+
+        client.fetchExtensionsCatalog();
+        QTRY_COMPARE_WITH_TIMEOUT(client.extensionsInstalled().size(), 1, 5000);
+
+        client.fetchExtensionsCatalog();
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(catalogPath), 2, 5000);
+        client.uninstallExtension(extensionId);
+        client.uninstallExtension(extensionId);
+
+        QCOMPARE(client.extensionUninstallingIds(), QStringList{extensionId});
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(uninstallPath), 1, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(uninstalled.count(), 1, 5000);
+        QCOMPARE(client.extensionUninstallingIds(), QStringList{});
+        QCOMPARE(client.extensionsInstalled().size(), 0);
+        QCOMPARE(uninstalled.first().at(0).toString(), extensionId);
+        QCOMPARE(uninstalled.first().at(1).toString(), QStringLiteral("Sports Streams"));
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(catalogPath), 3, 5000);
+
+        QTest::qWait(300);
+        QCOMPARE(client.extensionsInstalled().size(), 0);
+        QCOMPARE(server.countPath(uninstallPath), 1);
+        QCOMPARE(failures.count(), 0);
+    }
+
     void lpi2_extension_account_setup_uses_exact_instance_paths() {
         FakeHttpServer server;
         QVERIFY(server.start());
@@ -690,6 +827,9 @@ private slots:
             extensionId, instanceId, setupId
         ](const HttpRequest &request) {
             if (request.path == controlPath && request.method == "GET") {
+                return HttpResponse{200, jsonBody(surface), 0};
+            }
+            if (request.path == controlPath && request.method == "PUT") {
                 return HttpResponse{200, jsonBody(surface), 0};
             }
             if (request.path == actionPath && request.method == "POST") {
@@ -736,6 +876,8 @@ private slots:
         client.setAuthToken(QStringLiteral("owner-access"));
         client.setAccessTokenExpiresAt(futureTimestamp());
         QSignalSpy surfaceChanged(&client, &ApiClient::extensionControlSurfaceChanged);
+        QSignalSpy settingsUpdated(
+            &client, &ApiClient::extensionControlSettingsUpdated);
         QSignalSpy actionCompleted(&client, &ApiClient::extensionControlActionCompleted);
         QSignalSpy setupStarted(&client, &ApiClient::extensionAccountSetupStarted);
         QSignalSpy setupStatus(&client, &ApiClient::extensionAccountSetupStatusReceived);
@@ -744,6 +886,19 @@ private slots:
 
         client.fetchExtensionControlSurfaceForInstance(extensionId, instanceId);
         QTRY_COMPARE_WITH_TIMEOUT(surfaceChanged.count(), 1, 5000);
+        client.updateExtensionControlSurfaceSettingsForInstance(
+            extensionId,
+            instanceId,
+            QVariantMap{
+                {"plutoPassword", "plain-password"},
+                {"plutoUsername", "viewer@example.com"},
+            });
+        QTRY_COMPARE_WITH_TIMEOUT(settingsUpdated.count(), 1, 5000);
+        QCOMPARE(settingsUpdated.first().at(0).toString(), extensionId);
+        QCOMPARE(settingsUpdated.first().at(1).toString(), instanceId);
+        QCOMPARE(
+            settingsUpdated.first().at(2).toStringList(),
+            QStringList({"plutoPassword", "plutoUsername"}));
         client.invokeExtensionControlActionForInstance(
             extensionId,
             instanceId,
@@ -758,7 +913,7 @@ private slots:
         QCOMPARE(setupStatus.first().at(3).toBool(), true);
         QCOMPARE(failures.count(), 0);
 
-        QCOMPARE(server.countPath(controlPath), 1);
+        QCOMPARE(server.countPath(controlPath), 2);
         QCOMPARE(server.countPath(actionPath), 1);
         QCOMPARE(server.countPath(setupPath), 1);
         QCOMPARE(server.countPath(statusPath), 1);
@@ -769,6 +924,91 @@ private slots:
         const HttpRequest *action = findRequest(server.requests(), actionPath);
         QVERIFY(action);
         QCOMPARE(QJsonDocument::fromJson(action->body).object(), QJsonObject{});
+        const HttpRequest *settingsUpdate =
+            findRequest(server.requests(), controlPath, 1);
+        QVERIFY(settingsUpdate);
+        const QJsonObject expectedSettingsUpdate{
+            {
+                "values",
+                QJsonObject{
+                    {"plutoPassword", "plain-password"},
+                    {"plutoUsername", "viewer@example.com"},
+                },
+            },
+        };
+        QCOMPARE(
+            QJsonDocument::fromJson(settingsUpdate->body).object(),
+            expectedSettingsUpdate);
+    }
+
+    void lpi2_extension_control_ignores_stale_surface_after_account_save() {
+        FakeHttpServer server;
+        QVERIFY(server.start());
+        const QString extensionId = QStringLiteral("example.live");
+        const QString instanceId =
+            QStringLiteral("80000000-0000-4000-8000-000000000008");
+        const QByteArray controlPath = QByteArray(
+            "/api/v1/extensions/example.live/control-surface?instanceId=")
+            + instanceId.toUtf8();
+        const QJsonObject staleSurface{
+            {"extensionId", extensionId},
+            {"instanceId", instanceId},
+            {"status", QJsonObject{{"health", "needs_setup"}}},
+            {"sections", QJsonArray{}},
+        };
+        const QJsonObject connectedSurface{
+            {"extensionId", extensionId},
+            {"instanceId", instanceId},
+            {"status", QJsonObject{{"health", "healthy"}}},
+            {"sections", QJsonArray{}},
+        };
+        server.setHandler(
+            [controlPath, staleSurface, connectedSurface](const HttpRequest &request) {
+                if (request.path != controlPath) {
+                    return HttpResponse{404, R"({"message":"not found"})", 0};
+                }
+                if (request.method == "GET") {
+                    return HttpResponse{200, jsonBody(staleSurface), 250};
+                }
+                if (request.method == "PUT") {
+                    return HttpResponse{200, jsonBody(connectedSurface), 0};
+                }
+                return HttpResponse{405, R"({"message":"method not allowed"})", 0};
+            });
+
+        ApiClient client;
+        client.setBaseUrl(server.baseUrl());
+        client.setAuthToken(QStringLiteral("owner-access"));
+        client.setAccessTokenExpiresAt(futureTimestamp());
+        QSignalSpy settingsUpdated(
+            &client, &ApiClient::extensionControlSettingsUpdated);
+        QSignalSpy failures(&client, &ApiClient::requestFailed);
+
+        client.fetchExtensionControlSurfaceForInstance(extensionId, instanceId);
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(controlPath), 1, 5000);
+        client.updateExtensionControlSurfaceSettingsForInstance(
+            extensionId,
+            instanceId,
+            QVariantMap{
+                {"plutoPassword", "plain-password"},
+                {"plutoUsername", "viewer@example.com"},
+            });
+
+        QTRY_COMPARE_WITH_TIMEOUT(settingsUpdated.count(), 1, 5000);
+        QCOMPARE(
+            client.extensionControlSurface()
+                .value("status").toMap()
+                .value("health").toString(),
+            QStringLiteral("healthy"));
+        QTest::qWait(350);
+        QCOMPARE(
+            client.extensionControlSurface()
+                .value("status").toMap()
+                .value("health").toString(),
+            QStringLiteral("healthy"));
+        QCOMPARE(client.extensionControlLoading(), false);
+        QCOMPARE(server.countPath(controlPath), 2);
+        QCOMPARE(failures.count(), 0);
     }
 
 private:

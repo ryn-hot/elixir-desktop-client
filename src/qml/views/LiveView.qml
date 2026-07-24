@@ -16,6 +16,9 @@ Item {
     property var playerController: null
     property var activeFilters: ({})
     property bool initialized: false
+    property int startupRefreshAttempts: 0
+    property int startupRefreshMaxAttempts: 24
+    property int startupRefreshIntervalMs: 5000
     signal itemRequested(string providerId, string itemKey)
 
     readonly property int pageMargin: width < 700 ? Theme.space16 : Theme.space32
@@ -213,6 +216,28 @@ Item {
         }
     }
 
+    function shouldRetryStartup() {
+        if (!initialized || !visible || liveModel.catalogIndexLoading
+                || startupRefreshAttempts >= startupRefreshMaxAttempts
+                || (liveModel.catalogs || []).length > 0) {
+            return false
+        }
+        var providers = liveModel.providers || []
+        if (providers.length === 0 || readyProviderCount === 0) {
+            return true
+        }
+        if (liveModel.lastError && liveModel.lastError.retryable) {
+            return true
+        }
+        var failures = liveModel.errors || []
+        for (var i = 0; i < failures.length; ++i) {
+            if (failures[i] && failures[i].retryable) {
+                return true
+            }
+        }
+        return false
+    }
+
     Component.onCompleted: {
         initialized = true
         if (canManageLiveEgress) client.fetchLiveEgressStatus()
@@ -225,7 +250,27 @@ Item {
 
     Connections {
         target: root.liveModel
-        function onCatalogsChanged() { root.ensureSelection() }
+        function onCatalogsChanged() {
+            if ((root.liveModel.catalogs || []).length > 0) {
+                root.startupRefreshAttempts = 0
+            }
+            root.ensureSelection()
+        }
+    }
+
+    Timer {
+        id: startupRefreshTimer
+        objectName: "liveStartupRefreshTimer"
+        interval: root.startupRefreshIntervalMs
+        repeat: true
+        running: root.shouldRetryStartup()
+        onTriggered: {
+            if (!root.shouldRetryStartup()) {
+                return
+            }
+            root.startupRefreshAttempts += 1
+            root.liveModel.refreshIndex()
+        }
     }
 
     ColumnLayout {

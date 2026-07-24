@@ -1626,10 +1626,12 @@ QString LiveApiClient::endpointForCatalogPage(const QString &providerId,
       query.addQueryItem(queryKey, entry);
     }
   }
+  QString encodedQuery = query.query(QUrl::FullyEncoded);
+  encodedQuery.replace(QLatin1Char('+'), QStringLiteral("%2B"));
   const QString endpoint =
       QStringLiteral("/api/v1/live/catalogs/%1/%2/items?%3")
           .arg(encodePathSegment(providerId), encodePathSegment(catalogId),
-               query.query(QUrl::FullyEncoded));
+               encodedQuery);
   if (endpoint.size() > 8192) {
     *error = QStringLiteral("The catalog query is too large.");
     return {};
