@@ -3,6 +3,7 @@
 #include "LiveApiClient.h"
 
 #include <QDateTime>
+#include <algorithm>
 
 LiveCatalogModel::LiveCatalogModel(LiveApiClient *apiClient, QObject *parent)
     : QAbstractListModel(parent), m_apiClient(apiClient) {
@@ -135,11 +136,10 @@ void LiveCatalogModel::setTimeZoneId(const QString &timeZoneId) {
 void LiveCatalogModel::refreshIndex() {
   beginNewGeneration();
   clearErrors();
-  const bool refreshSelectedPage =
-      !m_selectedProviderId.isEmpty() && !m_selectedCatalogId.isEmpty();
-  if (refreshSelectedPage) {
+  m_pageLoading = false;
+  m_loadingMore = false;
+  if (!m_selectedProviderId.isEmpty() && !m_selectedCatalogId.isEmpty()) {
     clearPage(true);
-    m_pageLoading = true;
   }
   m_catalogIndexLoading = true;
   emit loadingChanged();
@@ -147,14 +147,8 @@ void LiveCatalogModel::refreshIndex() {
       m_apiClient ? m_apiClient->listProviders(m_generation) : 0;
   m_catalogRequestId =
       m_apiClient ? m_apiClient->listCatalogs(m_generation) : 0;
-  if (m_apiClient && refreshSelectedPage) {
-    m_pageRequestId =
-        m_apiClient->listCatalogItems(m_selectedProviderId, m_selectedCatalogId,
-                                      m_filters, QString(), 40, m_generation);
-  }
   if (!m_apiClient) {
     m_catalogIndexLoading = false;
-    m_pageLoading = false;
     setError({
         {QStringLiteral("code"), QStringLiteral("LIVE_CLIENT_UNAVAILABLE")},
         {QStringLiteral("message"),
@@ -292,6 +286,33 @@ void LiveCatalogModel::connectApi() {
             }
             m_catalogRequestId = 0;
             m_catalogs = envelope.data;
+            const bool hadSelection = !m_selectedProviderId.isEmpty() &&
+                                      !m_selectedCatalogId.isEmpty();
+            const bool selectionAvailable =
+                hadSelection &&
+                std::any_of(m_catalogs.cbegin(), m_catalogs.cend(),
+                            [this](const Live::Catalog &catalog) {
+                              return catalog.providerId ==
+                                         m_selectedProviderId &&
+                                     catalog.catalogId == m_selectedCatalogId;
+                            });
+            const bool authoritative =
+                !envelope.meta.partial &&
+                envelope.meta.cacheState != QStringLiteral("stale");
+
+            if (hadSelection && !selectionAvailable && authoritative) {
+              m_selectedProviderId.clear();
+              m_selectedCatalogId.clear();
+              m_filters.clear();
+              clearPage(false);
+              emit selectionChanged();
+            } else if (selectionAvailable && m_apiClient) {
+              clearPage(true);
+              m_pageLoading = true;
+              m_pageRequestId = m_apiClient->listCatalogItems(
+                  m_selectedProviderId, m_selectedCatalogId, m_filters,
+                  QString(), 40, m_generation);
+            }
             m_stale =
                 m_stale || envelope.meta.cacheState == QStringLiteral("stale");
             m_partial = m_partial || envelope.meta.partial;

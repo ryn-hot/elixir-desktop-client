@@ -16,6 +16,8 @@ namespace {
 
 const QString kProviderId =
     QStringLiteral("0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d");
+const QString kReplacementProviderId =
+    QStringLiteral("63a6e1dc-d31f-525a-92e9-b61057bdb76b");
 const QString kInstanceId =
     QStringLiteral("a7fbc769-ef8b-4220-a7da-93c58e329091");
 const QString kProfileId =
@@ -70,12 +72,12 @@ item(const QString &title = QStringLiteral("Home vs Away"),
   };
 }
 
-QByteArray providersEnvelope() {
+QByteArray providersEnvelope(const QString &providerId = kProviderId) {
   return QJsonDocument(
              QJsonObject{
                  {QStringLiteral("data"),
                   QJsonArray{QJsonObject{
-                      {QStringLiteral("providerId"), kProviderId},
+                      {QStringLiteral("providerId"), providerId},
                       {QStringLiteral("instanceId"), kInstanceId},
                       {QStringLiteral("extensionId"),
                        QStringLiteral("sports.fixture")},
@@ -97,15 +99,17 @@ QByteArray providersEnvelope() {
       .toJson(QJsonDocument::Compact);
 }
 
-QByteArray catalogsEnvelope() {
+QByteArray
+catalogsEnvelope(const QString &providerId = kProviderId,
+                 const QString &catalogId = QStringLiteral("live_events"),
+                 const QString &name = QStringLiteral("Live Now")) {
   return QJsonDocument(
              QJsonObject{
                  {QStringLiteral("data"),
                   QJsonArray{QJsonObject{
-                      {QStringLiteral("providerId"), kProviderId},
-                      {QStringLiteral("catalogId"),
-                       QStringLiteral("live_events")},
-                      {QStringLiteral("name"), QStringLiteral("Live Now")},
+                      {QStringLiteral("providerId"), providerId},
+                      {QStringLiteral("catalogId"), catalogId},
+                      {QStringLiteral("name"), name},
                       {QStringLiteral("description"), QJsonValue::Null},
                       {QStringLiteral("itemTypes"),
                        QJsonArray{QStringLiteral("event")}},
@@ -338,6 +342,7 @@ private slots:
   void modelSuppressesOldGenerationAndConvertsUtcForDisplay();
   void modelSurfacesStructuredErrorsAndItemStreams();
   void modelRefreshPreservesRowsAcrossTimeoutAndEmptyStalePage();
+  void modelRefreshDropsSelectionRemovedByAuthoritativeCatalogIndex();
   void artworkAuthenticationPolicyIsExactOriginAndPath();
   void timezoneDstTransitionUsesSystemRules();
   void c31AdminTransportCoversEveryMutationAndCasBody();
@@ -586,8 +591,9 @@ void LiveClientTests::
   network.enqueue(jsonResponse(errorEnvelope(), 504));
   model.refreshIndex();
   QVERIFY(model.catalogIndexLoading());
-  QVERIFY(model.pageLoading());
+  QVERIFY(!model.pageLoading());
   QCOMPARE(model.rowCount(), 1);
+  QCOMPARE(network.capturedRequests().size(), 3);
   scheduler.runDue();
   QCOMPARE(model.rowCount(), 1);
   QCOMPARE(model.lastError().value(QStringLiteral("code")).toString(),
@@ -604,6 +610,46 @@ void LiveClientTests::
   scheduler.runDue();
   QCOMPARE(model.rowCount(), 0);
   QVERIFY(!model.stale());
+}
+
+void LiveClientTests::
+    modelRefreshDropsSelectionRemovedByAuthoritativeCatalogIndex() {
+  ApiClient auth;
+  auth.setBaseUrl(QStringLiteral("https://server.example"));
+  auth.setAuthToken(QStringLiteral("test-access-token"));
+  DeterministicScheduler scheduler;
+  ScriptedNetworkAccessManager network(scheduler);
+  network.enqueue(jsonResponse(pageEnvelope(QStringLiteral("Pluto channel"))));
+  LiveApiClient live(&auth, &network);
+  LiveCatalogModel model(&live);
+
+  model.selectCatalog(kProviderId, QStringLiteral("live_events"));
+  scheduler.runDue();
+  QCOMPARE(model.rowCount(), 1);
+
+  network.enqueue(jsonResponse(providersEnvelope(kReplacementProviderId)));
+  network.enqueue(jsonResponse(
+      catalogsEnvelope(kReplacementProviderId, QStringLiteral("iptv_channels"),
+                       QStringLiteral("IPTV Channels"))));
+  model.refreshIndex();
+  QCOMPARE(model.rowCount(), 1);
+  scheduler.runDue();
+
+  QCOMPARE(model.rowCount(), 0);
+  QVERIFY(model.selectedProviderId().isEmpty());
+  QVERIFY(model.selectedCatalogId().isEmpty());
+  QCOMPARE(model.catalogs().size(), 1);
+  QCOMPARE(model.catalogs()
+               .constFirst()
+               .toMap()
+               .value(QStringLiteral("providerId"))
+               .toString(),
+           kReplacementProviderId);
+  QCOMPARE(network.capturedRequests().size(), 3);
+  QCOMPARE(network.capturedRequests().at(1).url.path(),
+           QStringLiteral("/api/v1/live/providers"));
+  QCOMPARE(network.capturedRequests().at(2).url.path(),
+           QStringLiteral("/api/v1/live/catalogs"));
 }
 
 void LiveClientTests::artworkAuthenticationPolicyIsExactOriginAndPath() {

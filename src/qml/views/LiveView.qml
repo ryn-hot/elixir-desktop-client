@@ -191,7 +191,8 @@ Item {
 
     function ensureSelection() {
         var catalogs = liveModel.catalogs || []
-        if (catalogs.length === 0 || String(liveModel.selectedCatalogId || "") !== "") return
+        if (liveModel.catalogIndexLoading || catalogs.length === 0
+                || String(liveModel.selectedCatalogId || "") !== "") return
         activeFilters = ({})
         liveModel.selectCatalog(String(catalogs[0].providerId), String(catalogs[0].catalogId), activeFilters)
     }
@@ -254,6 +255,9 @@ Item {
             if ((root.liveModel.catalogs || []).length > 0) {
                 root.startupRefreshAttempts = 0
             }
+            root.ensureSelection()
+        }
+        function onLoadingChanged() {
             root.ensureSelection()
         }
     }

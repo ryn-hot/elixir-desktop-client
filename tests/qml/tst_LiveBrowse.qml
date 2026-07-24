@@ -72,6 +72,7 @@ TestCase {
         })
 
         signal liveEgressChanged()
+        signal loadingChanged()
         signal requestFailed(string endpoint, string error)
 
         function refreshIndex() { refreshIndexCalls += 1 }
@@ -261,6 +262,19 @@ TestCase {
         verify(emptyReadyView)
         wait(100)
         compare(mock.refreshIndexCalls, 0)
+    }
+
+    function test_catalog_selection_waits_for_index_reconciliation() {
+        readyFixture()
+        mock.catalogIndexLoading = true
+        var view = createLiveView(900, 600)
+        verify(view)
+        compare(mock.selectCatalogCalls, 0)
+
+        mock.catalogIndexLoading = false
+        mock.loadingChanged()
+        tryVerify(function() { return mock.selectCatalogCalls === 1 })
+        compare(mock.selectedCatalogId, "live_events")
     }
 
     function test_partial_stale_and_error_notice_states() {
