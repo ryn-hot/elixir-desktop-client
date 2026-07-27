@@ -26,6 +26,7 @@ struct CapturedNetworkRequest {
     QUrl url;
     QList<QPair<QByteArray, QByteArray>> headers;
     QByteArray body;
+    int transferTimeoutMs{0};
 };
 
 class ScriptedNetworkReply final : public QNetworkReply {

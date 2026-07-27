@@ -25,6 +25,8 @@ namespace {
 
 constexpr qsizetype kMaximumResponseBytes = 4 * 1024 * 1024;
 constexpr qsizetype kMaximumAuthQueue = 64;
+constexpr int kRequestTimeoutMs = 15'000;
+constexpr int kSessionMutationTimeoutMs = 120'000;
 
 struct ResponseBuffer {
   QByteArray bytes;
@@ -1265,7 +1267,12 @@ void LiveApiClient::dispatch(Request request) {
                               QNetworkRequest::ManualRedirectPolicy);
   networkRequest.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
                               QNetworkRequest::AlwaysNetwork);
-  networkRequest.setTransferTimeout(15'000);
+  const bool mayProvisionPlayback =
+      request.kind == RequestKind::SessionCreate ||
+      request.kind == RequestKind::SessionRecovery;
+  networkRequest.setTransferTimeout(mayProvisionPlayback
+                                        ? kSessionMutationTimeoutMs
+                                        : kRequestTimeoutMs);
 
   QNetworkReply *reply = nullptr;
   if (request.method == QByteArrayLiteral("GET")) {

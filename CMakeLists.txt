@@ -250,6 +250,9 @@ if(BUILD_TESTING)
         COMMAND elixir-client-qml-tests
             LiveBrowse::test_loading_empty_and_unavailable_states
             LiveBrowse::test_unavailable_provider_retries_until_catalogs_become_ready
+            LiveBrowse::test_single_provider_keeps_provider_navigation_hidden
+            LiveBrowse::test_multi_provider_navigation_scopes_and_restores_catalogs
+            LiveBrowse::test_failed_provider_does_not_hide_ready_provider
             LiveBrowse::test_partial_stale_and_error_notice_states
             LiveBrowse::test_account_required_states_use_native_connect_and_reconnect_copy
             LiveBrowse::test_event_card_keyboard_accessibility_and_long_text

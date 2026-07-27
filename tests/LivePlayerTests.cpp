@@ -351,6 +351,7 @@ void LivePlayerTests::nullableExpectedEndStartsPlaybackThroughMetaObject() {
       Q_ARG(QVariant, QVariant{}));
   QVERIFY(invoked);
   QCOMPARE(controller.state(), QStringLiteral("creating_session"));
+  QCOMPARE(network.capturedRequests().constFirst().transferTimeoutMs, 120'000);
 
   scheduler.runDue();
   scheduler.runDue();
@@ -846,6 +847,7 @@ void LivePlayerTests::
   QCOMPARE(network.capturedRequests().size(), 2);
   const CapturedNetworkRequest &refresh = network.capturedRequests().at(0);
   QCOMPARE(refresh.operation, QNetworkAccessManager::PostOperation);
+  QCOMPARE(refresh.transferTimeoutMs, 120'000);
   QCOMPARE(refresh.url.path(), QStringLiteral("/api/v1/live/sessions/") +
                                    kSessionId + QStringLiteral("/refresh"));
   QVERIFY(!refresh.url.hasQuery());
@@ -859,6 +861,7 @@ void LivePlayerTests::
   QVERIFY(!body.contains(QStringLiteral("requestedSourceKey")));
 
   const CapturedNetworkRequest &failover = network.capturedRequests().at(1);
+  QCOMPARE(failover.transferTimeoutMs, 120'000);
   QCOMPARE(failover.url.path(), QStringLiteral("/api/v1/live/sessions/") +
                                     kSessionId + QStringLiteral("/failover"));
   body = QJsonDocument::fromJson(failover.body).object();

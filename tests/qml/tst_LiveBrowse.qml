@@ -163,6 +163,45 @@ TestCase {
         }]
     }
 
+    function multiProviderFixture() {
+        mock.providers = [{
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
+            "instanceId": "80000000-0000-4000-8000-000000000008",
+            "extensionId": "fixture.live.pluto",
+            "name": "Pluto TV",
+            "readiness": "ready",
+            "accountState": "connected"
+        }, {
+            "providerId": "1b7f0fce-03be-4ccc-922a-701fb931db6e",
+            "instanceId": "90000000-0000-4000-8000-000000000009",
+            "extensionId": "fixture.live.sports",
+            "name": "Live Sports Streams",
+            "readiness": "ready",
+            "accountState": "not_required"
+        }]
+        mock.catalogs = [{
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
+            "catalogId": "channels",
+            "name": "Channels",
+            "filters": []
+        }, {
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
+            "catalogId": "guide",
+            "name": "Guide",
+            "filters": []
+        }, {
+            "providerId": "1b7f0fce-03be-4ccc-922a-701fb931db6e",
+            "catalogId": "live_now",
+            "name": "Live Now",
+            "filters": []
+        }, {
+            "providerId": "1b7f0fce-03be-4ccc-922a-701fb931db6e",
+            "catalogId": "today",
+            "name": "Today",
+            "filters": []
+        }]
+    }
+
     function appendLongEvent() {
         rows.append({
             "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
@@ -275,6 +314,127 @@ TestCase {
         mock.loadingChanged()
         tryVerify(function() { return mock.selectCatalogCalls === 1 })
         compare(mock.selectedCatalogId, "live_events")
+    }
+
+    function test_single_provider_keeps_provider_navigation_hidden() {
+        readyFixture()
+        var view = createLiveView(900, 600)
+        verify(view)
+
+        var providerTabs = findChild(view, "liveProviderTabs")
+        var catalogTabs = findChild(view, "liveCatalogTabs")
+        tryCompare(providerTabs, "count", 1)
+        compare(providerTabs.visible, false)
+        tryCompare(catalogTabs, "count", 1)
+        compare(catalogTabs.visible, true)
+        tryCompare(mock, "selectedCatalogId", "live_events")
+    }
+
+    function test_multi_provider_navigation_scopes_and_restores_catalogs() {
+        multiProviderFixture()
+        var view = createLiveView(1100, 700)
+        verify(view)
+
+        var providerTabs = findChild(view, "liveProviderTabs")
+        var catalogTabs = findChild(view, "liveCatalogTabs")
+        tryCompare(providerTabs, "count", 2)
+        compare(providerTabs.visible, true)
+        tryCompare(mock, "selectedProviderId",
+                   "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d")
+        tryCompare(mock, "selectedCatalogId", "channels")
+        tryCompare(catalogTabs, "count", 2)
+        tryVerify(function() {
+            return catalogTabs.itemAtIndex(0)
+                    && catalogTabs.itemAtIndex(0).text === "Channels"
+                    && catalogTabs.itemAtIndex(1)
+                    && catalogTabs.itemAtIndex(1).text === "Guide"
+        })
+
+        mouseClick(catalogTabs.itemAtIndex(1))
+        tryCompare(mock, "selectedCatalogId", "guide")
+
+        mouseClick(providerTabs.itemAtIndex(1))
+        tryCompare(mock, "selectedProviderId",
+                   "1b7f0fce-03be-4ccc-922a-701fb931db6e")
+        tryCompare(mock, "selectedCatalogId", "live_now")
+        tryVerify(function() {
+            return catalogTabs.itemAtIndex(0)
+                    && catalogTabs.itemAtIndex(0).text === "Live Now"
+                    && catalogTabs.itemAtIndex(1)
+                    && catalogTabs.itemAtIndex(1).text === "Today"
+        })
+        mouseClick(catalogTabs.itemAtIndex(1))
+        tryCompare(mock, "selectedCatalogId", "today")
+
+        mouseClick(providerTabs.itemAtIndex(0))
+        tryCompare(mock, "selectedProviderId",
+                   "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d")
+        tryCompare(mock, "selectedCatalogId", "guide")
+        tryVerify(function() {
+            return catalogTabs.itemAtIndex(0)
+                    && catalogTabs.itemAtIndex(0).text === "Channels"
+        })
+
+        mouseClick(providerTabs.itemAtIndex(1))
+        tryCompare(mock, "selectedCatalogId", "today")
+        var callsBeforeRefresh = mock.selectCatalogCalls
+        mock.catalogIndexLoading = true
+        mock.loadingChanged()
+        mock.catalogs = mock.catalogs.slice(0)
+        mock.catalogIndexLoading = false
+        mock.loadingChanged()
+        compare(mock.selectedProviderId,
+                "1b7f0fce-03be-4ccc-922a-701fb931db6e")
+        compare(mock.selectedCatalogId, "today")
+        compare(mock.selectCatalogCalls, callsBeforeRefresh)
+        compare(providerTabs.itemAtIndex(1).Accessible.name,
+                "Live Sports Streams Live provider")
+    }
+
+    function test_failed_provider_does_not_hide_ready_provider() {
+        mock.providers = [{
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d",
+            "name": "Pluto TV",
+            "readiness": "unavailable",
+            "disabledReason": "Provider timed out"
+        }, {
+            "providerId": "1b7f0fce-03be-4ccc-922a-701fb931db6e",
+            "name": "Live Sports Streams",
+            "readiness": "ready"
+        }]
+        mock.catalogs = [{
+            "providerId": "1b7f0fce-03be-4ccc-922a-701fb931db6e",
+            "catalogId": "live_now",
+            "name": "Live Now",
+            "filters": []
+        }]
+        mock.partial = true
+        mock.errors = [{
+            "code": "LIVE_PROVIDER_TIMEOUT",
+            "message": "Provider timed out",
+            "retryable": true,
+            "providerId": "0a6efebd-f2ad-4bbb-b199-6f0fa820ca5d"
+        }]
+
+        var view = createLiveView(1000, 700)
+        verify(view)
+        tryCompare(mock, "selectedProviderId",
+                   "1b7f0fce-03be-4ccc-922a-701fb931db6e")
+        tryCompare(mock, "selectedCatalogId", "live_now")
+
+        var providerTabs = findChild(view, "liveProviderTabs")
+        var catalogTabs = findChild(view, "liveCatalogTabs")
+        tryCompare(providerTabs, "count", 2)
+        tryVerify(function() {
+            return providerTabs.itemAtIndex(0) && providerTabs.itemAtIndex(1)
+        })
+        compare(providerTabs.itemAtIndex(0).enabled, false)
+        compare(providerTabs.itemAtIndex(1).enabled, true)
+        verify(providerTabs.itemAtIndex(0).Accessible.description.indexOf(
+                   "Provider timed out") >= 0)
+        tryCompare(catalogTabs, "count", 1)
+        tryCompare(catalogTabs.itemAtIndex(0), "text", "Live Now")
+        tryCompare(findChild(view, "liveNoticeBanner"), "visible", true)
     }
 
     function test_partial_stale_and_error_notice_states() {
@@ -653,5 +813,38 @@ TestCase {
         compare(detailsImage.width, 360)
         compare(detailsImage.height, 640)
         detailsImage.save(c12CaptureDir + "/live-details-mobile.png")
+    }
+
+    function test_multi_provider_visual_evidence() {
+        if (c12CaptureDir === "") skip("Visual capture directory was not requested")
+        multiProviderFixture()
+        appendLongEvent()
+
+        testWindow.width = 1440
+        testWindow.height = 900
+        var desktop = createLiveView(1440, 900)
+        verify(desktop)
+        var providerTabs = findChild(desktop, "liveProviderTabs")
+        var catalogTabs = findChild(desktop, "liveCatalogTabs")
+        tryCompare(providerTabs, "count", 2)
+        tryCompare(catalogTabs, "count", 2)
+        wait(20)
+        var desktopImage = grabImage(desktop)
+        desktopImage.save(c12CaptureDir + "/live-multi-provider-desktop.png")
+        desktop.destroy()
+        wait(0)
+
+        resetMock()
+        multiProviderFixture()
+        appendLongEvent()
+        testWindow.width = 360
+        testWindow.height = 640
+        var mobile = createLiveView(360, 640)
+        verify(mobile)
+        tryCompare(findChild(mobile, "liveProviderTabs"), "count", 2)
+        tryCompare(findChild(mobile, "liveCatalogTabs"), "count", 2)
+        wait(20)
+        var mobileImage = grabImage(mobile)
+        mobileImage.save(c12CaptureDir + "/live-multi-provider-mobile.png")
     }
 }

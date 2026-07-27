@@ -117,6 +117,7 @@ QNetworkReply *ScriptedNetworkAccessManager::createRequest(
     CapturedNetworkRequest captured;
     captured.operation = operation;
     captured.url = request.url();
+    captured.transferTimeoutMs = request.transferTimeout();
     for (const auto &name : request.rawHeaderList()) {
         captured.headers.append({name, request.rawHeader(name)});
     }

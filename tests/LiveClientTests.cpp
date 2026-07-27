@@ -435,6 +435,7 @@ void LiveClientTests::transportUsesBearerHeaderAndCancellationIsTerminal() {
   QVERIFY(!request.url.hasQuery());
   QCOMPARE(capturedHeader(request, QByteArrayLiteral("Authorization")),
            QByteArrayLiteral("Bearer test-access-token"));
+  QCOMPARE(request.transferTimeoutMs, 15'000);
   live.cancel(requestId);
   QCOMPARE(cancelled.count(), 1);
   scheduler.advance(20);

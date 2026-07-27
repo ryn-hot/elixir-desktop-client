@@ -15,6 +15,8 @@ Item {
     property string serverBaseUrl: ""
     property var playerController: null
     property var activeFilters: ({})
+    property string lastSelectedProviderId: ""
+    property var catalogSelectionByProvider: ({})
     property bool initialized: false
     property int startupRefreshAttempts: 0
     property int startupRefreshMaxAttempts: 24
@@ -32,6 +34,9 @@ Item {
         }
         return null
     }
+    readonly property var providerNavigationItems: buildProviderNavigationItems()
+    readonly property var activeCatalogs: catalogsForProvider(
+                                                    String(liveModel.selectedProviderId || ""))
     readonly property int readyProviderCount: {
         var providers = liveModel.providers || []
         var count = 0
@@ -94,6 +99,94 @@ Item {
                 return providers[i]
         }
         return null
+    }
+
+    function catalogsForProvider(providerId) {
+        var result = []
+        var catalogs = liveModel.catalogs || []
+        var target = String(providerId || "")
+        if (target === "") return result
+        for (var i = 0; i < catalogs.length; ++i) {
+            if (String(catalogs[i].providerId) === target) result.push(catalogs[i])
+        }
+        return result
+    }
+
+    function buildProviderNavigationItems() {
+        var providers = liveModel.providers || []
+        var catalogs = liveModel.catalogs || []
+        var catalogCounts = ({})
+        var knownProviders = ({})
+        var result = []
+
+        for (var i = 0; i < catalogs.length; ++i) {
+            var catalogProviderId = String(catalogs[i].providerId || "")
+            if (catalogProviderId === "") continue
+            catalogCounts[catalogProviderId] =
+                    Number(catalogCounts[catalogProviderId] || 0) + 1
+        }
+        for (var j = 0; j < providers.length; ++j) {
+            var providerId = String(providers[j].providerId || "")
+            if (providerId === "") continue
+            knownProviders[providerId] = true
+            result.push({
+                "providerId": providerId,
+                "name": String(providers[j].name || "Live provider"),
+                "readiness": String(providers[j].readiness || "unknown"),
+                "disabledReason": String(providers[j].disabledReason || ""),
+                "catalogCount": Number(catalogCounts[providerId] || 0)
+            })
+        }
+        for (var k = 0; k < catalogs.length; ++k) {
+            var fallbackProviderId = String(catalogs[k].providerId || "")
+            if (fallbackProviderId === "" || knownProviders[fallbackProviderId]) continue
+            knownProviders[fallbackProviderId] = true
+            result.push({
+                "providerId": fallbackProviderId,
+                "name": providerName(fallbackProviderId),
+                "readiness": "ready",
+                "disabledReason": "",
+                "catalogCount": Number(catalogCounts[fallbackProviderId] || 0)
+            })
+        }
+        return result
+    }
+
+    function catalogFor(providerId, catalogId) {
+        var catalogs = catalogsForProvider(providerId)
+        var target = String(catalogId || "")
+        for (var i = 0; i < catalogs.length; ++i) {
+            if (String(catalogs[i].catalogId) === target) return catalogs[i]
+        }
+        return null
+    }
+
+    function rememberCatalog(providerId, catalogId) {
+        var provider = String(providerId || "")
+        var catalog = String(catalogId || "")
+        if (provider === "" || catalog === "") return
+        var remembered = ({})
+        var current = catalogSelectionByProvider || ({})
+        for (var key in current) remembered[key] = current[key]
+        remembered[provider] = catalog
+        catalogSelectionByProvider = remembered
+        lastSelectedProviderId = provider
+    }
+
+    function preferredCatalog(providerId) {
+        var provider = String(providerId || "")
+        var catalogs = catalogsForProvider(provider)
+        if (catalogs.length === 0) return null
+
+        var rememberedId = String((catalogSelectionByProvider || ({}))[provider] || "")
+        var remembered = catalogFor(provider, rememberedId)
+        if (remembered) return remembered
+
+        if (String(liveModel.selectedProviderId || "") === provider) {
+            var selected = catalogFor(provider, liveModel.selectedCatalogId)
+            if (selected) return selected
+        }
+        return catalogs[0]
     }
 
     function accountProblemForCurrentView() {
@@ -191,15 +284,49 @@ Item {
 
     function ensureSelection() {
         var catalogs = liveModel.catalogs || []
-        if (liveModel.catalogIndexLoading || catalogs.length === 0
-                || String(liveModel.selectedCatalogId || "") !== "") return
-        activeFilters = ({})
-        liveModel.selectCatalog(String(catalogs[0].providerId), String(catalogs[0].catalogId), activeFilters)
+        if (liveModel.catalogIndexLoading || catalogs.length === 0) return
+
+        var selected = catalogFor(liveModel.selectedProviderId,
+                                  liveModel.selectedCatalogId)
+        if (selected) {
+            rememberCatalog(selected.providerId, selected.catalogId)
+            return
+        }
+
+        var providerId = String(liveModel.selectedProviderId || "")
+        if (catalogsForProvider(providerId).length === 0) {
+            providerId = lastSelectedProviderId
+        }
+        if (catalogsForProvider(providerId).length === 0) {
+            var providers = providerNavigationItems || []
+            providerId = ""
+            for (var i = 0; i < providers.length; ++i) {
+                if (Number(providers[i].catalogCount || 0) > 0) {
+                    providerId = String(providers[i].providerId)
+                    break
+                }
+            }
+        }
+
+        var catalog = preferredCatalog(providerId)
+        if (catalog) selectCatalog(catalog)
     }
 
     function selectCatalog(catalog) {
+        if (!catalog) return
+        var providerId = String(catalog.providerId || "")
+        var catalogId = String(catalog.catalogId || "")
+        if (providerId === "" || catalogId === "") return
+        rememberCatalog(providerId, catalogId)
+        if (String(liveModel.selectedProviderId || "") === providerId
+                && String(liveModel.selectedCatalogId || "") === catalogId) return
         activeFilters = ({})
-        liveModel.selectCatalog(String(catalog.providerId), String(catalog.catalogId), activeFilters)
+        liveModel.selectCatalog(providerId, catalogId, activeFilters)
+    }
+
+    function selectProvider(providerId) {
+        var catalog = preferredCatalog(providerId)
+        if (catalog) selectCatalog(catalog)
     }
 
     function openItem(providerId, itemKey) {
@@ -443,6 +570,66 @@ Item {
         }
 
         ListView {
+            id: providerTabs
+            objectName: "liveProviderTabs"
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? 42 : 0
+            orientation: ListView.Horizontal
+            spacing: Theme.space8
+            clip: true
+            model: root.providerNavigationItems
+            visible: count > 1
+            keyNavigationEnabled: true
+            keyNavigationWraps: true
+
+            delegate: Button {
+                id: providerTab
+                objectName: "liveProviderTab"
+                required property var modelData
+                height: 38
+                implicitWidth: Math.max(128, providerLabel.implicitWidth + 32)
+                text: String(modelData.name || "Live provider")
+                enabled: Number(modelData.catalogCount || 0) > 0
+                checked: String(modelData.providerId) ===
+                         String(root.liveModel.selectedProviderId)
+                checkable: true
+                focusPolicy: Qt.StrongFocus
+                Accessible.name: text + " Live provider"
+                Accessible.description: enabled
+                        ? Number(modelData.catalogCount) + " available catalog" +
+                          (Number(modelData.catalogCount) === 1 ? "" : "s")
+                        : String(modelData.disabledReason || "No Live catalogs are currently available.")
+                onClicked: root.selectProvider(modelData.providerId)
+
+                background: Rectangle {
+                    radius: Theme.radius6
+                    color: providerTab.checked ? Theme.surfaceRaised
+                                               : (providerTab.hovered
+                                                  ? Theme.surfaceHover : Theme.surface)
+                    border.width: providerTab.checked || providerTab.activeFocus ? 1 : 0
+                    border.color: providerTab.checked ? Theme.accent : Theme.textPrimary
+                }
+
+                contentItem: Label {
+                    id: providerLabel
+                    text: providerTab.text
+                    textFormat: Text.PlainText
+                    color: !providerTab.enabled ? Theme.textDisabled
+                                                : (providerTab.checked
+                                                   ? Theme.accent : Theme.textPrimary)
+                    font.pixelSize: 13
+                    font.weight: providerTab.checked ? Font.DemiBold : Font.Normal
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
+
+                ToolTip.visible: hovered
+                ToolTip.text: Accessible.description
+            }
+        }
+
+        ListView {
             id: catalogTabs
             objectName: "liveCatalogTabs"
             Layout.fillWidth: true
@@ -450,7 +637,7 @@ Item {
             orientation: ListView.Horizontal
             spacing: Theme.space8
             clip: true
-            model: root.liveModel.catalogs || []
+            model: root.activeCatalogs
             visible: count > 0
             keyNavigationEnabled: true
             keyNavigationWraps: true
