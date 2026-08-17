@@ -12,6 +12,7 @@ Item {
     property bool warpDisclosureAccepted: false
     property string networkProtectionNotice: ""
     property string playbackHardwareNotice: ""
+    property string animeInferenceNotice: ""
     property string playbackDiagnosticsNotice: ""
     property string selectedProtectionProfileId: ""
     property int importProviderIndex: 0
@@ -32,6 +33,42 @@ Item {
         return apiClient.homeRole === "owner"
                 && hasCapability("live_manage")
                 && hasCapability("settings_manage")
+    }
+
+    function canManageAnimeInference() {
+        return hasCapability("settings_manage")
+    }
+
+    function refreshAnimeInference() {
+        if (apiClient.authToken !== "" && canManageAnimeInference()) {
+            apiClient.fetchAnimeInferenceSettings()
+        }
+    }
+
+    function animeInferenceState() {
+        return apiClient.animeInferenceSettings || {}
+    }
+
+    function animeInferenceSummary() {
+        var state = root.animeInferenceState()
+        if (apiClient.animeInferenceSettingsLoading && state.state === undefined) {
+            return "Checking local anime matching hardware…"
+        }
+        if (state.effectiveEnabled === true) {
+            var seconds = Number(state.estimatedSecondsPerThousandCandidates || 0)
+            if (seconds > 0) {
+                return "Local AI is enabled. Estimated 1,000-candidate processing time: "
+                        + Math.max(1, Math.ceil(seconds / 60)) + " minutes."
+            }
+            return "Local AI is enabled."
+        }
+        if (state.performanceTier === "opt_in_required") {
+            return "This server did not qualify for automatic local AI. Deterministic anime matching remains enabled."
+        }
+        if (state.performanceTier === "unavailable") {
+            return "No qualified local AI runtime is available. Deterministic anime matching remains enabled."
+        }
+        return "Local anime matching hardware is evaluated automatically in the background."
     }
 
     function refreshLiveEgress() {
@@ -1497,6 +1534,7 @@ Item {
             apiClient.fetchPlaybackInteractionPreferences()
             root.refreshNetworkProtection()
             root.refreshPlaybackHardware()
+            root.refreshAnimeInference()
             root.refreshPlaybackDiagnostics()
             root.refreshLiveEgress()
             if (root.mediaInteractionSupportToolsEnabled) {
@@ -1516,6 +1554,7 @@ Item {
                 apiClient.fetchPlaybackInteractionPreferences()
                 root.refreshNetworkProtection()
                 root.refreshPlaybackHardware()
+                root.refreshAnimeInference()
                 root.refreshPlaybackDiagnostics()
                 root.refreshLiveEgress()
                 if (root.mediaInteractionSupportToolsEnabled) {
@@ -1528,6 +1567,13 @@ Item {
 
         function onSessionStateChanged() {
             root.refreshLiveEgress()
+            root.refreshAnimeInference()
+        }
+
+        function onAnimeInferenceSettingsChanged() {
+            root.animeInferenceNotice = ""
+            animeSlowHardwareSwitch.checked =
+                    root.animeInferenceState().slowHardwareEnabled === true
         }
 
         function onNetworkProtectionChanged() {
@@ -1557,6 +1603,10 @@ Item {
                 root.networkProtectionNotice = error
             } else if (endpoint.indexOf("/api/v1/playback/hardware") === 0) {
                 root.playbackHardwareNotice = error
+            } else if (endpoint.indexOf("/api/v1/settings/anime-inference") === 0) {
+                root.animeInferenceNotice = error
+                animeSlowHardwareSwitch.checked =
+                        root.animeInferenceState().slowHardwareEnabled === true
             } else if (endpoint.indexOf("/api/v1/profile/playback-interactions") === 0) {
                 root.playbackDiagnosticsNotice = error
             } else if (endpoint.indexOf("/api/v1/media-interaction-libraries") === 0) {
@@ -4194,6 +4244,78 @@ Item {
                 Rectangle {
                     height: 1
                     color: Theme.border
+                    Layout.fillWidth: true
+                }
+
+                ColumnLayout {
+                    visible: root.canManageAnimeInference()
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSmall
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingMedium
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "Anime matching"
+                            color: Theme.textPrimary
+                            font.pixelSize: 16
+                            font.family: Theme.fontDisplay
+                        }
+
+                        Button {
+                            text: apiClient.animeInferenceSettingsLoading ? "Checking" : "Refresh"
+                            enabled: apiClient.authToken !== "" && !apiClient.animeInferenceSettingsLoading
+                            onClicked: root.refreshAnimeInference()
+                        }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.animeInferenceSummary()
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Switch {
+                        id: animeSlowHardwareSwitch
+                        text: "Allow local AI on slower hardware"
+                        visible: root.animeInferenceState().performanceTier === "opt_in_required"
+                                 || root.animeInferenceState().slowHardwareEnabled === true
+                        enabled: apiClient.authToken !== "" && !apiClient.animeInferenceSettingsLoading
+                        onClicked: apiClient.setAnimeInferenceSlowHardwareEnabled(checked)
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: root.animeInferenceState().performanceTier === "opt_in_required"
+                                 || animeSlowHardwareSwitch.checked
+                        text: root.animeInferenceState().slowHardwareWarning
+                              || "Enabling local AI on slower hardware can greatly increase acquisition times and resource use."
+                        color: Theme.accent
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: root.animeInferenceNotice !== ""
+                        text: root.animeInferenceNotice
+                        color: Theme.accentDanger
+                        font.pixelSize: 11
+                        font.family: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                Rectangle {
+                    Layout.preferredHeight: 1
+                    color: Theme.border
+                    visible: root.canManageAnimeInference()
                     Layout.fillWidth: true
                 }
 

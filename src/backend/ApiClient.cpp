@@ -760,6 +760,14 @@ bool ApiClient::playbackHardwareLoading() const {
     return m_playbackHardwareLoading;
 }
 
+QVariantMap ApiClient::animeInferenceSettings() const {
+    return m_animeInferenceSettings;
+}
+
+bool ApiClient::animeInferenceSettingsLoading() const {
+    return m_animeInferenceSettingsLoading;
+}
+
 QVariantMap ApiClient::playbackAdminDiagnostics() const {
     return m_playbackAdminDiagnostics;
 }
@@ -3055,6 +3063,50 @@ void ApiClient::refreshPlaybackHardwareStatus(bool diagnostics) {
     fetchPlaybackHardwareWarnings();
 }
 
+void ApiClient::fetchAnimeInferenceSettings() {
+    setAnimeInferenceSettingsLoading(true);
+    sendRequest(
+        "GET",
+        "/api/v1/settings/anime-inference",
+        QJsonObject(),
+        [this](const QJsonDocument &doc) {
+            setAnimeInferenceSettingsLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/settings/anime-inference",
+                    "Anime inference settings response was not an object.");
+                return;
+            }
+            updateAnimeInferenceSettings(doc.object());
+        },
+        [this](const QString &) {
+            setAnimeInferenceSettingsLoading(false);
+        });
+}
+
+void ApiClient::setAnimeInferenceSlowHardwareEnabled(bool enabled) {
+    setAnimeInferenceSettingsLoading(true);
+    QJsonObject body;
+    body.insert("slowHardwareEnabled", enabled);
+    sendRequest(
+        "PATCH",
+        "/api/v1/settings/anime-inference",
+        body,
+        [this](const QJsonDocument &doc) {
+            setAnimeInferenceSettingsLoading(false);
+            if (!doc.isObject()) {
+                emit requestFailed(
+                    "/api/v1/settings/anime-inference",
+                    "Anime inference settings response was not an object.");
+                return;
+            }
+            updateAnimeInferenceSettings(doc.object());
+        },
+        [this](const QString &) {
+            setAnimeInferenceSettingsLoading(false);
+        });
+}
+
 void ApiClient::fetchPlaybackAdminDiagnostics() {
     setPlaybackAdminDiagnosticsLoading(true);
     sendRequest(
@@ -3523,6 +3575,23 @@ void ApiClient::updatePlaybackHardwareWarnings(const QJsonArray &warnings) {
     }
     m_playbackHardwareWarnings = value;
     emit playbackHardwareChanged();
+}
+
+void ApiClient::setAnimeInferenceSettingsLoading(bool loading) {
+    if (m_animeInferenceSettingsLoading == loading) {
+        return;
+    }
+    m_animeInferenceSettingsLoading = loading;
+    emit animeInferenceSettingsLoadingChanged();
+}
+
+void ApiClient::updateAnimeInferenceSettings(const QJsonObject &obj) {
+    const QVariantMap value = obj.toVariantMap();
+    if (m_animeInferenceSettings == value) {
+        return;
+    }
+    m_animeInferenceSettings = value;
+    emit animeInferenceSettingsChanged();
 }
 
 void ApiClient::setPlaybackAdminDiagnosticsLoading(bool loading) {

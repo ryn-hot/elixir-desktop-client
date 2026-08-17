@@ -78,6 +78,8 @@ class ApiClient : public QObject {
     Q_PROPERTY(QVariantMap playbackHardwareReadiness READ playbackHardwareReadiness NOTIFY playbackHardwareChanged)
     Q_PROPERTY(QVariantList playbackHardwareWarnings READ playbackHardwareWarnings NOTIFY playbackHardwareChanged)
     Q_PROPERTY(bool playbackHardwareLoading READ playbackHardwareLoading NOTIFY playbackHardwareLoadingChanged)
+    Q_PROPERTY(QVariantMap animeInferenceSettings READ animeInferenceSettings NOTIFY animeInferenceSettingsChanged)
+    Q_PROPERTY(bool animeInferenceSettingsLoading READ animeInferenceSettingsLoading NOTIFY animeInferenceSettingsLoadingChanged)
     Q_PROPERTY(QVariantMap playbackAdminDiagnostics READ playbackAdminDiagnostics NOTIFY playbackAdminDiagnosticsChanged)
     Q_PROPERTY(bool playbackAdminDiagnosticsLoading READ playbackAdminDiagnosticsLoading NOTIFY playbackAdminDiagnosticsLoadingChanged)
     Q_PROPERTY(QVariantMap playbackInteractionPreferences READ playbackInteractionPreferences NOTIFY playbackInteractionPreferencesChanged)
@@ -188,6 +190,8 @@ public:
     QVariantMap playbackHardwareReadiness() const;
     QVariantList playbackHardwareWarnings() const;
     bool playbackHardwareLoading() const;
+    QVariantMap animeInferenceSettings() const;
+    bool animeInferenceSettingsLoading() const;
     QVariantMap playbackAdminDiagnostics() const;
     bool playbackAdminDiagnosticsLoading() const;
     QVariantMap playbackInteractionPreferences() const;
@@ -337,6 +341,8 @@ public:
     Q_INVOKABLE void fetchPlaybackHardwareReadiness(bool diagnostics = false);
     Q_INVOKABLE void fetchPlaybackHardwareWarnings();
     Q_INVOKABLE void refreshPlaybackHardwareStatus(bool diagnostics = false);
+    Q_INVOKABLE void fetchAnimeInferenceSettings();
+    Q_INVOKABLE void setAnimeInferenceSlowHardwareEnabled(bool enabled);
     Q_INVOKABLE void fetchPlaybackAdminDiagnostics();
     Q_INVOKABLE void stopPlaybackAdminSession(const QString &sessionId);
     Q_INVOKABLE void applyFirstRunDownloadSetup(const QString &choice, bool acceptedWarpDisclosure = false);
@@ -487,6 +493,8 @@ signals:
     void liveEgressLoadingChanged();
     void playbackHardwareChanged();
     void playbackHardwareLoadingChanged();
+    void animeInferenceSettingsChanged();
+    void animeInferenceSettingsLoadingChanged();
     void playbackAdminDiagnosticsChanged();
     void playbackAdminDiagnosticsLoadingChanged();
     void playbackInteractionPreferencesChanged();
@@ -620,6 +628,8 @@ private:
     void setPlaybackHardwareLoading(bool loading);
     void updatePlaybackHardwareReadiness(const QJsonObject &obj);
     void updatePlaybackHardwareWarnings(const QJsonArray &warnings);
+    void setAnimeInferenceSettingsLoading(bool loading);
+    void updateAnimeInferenceSettings(const QJsonObject &obj);
     void setPlaybackAdminDiagnosticsLoading(bool loading);
     void updatePlaybackAdminDiagnostics(const QJsonObject &obj);
     void setMediaSegmentJobsLoading(bool loading);
@@ -737,6 +747,8 @@ private:
     QVariantMap m_playbackHardwareReadiness;
     QVariantList m_playbackHardwareWarnings;
     bool m_playbackHardwareLoading = false;
+    QVariantMap m_animeInferenceSettings;
+    bool m_animeInferenceSettingsLoading = false;
     QVariantMap m_playbackAdminDiagnostics;
     bool m_playbackAdminDiagnosticsLoading = false;
     QVariantMap m_playbackInteractionPreferences;
