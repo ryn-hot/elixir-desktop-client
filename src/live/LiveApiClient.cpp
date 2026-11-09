@@ -27,6 +27,10 @@ constexpr qsizetype kMaximumResponseBytes = 4 * 1024 * 1024;
 constexpr qsizetype kMaximumAuthQueue = 64;
 constexpr int kRequestTimeoutMs = 15'000;
 constexpr int kSessionMutationTimeoutMs = 120'000;
+// Catalog/item reads can include a cold native source invocation. Cover the
+// server's configurable 120s ceiling plus response framing, without changing
+// heartbeat/admin deadlines, server HTTP-provider limits or cancellation.
+constexpr int kProviderInvocationTimeoutMs = 135'000;
 
 struct ResponseBuffer {
   QByteArray bytes;
@@ -1270,9 +1274,13 @@ void LiveApiClient::dispatch(Request request) {
   const bool mayProvisionPlayback =
       request.kind == RequestKind::SessionCreate ||
       request.kind == RequestKind::SessionRecovery;
-  networkRequest.setTransferTimeout(mayProvisionPlayback
-                                        ? kSessionMutationTimeoutMs
-                                        : kRequestTimeoutMs);
+  const bool mayInvokeProvider = request.kind == RequestKind::Catalogs ||
+                                 request.kind == RequestKind::CatalogPage ||
+                                 request.kind == RequestKind::Item;
+  networkRequest.setTransferTimeout(
+      mayProvisionPlayback ? kSessionMutationTimeoutMs
+      : mayInvokeProvider  ? kProviderInvocationTimeoutMs
+                           : kRequestTimeoutMs);
 
   QNetworkReply *reply = nullptr;
   if (request.method == QByteArrayLiteral("GET")) {

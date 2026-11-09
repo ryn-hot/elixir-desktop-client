@@ -2796,6 +2796,18 @@ Item {
                         }
 
                         Button {
+                            objectName: "communityMarketplaceButton"
+                            text: "Community"
+                            visible: apiClient.homeRole === "owner" && apiClient.activeProfileType === "account"
+                                && apiClient.capabilities
+                                && apiClient.capabilities.indexOf("extensions_manage") >= 0
+                                && apiClient.capabilities.indexOf("settings_manage") >= 0
+                                && apiClient.capabilities.indexOf("server_admin") >= 0
+                            enabled: apiClient.authToken !== "" && root.stackView !== null
+                            onClicked: root.stackView.push(Qt.resolvedUrl("CommunityMarketplaceView.qml"), {stackView: root.stackView, client: apiClient})
+                        }
+
+                        Button {
                             text: "Refresh"
                             enabled: apiClient.authToken !== ""
                             onClicked: root.refreshExtensionsPage()

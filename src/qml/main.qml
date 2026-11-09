@@ -8,6 +8,7 @@ import Elixir 1.0
 
 ApplicationWindow {
     id: root
+    objectName: "elixirApplication"
     width: 1280
     height: 720
     visible: true
@@ -38,6 +39,12 @@ ApplicationWindow {
 
     function goHome() {
         showLibrarySection("all")
+    }
+
+    function openInitialHome() {
+        if (stackView.currentItem && stackView.currentItem.objectName === "marketplaceSetupView") return
+        stackView.clear()
+        stackView.push(Qt.resolvedUrl("views/InitialHomeView.qml"), {stackView:stackView})
     }
 
     function openLive() {
@@ -148,6 +155,7 @@ ApplicationWindow {
             Layout.preferredWidth: collapsed ? collapsedWidth : Theme.sidebarWidth
             visible: stackView.currentItem
                      && stackView.currentItem.objectName !== "connectView"
+                     && stackView.currentItem.objectName !== "marketplaceSetupView"
                      && stackView.currentItem.objectName !== "livePlayerView"
             currentView: {
                 if (!stackView.currentItem) return "home"
@@ -164,7 +172,8 @@ ApplicationWindow {
                         stackView.currentItem.objectName === "livePlayerView") return "live"
                 if (stackView.currentItem.objectName === "acquisitionView" ||
                         stackView.currentItem.objectName === "acquisitionReviewView") return "acquisition"
-                if (stackView.currentItem.objectName === "extensionsView" ||
+                if (stackView.currentItem.objectName === "communityMarketplaceView" ||
+                        stackView.currentItem.objectName === "extensionsView" ||
                         stackView.currentItem.objectName === "advancedExtensionsView" ||
                         stackView.currentItem.objectName === "extensionControlView") return "extensions"
                 return "home"
@@ -217,6 +226,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 visible: stackView.currentItem
                          && stackView.currentItem.objectName !== "connectView"
+                         && stackView.currentItem.objectName !== "marketplaceSetupView"
                          && stackView.currentItem.objectName !== "livePlayerView"
                 searchVisible: stackView.currentItem && stackView.currentItem.objectName === "homeView"
                 onActivityRequested: root.openAcquisition()
@@ -271,9 +281,8 @@ ApplicationWindow {
 
     Component {
         id: homeInitial
-        HomeView {
+        InitialHomeView {
             stackView: root.navigationStack
-            sectionFilter: "all"
         }
     }
 
@@ -322,7 +331,7 @@ ApplicationWindow {
             root.authNotice = ""
             apiClient.fetchMediaAcquisition()
             apiClient.fetchAcquisitionReleases("review_required", "", 50)
-            root.goHome()
+            root.openInitialHome()
         }
     }
 
@@ -355,7 +364,10 @@ ApplicationWindow {
         function onAuthExpired(message) {
             root.authNotice = message !== "" ? message : "Control plane session expired."
             sessionManager.clearControlPlaneAuth()
-            root.goHome()
+            // An unrelated registry login expiring is not a decision to skip
+            // the local owner's initial marketplace setup.
+            if (apiClient.authToken === "" || !stackView.currentItem
+                || stackView.currentItem.objectName !== "marketplaceSetupView") root.goHome()
         }
     }
 }

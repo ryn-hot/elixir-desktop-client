@@ -130,6 +130,7 @@ Rectangle {
                 }
 
                 SidebarItem {
+                    objectName: "navigation_" + model.action
                     anchors.fill: parent
                     visible: model.type !== "section"
                     label: model.label
@@ -167,6 +168,7 @@ Rectangle {
             spacing: 0
             
             SidebarItem {
+                objectName: "navigation_settings"
                 Layout.fillWidth: true
                 label: "Settings"
                 iconSource: "qrc:/icons/settings.svg"

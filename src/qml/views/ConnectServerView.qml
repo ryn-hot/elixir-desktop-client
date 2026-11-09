@@ -251,6 +251,7 @@ Item {
                         TextField {
                             Layout.fillWidth: true
                             text: sessionManager.email
+                            objectName: "connectAccountEmail"
                             placeholderText: "you@example.com"
                             inputMethodHints: Qt.ImhEmailCharactersOnly
                             color: Theme.textPrimary
@@ -265,6 +266,7 @@ Item {
                         }
                         TextField {
                             id: passwordField
+                            objectName: "connectAccountPassword"
                             Layout.fillWidth: true
                             placeholderText: "Password"
                             echoMode: TextInput.Password
@@ -298,6 +300,7 @@ Item {
                         spacing: Theme.space12
                         ActionButton {
                             text: "Sign in"
+                            objectName: "connectSignIn"
                             variant: "primary"
                             onClicked: {
                                 statusText = "Signing in..."
@@ -554,11 +557,11 @@ Item {
     Connections {
         target: apiClient
         function onLoginSucceeded() {
-            statusText = "Login successful. Loading library..."
+            statusText = "Login successful. Preparing Elixir..."
             apiClient.fetchLibrary()
             if (root.stackView) {
                 root.stackView.clear()
-                root.stackView.push(Qt.resolvedUrl("HomeView.qml"), { stackView: root.stackView })
+                root.stackView.push(Qt.resolvedUrl("InitialHomeView.qml"), { stackView: root.stackView })
             }
         }
         function onLoginFailed(error) { statusText = "Login failed: " + error }

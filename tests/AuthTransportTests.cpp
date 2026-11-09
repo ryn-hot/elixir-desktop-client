@@ -4,6 +4,7 @@
 
 #include <QDateTime>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QHash>
 #include <QHostAddress>
@@ -18,6 +19,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QUuid>
 #include <algorithm>
 #include <functional>
 
@@ -258,12 +260,169 @@ const HttpRequest *findRequest(const QList<HttpRequest> &requests, const QByteAr
     }
     return nullptr;
 }
+
+QJsonObject marketplacePreferences(const QString &mode = QStringLiteral("auto")) {
+    return {{"schema_version",1},{"contribution",mode},{"metering","unknown"},
+        {"contribution_disclosure_version",QJsonValue::Null},
+        {"paid_support_consent",false},{"issuer_disclosure_version",QJsonValue::Null}};
+}
+QJsonObject marketplaceResponse(int revision = 0, const QJsonObject &preferences = marketplacePreferences()) {
+    return {{"settings",QJsonObject{{"revision",revision},{"preferences",preferences}}},
+        {"contribution_disclosure_version",1},{"contribution_disclosure","Bounded optional contribution."},
+        {"issuer_disclosure_version",1},{"issuer_disclosure","Elixir sees the requesting account and extension."},
+        {"runtime_status","not_connected"}};
+}
+const QString kMarketplaceQueryId = QStringLiteral("60000000-0000-4000-8000-000000000006");
+QJsonObject marketplaceCard(int index = 0) {
+    return {{"extension_id", "elx:" + QString(52, 'a') + "/extension-" + QString::number(index)},
+        {"release_id", "sha256:" + QString(64, 'a')}, {"name", "Example " + QString::number(index)},
+        {"publisher", "Example publisher"}, {"version", "1.0.0"}, {"description", "Public source extension"},
+        {"media_tags", QJsonArray{"movies"}}, {"metadata_only", true}, {"ranking_partial", true},
+        {"support", QJsonObject{{"verified_supporters",5},{"weighted_score",5},
+            {"discovery_qualified",true},{"capped",false},{"is_global_total",false},
+            {"valid_until", static_cast<double>(QDateTime::currentSecsSinceEpoch() + 3600)}}}};
+}
+QJsonObject marketplaceSearchResponse(const QJsonArray &cards = QJsonArray{marketplaceCard()}, int ttl = 120) {
+    return {{"schema_version",1},{"query_id",kMarketplaceQueryId},{"phase","ready"},
+        {"query",QJsonObject{{"text","example"},{"tags",QJsonArray{"movies"}},{"limit",20}}},
+        {"results",cards},{"checked",cards.size()},{"omitted",0},{"pending",0},
+        {"next_cursor",QJsonValue::Null},{"network_complete",false},
+        {"ranking_partial",true},{"metadata_only",true},{"valid_for_seconds",ttl}};
+}
+HttpResponse marketplaceQueryAccepted() {
+    return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"query_id",kMarketplaceQueryId}}).toJson(),0};
+}
+QJsonObject marketplaceTargetResponse() {
+    return {{"schema_version",1},{"extension_id",marketplaceCard().value("extension_id")},
+        {"new_instance",QJsonObject{{"expected_revision",0},{"controls",QJsonObject{{"kind","absent"}}}}},
+        {"instances",QJsonArray{}},{"next_cursor",QJsonValue::Null},{"installation_ready",false},{"review_available",false}};
+}
+const QString kMarketplaceOperationId = QStringLiteral("70000000-0000-4000-8000-000000000007");
+QJsonObject marketplaceOriginalRequest() {
+    return {{"schema_version",1},{"query_id",kMarketplaceQueryId},
+        {"extension_id",marketplaceCard().value("extension_id")},{"release_id",marketplaceCard().value("release_id")},
+        {"target",QJsonObject{{"kind","new"},{"name","Original target"}}},
+        {"expected_revision",0},{"mutation_id","90000000-0000-4000-8000-000000000009"},
+        {"controls",QJsonObject{{"kind","absent"}}}};
+}
+QJsonObject marketplaceOperationResponse() {
+    return {{"schema_version",1},{"operation_id",kMarketplaceOperationId},
+        {"release_id",marketplaceCard().value("release_id")},{"phase","queued"},
+        {"review_id",QJsonValue::Null},{"approval_revision",QJsonValue::Null},
+        {"preparation",QJsonValue::Null},{"review",QJsonValue::Null},
+        {"configured_instance",QJsonValue::Null},{"revision",QJsonValue::Null},
+        {"available_actions",QJsonArray{"cancel"}},{"latest_action",QJsonValue::Null},
+        {"activation_request_id",QJsonValue::Null},{"cancellation_request_id",QJsonValue::Null},
+        {"installation_ready",false},{"initial_request",marketplaceOriginalRequest()}};
+}
+QJsonObject marketplaceOwnerSession() {
+    auto value=sessionResponse();
+    value.insert("active_profile_type","account");
+    value.insert("active_profile_name","Owner");
+    value.insert("capabilities",QJsonArray{"settings_manage","extensions_manage","server_admin","secrets_manage"});
+    return value;
+}
+QJsonObject marketplacePublication() {
+    QFile file(QFINDTESTDATA("../../crates/elixir_marketplace/tests/fixtures/protocol-v1.json"));
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    const auto fixture=QJsonDocument::fromJson(file.readAll()).object();
+    return {{"schema_version",1},{"publisher",fixture.value("publisher")},{"release",fixture.value("release")},{"head",fixture.value("head")}};
+}
+QString marketplaceHash(const QJsonObject &value) {
+    return "sha256:"+QString::fromLatin1(QCryptographicHash::hash(QJsonDocument(value).toJson(QJsonDocument::Compact),QCryptographicHash::Sha256).toHex());
+}
+QJsonObject marketplacePublicationPreview(const QJsonObject &publication,int ttl=120) {
+    const auto p=publication.value("release").toObject().value("payload").toObject();
+    return {{"schema_version",1},{"reference_id",marketplaceHash(publication)},{"extension_id",p.value("extension_id")},
+        {"release_id",marketplaceHash(p)},{"publisher_id",p.value("extension_id").toString().mid(4,52)},
+        {"name",p.value("display_name")},{"publisher",p.value("publisher_name")},{"version",p.value("version")},
+        {"description",p.value("description")},{"media_tags",p.value("media_tags")},{"runtime_profile",p.value("runtime_profile")},
+        {"stable",true},{"signatures_verified",true},{"security_tracked",false},{"metadata_only",true},
+        {"discovery_qualified",false},{"source_verified",false},{"install_available",false},{"valid_for_seconds",ttl},
+        {"warning","Signatures do not prove safe code. Nothing installed."}};
+}
+void marketplacePhase(QJsonObject &operation, const QString &phase, const QJsonArray &actions) {
+    operation.insert("phase",phase); operation.insert("available_actions",actions);
+}
+void marketplaceReview(QJsonObject &operation) {
+    operation.insert("review_id","sha256:"+QString(64,'b'));
+    operation.insert("approval_revision",0);
+    operation.insert("review",QJsonObject{{"release_id",operation.value("release_id")},
+        {"manifest_sha256","sha256:"+QString(64,'c')},
+        {"scope",QJsonObject{{"policy_version",1},
+            {"extension_id",operation.value("initial_request").toObject().value("extension_id")},
+            {"runtime_profile","source-js-v1"},{"permissions",QJsonArray{}},{"secret_keys",QJsonArray{"api_key"}},
+            {"authority_contract","sha256:"+QString(64,'d')},
+            {"runtime",QJsonObject{{"memory_bytes",128*1024*1024},{"cpu_millicores",100},{"pids",64},
+                {"temporary_mounts",QJsonArray{QJsonObject{{"path","/tmp"},{"bytes",8*1024*1024}}}}}}}}});
+}
 } // namespace
 
 class AuthTransportTests final : public QObject {
     Q_OBJECT
 
 private slots:
+    void marketplace_direct_reference_preserves_exact_publication_and_original_retry_without_search_promotion() {
+        FakeHttpServer server; QVERIFY(server.start());
+        const auto publication=marketplacePublication(); QVERIFY(!publication.isEmpty());
+        const auto preview=marketplacePublicationPreview(publication); QJsonObject original,receivedPreview;
+        QList<QJsonObject> starts;bool fail=true;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if (request.path=="/api/v1/marketplace/import") {
+                receivedPreview=QJsonDocument::fromJson(request.body).object();return {200,QJsonDocument(preview).toJson(),0};
+            }
+            if (request.path=="/api/v1/marketplace/install/targets") {
+                auto page=marketplaceTargetResponse();page.insert("extension_id",preview.value("extension_id"));page.insert("review_available",true);
+                return {200,QJsonDocument(page).toJson(),0};
+            }
+            if (request.path=="/api/v1/marketplace/installations/direct") {
+                original=QJsonDocument::fromJson(request.body).object();starts.append(original);
+                if (fail) return {503,"{}",0};
+                return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"operation_id",kMarketplaceOperationId}}).toJson(),0};
+            }
+            auto initial=marketplaceOriginalRequest();initial.insert("query_id",original.value("request_id"));
+            initial.insert("extension_id",preview.value("extension_id"));initial.insert("release_id",preview.value("release_id"));
+            initial.insert("target",original.value("target"));initial.insert("mutation_id",original.value("mutation_id"));
+            initial.insert("direct_reference",preview.value("reference_id"));
+            auto operation=marketplaceOperationResponse();operation.insert("initial_request",initial);operation.insert("release_id",preview.value("release_id"));
+            return {200,QJsonDocument(operation).toJson(),0};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        client.previewMarketplaceDirectReference(QString::fromUtf8(QJsonDocument(publication).toJson(QJsonDocument::Compact)));
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceDirectReferenceLoading(),5000);
+        QCOMPARE(receivedPreview,publication);QCOMPARE(client.marketplaceDirectReference().value("reference_id"),preview.value("reference_id").toVariant());
+        QVERIFY(client.marketplaceSearchResults().isEmpty());client.fetchMarketplaceDirectInstallTargets();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(client.marketplaceInstallTargets().value("extension_id"),preview.value("extension_id").toVariant());
+        client.startMarketplaceDirectInstallation("Developer","",false);QCOMPARE(starts.size(),0);
+        client.startMarketplaceDirectInstallation("Developer","",true);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(starts.size(),1);QVERIFY(client.marketplaceInstallationHasOriginalStart());
+        client.clearMarketplaceDirectReference();fail=false;client.retryMarketplaceInstallationStart();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(starts.size(),2);QCOMPARE(starts[0],starts[1]);QCOMPARE(original.value("publication").toObject(),publication);
+        QCOMPARE(original.value("accepted_reference"),preview.value("reference_id"));QCOMPARE(original.value("accept_unqualified"),QJsonValue(true));
+        QVERIFY(!original.contains("query_id"));QVERIFY(!original.contains("upload_source"));
+        QCOMPARE(client.marketplaceInstallation().value("initial_request").toMap().value("direct_reference"),preview.value("reference_id").toVariant());
+        client.retryMarketplaceInstallationStart();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(starts.size(),3);QCOMPARE(starts[0],starts[2]);
+        QCOMPARE(server.countPath("/api/v1/marketplace/search"),0);QCOMPARE(server.countPath("/api/v1/marketplace/installations"),0);
+    }
+    void marketplace_direct_preview_rejects_promotion_and_cleared_or_expired_observations() {
+        FakeHttpServer server;QVERIFY(server.start());const auto publication=marketplacePublication();QVERIFY(!publication.isEmpty());
+        auto preview=marketplacePublicationPreview(publication);int delay=0;
+        server.setHandler([&](const HttpRequest &)->HttpResponse{return {200,QJsonDocument(preview).toJson(),delay};});
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        const auto bytes=QString::fromUtf8(QJsonDocument(publication).toJson(QJsonDocument::Compact));
+        preview.insert("discovery_qualified",true);client.previewMarketplaceDirectReference(bytes);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceDirectReferenceLoading(),5000);QVERIFY(client.marketplaceDirectReference().isEmpty());
+        preview=marketplacePublicationPreview(publication);delay=150;client.previewMarketplaceDirectReference(bytes);client.clearMarketplaceDirectReference();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceDirectReferenceLoading(),5000);QVERIFY(client.marketplaceDirectReference().isEmpty());
+        delay=0;preview=marketplacePublicationPreview(publication,1);client.previewMarketplaceDirectReference(bytes);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceDirectReferenceLoading(),5000);QVERIFY(!client.marketplaceDirectReference().isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(client.marketplaceDirectReference().isEmpty(),2000);
+        const auto before=server.requests().size();client.previewMarketplaceDirectReference(QString(65537,'x'));QCOMPARE(server.requests().size(),before);
+    }
     void initTestCase() {
         QVERIFY(m_settingsDirectory.isValid());
         QCoreApplication::setOrganizationName(QStringLiteral("ElixirA13Tests"));
@@ -276,6 +435,976 @@ private slots:
         QSettings settings;
         settings.clear();
         settings.sync();
+    }
+
+    void marketplace_search_is_authenticated_bounded_and_stable_until_explicit_refresh() {
+        FakeHttpServer server; QVERIFY(server.start());
+        int reads=0; QJsonObject body; QByteArray authorization;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            authorization=request.headers.value("authorization");
+            if(request.method=="POST") {
+                body=QJsonDocument::fromJson(request.body).object();
+                return marketplaceQueryAccepted();
+            }
+            const QJsonArray cards=++reads==1?QJsonArray{marketplaceCard(0)}
+                :reads==2?QJsonArray{marketplaceCard(1),marketplaceCard(0)}:QJsonArray{marketplaceCard(1)};
+            return {200,QJsonDocument(marketplaceSearchResponse(cards)).toJson(),20};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        client.startMarketplaceSearch("example",{"movies"});
+        client.startMarketplaceSearch("ignored while busy",{});
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(authorization,QByteArray("Bearer owner-token"));
+        QCOMPARE(body.value("query").toObject().value("limit").toInt(),20);
+        QVERIFY(!body.contains("cursor"));
+        QCOMPARE(server.countPath("/api/v1/marketplace/search"),1);
+        QCOMPARE(client.marketplaceSearchResults().size(),1);
+        client.pollMarketplaceSearch(); client.pollMarketplaceSearch();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(reads,2);
+        QCOMPARE(client.marketplaceSearchAvailableCount(),2);
+        QCOMPARE(client.marketplaceSearchResults().size(),2);
+        QCOMPARE(client.marketplaceSearchResults()[0].toMap().value("name").toString(),QString("Example 0"));
+        QCOMPARE(client.marketplaceSearchResults()[1].toMap().value("name").toString(),QString("Example 1"));
+        client.acceptMarketplaceSearchResults();
+        QCOMPARE(client.marketplaceSearchResults().size(),2);
+        QCOMPARE(client.marketplaceSearchResults()[0].toMap().value("name").toString(),QString("Example 1"));
+        client.pollMarketplaceSearch();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(client.marketplaceSearchResults().size(),1);
+        QCOMPARE(client.marketplaceSearchResults()[0].toMap().value("name").toString(),QString("Example 1"));
+    }
+
+    void marketplace_search_result_notifications_ignore_progress_but_keep_row_and_clear_changes() {
+        FakeHttpServer server; QVERIFY(server.start());
+        auto page = marketplaceSearchResponse(QJsonArray{marketplaceCard()});
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            return request.method == "POST" ? marketplaceQueryAccepted()
+                : HttpResponse{200, QJsonDocument(page).toJson(), 0};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        QSignalSpy rows(&client, &ApiClient::marketplaceSearchResultsChanged);
+        QSignalSpy status(&client, &ApiClient::marketplaceSearchChanged);
+        client.startMarketplaceSearch("example", {});
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(), 5000);
+        QCOMPARE(client.marketplaceSearchResults().size(), 1);
+        QCOMPARE(rows.count(), 1);
+        rows.clear(); status.clear();
+        for (int pass = 0; pass < 3; ++pass) {
+            page.insert("phase", pass % 2 ? "ready" : "checking");
+            page.insert("pending", pass % 2 ? 0 : 1);
+            client.pollMarketplaceSearch();
+            QVERIFY(client.marketplaceSearchLoading());
+            QCOMPARE(rows.count(), 0); // Loading alone never resets cards.
+            QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(), 5000);
+            QCOMPARE(client.marketplaceSearchResults().size(), 1);
+            QCOMPARE(rows.count(), 0); // Same checked rows, changed progress.
+        }
+        QVERIFY(status.count() >= 6);
+        client.acceptMarketplaceSearchResults();
+        QCOMPARE(rows.count(), 0); // Unchanged explicit refresh is also cheap.
+        auto changed = marketplaceCard();
+        changed.insert("description", "Updated checked metadata");
+        page = marketplaceSearchResponse(QJsonArray{changed});
+        client.pollMarketplaceSearch();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(), 5000);
+        QCOMPARE(rows.count(), 1);
+        QCOMPARE(client.marketplaceSearchResults()[0].toMap().value("description").toString(),
+                 QString("Updated checked metadata"));
+        rows.clear();
+        page = marketplaceSearchResponse(QJsonArray{});
+        client.pollMarketplaceSearch();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(), 5000);
+        QVERIFY(client.marketplaceSearchResults().isEmpty());
+        QCOMPARE(rows.count(), 1); // Missing/withdrawn rows disappear promptly.
+        page = marketplaceSearchResponse(QJsonArray{marketplaceCard()});
+        client.pollMarketplaceSearch();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(), 5000);
+        rows.clear();
+        client.clearMarketplaceSearch();
+        QVERIFY(client.marketplaceSearchResults().isEmpty());
+        QCOMPARE(rows.count(), 1);
+    }
+
+    void marketplace_peer_discovery_progress_is_nonfinal_and_accepts_legacy_responses() {
+        FakeHttpServer server; QVERIFY(server.start());
+        auto page=marketplaceSearchResponse(QJsonArray{});
+        page.insert("phase","checking"); page.insert("searching_peers",true);
+        page.insert("local_page_complete",true);
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            return request.method=="POST"?marketplaceQueryAccepted():HttpResponse{200,QJsonDocument(page).toJson(),0};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        client.startMarketplaceSearch("example",{});
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(client.marketplaceSearch().value("phase").toString(),QString("checking"));
+        QCOMPARE(client.marketplaceSearch().value("searching_peers").toBool(),true);
+        QCOMPARE(client.marketplaceSearch().value("local_page_complete").toBool(),true);
+        QCOMPARE(client.marketplaceSearch().value("network_complete").toBool(),false);
+        QVERIFY(client.marketplaceSearchResults().isEmpty());
+        page.insert("phase","ready"); page.insert("searching_peers",false);
+        client.pollMarketplaceSearch();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(client.marketplaceSearch().value("phase").toString(),QString("ready"));
+        QCOMPARE(client.marketplaceSearch().value("searching_peers").toBool(),false);
+        // Existing servers need not send this presentation-only field.
+        page.remove("searching_peers"); page.remove("local_page_complete"); client.pollMarketplaceSearch();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(client.marketplaceSearch().value("phase").toString(),QString("ready"));
+    }
+
+    void marketplace_catalog_preparation_is_independent_of_fresh_first_page_cards() {
+        FakeHttpServer server; QVERIFY(server.start());
+        QJsonObject requestBody; int reads=0;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.method=="POST") { requestBody=QJsonDocument::fromJson(request.body).object(); return marketplaceQueryAccepted(); }
+            const bool complete=++reads>2;
+            auto page=marketplaceSearchResponse(QJsonArray{marketplaceCard()});
+            page.insert("query",QJsonObject{{"text",""},{"tags",QJsonArray{}},{"limit",20}});
+            page.insert("phase","ready");
+            page.insert("preparation",QJsonObject{{"schema_version",1},{"phase",complete?"complete":"waiting"},
+                {"scope","current_local_catalog"},{"examined",43},{"available",40},{"omitted",3},{"pages",3},
+                {"received",60},{"local_pass_complete",complete},{"network_complete",false},{"metadata_only",true}});
+            return {200,QJsonDocument(page).toJson(),0};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        client.startMarketplaceSearch("",{},"",true);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(requestBody.value("prepare_catalog"),QJsonValue(true));
+        QCOMPARE(client.marketplaceSearchResults().size(),1);
+        QCOMPARE(client.marketplaceSearch().value("preparation").toMap().value("phase").toString(),QString("waiting"));
+        client.pollMarketplaceSearch(); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(client.marketplaceSearchResults().size(),1);
+        QCOMPARE(client.marketplaceSearch().value("preparation").toMap().value("examined").toInt(),43);
+        QCOMPARE(client.marketplaceSearch().value("phase").toString(),QString("ready"));
+        QCOMPARE(client.marketplaceSearch().value("preparation").toMap().value("local_pass_complete").toBool(),false);
+        client.pollMarketplaceSearch(); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(client.marketplaceSearchResults().size(),1);
+        QCOMPARE(client.marketplaceSearch().value("preparation").toMap().value("local_pass_complete").toBool(),true);
+        client.startMarketplaceSearch("mixed",{},"",true);
+        QCOMPARE(client.marketplaceSearch().value("phase").toString(),QString("unavailable"));
+        QCOMPARE(server.countPath("/api/v1/marketplace/search"),1);
+    }
+
+    void marketplace_background_preparation_failure_does_not_erase_checked_cards() {
+        FakeHttpServer server; QVERIFY(server.start());
+        QString phase="limited";
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.method=="POST") return marketplaceQueryAccepted();
+            auto page=marketplaceSearchResponse(QJsonArray{marketplaceCard()});
+            page.insert("preparation",QJsonObject{{"schema_version",1},{"phase",phase},
+                {"scope","current_local_catalog"},{"examined",0},{"available",0},{"omitted",0},{"pages",0},
+                {"received",0},{"local_pass_complete",false},{"network_complete",false},{"metadata_only",true}});
+            return {200,QJsonDocument(page).toJson(),0};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        for(const auto &state:QStringList{"limited","unavailable","discovering","checking","waiting"}) {
+            phase=state;
+            client.startMarketplaceSearch("",{},"",true);
+            QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+            QCOMPARE(client.marketplaceSearch().value("phase").toString(),QString("ready"));
+            QCOMPARE(client.marketplaceSearchResults().size(),1);
+            QCOMPARE(client.marketplaceSearch().value("preparation").toMap().value("local_pass_complete").toBool(),false);
+        }
+    }
+
+    void marketplace_catalog_preparation_rejects_missing_forged_or_oversized_progress() {
+        FakeHttpServer server; QVERIFY(server.start());
+        auto reply=marketplaceSearchResponse();
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.method=="POST") return marketplaceQueryAccepted();
+            return {200,QJsonDocument(reply).toJson(),0};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        QJsonObject valid{{"schema_version",1},{"phase","complete"},{"scope","current_local_catalog"},
+            {"examined",43},{"available",40},{"omitted",3},{"pages",3},{"local_pass_complete",true},
+            {"received",60},{"network_complete",false},{"metadata_only",true}};
+        QList<QJsonObject> cases{QJsonObject{}};
+        for(const auto &change:QList<QPair<QString,QJsonValue>>{{"network_complete",true},{"examined",10001},
+            {"pages",513},{"received",10241},{"available",41},{"local_pass_complete",false},{"phase","waiting"},{"scope","entire_network"}}) {
+            auto invalid=valid; invalid.insert(change.first,change.second); cases.append(invalid);
+        }
+        for(const auto &progress:cases) {
+            reply=marketplaceSearchResponse();
+            if(!progress.isEmpty()) reply.insert("preparation",progress);
+            client.startMarketplaceSearch("",{},"",true);
+            QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+            QCOMPARE(client.marketplaceSearch().value("phase").toString(),QString("unavailable"));
+            QVERIFY(client.marketplaceSearchResults().isEmpty());
+        }
+    }
+
+    void marketplace_search_old_context_and_cleared_queries_cannot_restore_results() {
+        FakeHttpServer server; QVERIFY(server.start());
+        server.setHandler([](const HttpRequest &request)->HttpResponse {
+            if(request.method=="POST") return marketplaceQueryAccepted();
+            return {200,QJsonDocument(marketplaceSearchResponse()).toJson(),150};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        const auto path="/api/v1/marketplace/search/"+kMarketplaceQueryId;
+        client.startMarketplaceSearch("example",{});
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(path.toUtf8()),1,5000);
+        client.setSessionState(QVariantMap{{"session_id",kSessionId},{"home_id",kHomeId},{"active_profile_id",kProfileId}});
+        QTest::qWait(200);
+        QVERIFY(client.marketplaceSearchResults().isEmpty());
+        QVERIFY(client.marketplaceSearch().isEmpty());
+        QVERIFY(!client.marketplaceSearchLoading());
+        client.startMarketplaceSearch("example",{});
+        QTRY_COMPARE_WITH_TIMEOUT(server.countPath(path.toUtf8()),2,5000);
+        client.clearMarketplaceSearch();
+        QTest::qWait(200);
+        QVERIFY(client.marketplaceSearchResults().isEmpty());
+        QVERIFY(client.marketplaceSearch().isEmpty());
+    }
+
+    void marketplace_search_expiry_hides_cards_without_polling_and_counts_network_latency() {
+        FakeHttpServer server;QVERIFY(server.start());
+        int delay=0;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.method=="POST")return marketplaceQueryAccepted();
+            return {200,QJsonDocument(marketplaceSearchResponse(QJsonArray{marketplaceCard()},1)).toJson(),delay};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        QSignalSpy rows(&client, &ApiClient::marketplaceSearchResultsChanged);
+        client.startMarketplaceSearch("example",{});
+        QTRY_COMPARE_WITH_TIMEOUT(client.marketplaceSearchResults().size(),1,5000);
+        const auto populatedSignals = rows.count();
+        QTRY_VERIFY_WITH_TIMEOUT(client.marketplaceSearchResults().isEmpty(),2000);
+        // The getter expires immediately; the queued Qt timer notification
+        // arrives on the next event-loop turn, not necessarily the same one.
+        QTRY_VERIFY_WITH_TIMEOUT(rows.count() > populatedSignals, 500);
+        QCOMPARE(client.marketplaceSearchAvailableCount(),0);
+        QCOMPARE(client.marketplaceSearch().value("phase").toString(),QString("stale"));
+        QCOMPARE(server.requests().size(),2);
+        delay=1100;
+        client.startMarketplaceSearch("example",{});
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QVERIFY(client.marketplaceSearchResults().isEmpty());
+        QCOMPARE(client.marketplaceSearch().value("phase").toString(),QString("stale"));
+    }
+
+    void marketplace_search_rejects_bad_scores_schema_filters_and_oversized_transport() {
+        FakeHttpServer server;QVERIFY(server.start());
+        QJsonObject page=marketplaceSearchResponse();
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            return request.method=="POST"?marketplaceQueryAccepted():HttpResponse{200,QJsonDocument(page).toJson(),0};
+        });
+        QList<QJsonObject> cases;
+        const auto badCard=[&](const char *field,const QJsonValue &value) {
+            auto card=marketplaceCard();card.insert(field,value);
+            cases.append(marketplaceSearchResponse(QJsonArray{card}));
+        };
+        for(const auto &field:{"weighted_score","verified_supporters"}) {
+            auto support=marketplaceCard().value("support").toObject();support.insert(field,999999);
+            badCard("support",support);
+        }
+        auto support=marketplaceCard().value("support").toObject();support.insert("is_global_total",true);badCard("support",support);
+        support.insert("is_global_total",false);support.insert("capped",true);badCard("support",support);
+        badCard("metadata_only",false);badCard("name",QString());
+        badCard("media_tags",QJsonArray{"movies","live"});
+        cases.append(marketplaceSearchResponse(QJsonArray{marketplaceCard(),marketplaceCard()}));
+        for(const auto &entry:QList<QPair<QString,QJsonValue>>{{"schema_version",1.5},{"query_id",kSessionId},
+            {"valid_for_seconds",301},{"next_cursor",QString(129,'x')},{"network_complete",true},
+            {"padding",QString(256*1024,'x')},{"searching_peers",1},{"searching_peers",true},
+            {"local_page_complete",1},{"local_page_complete",QStringLiteral("true")}}) {
+            auto invalid=marketplaceSearchResponse();invalid.insert(entry.first,entry.second);cases.append(invalid);
+        }
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        for(const auto &invalid:cases) {
+            page=invalid;client.startMarketplaceSearch("example",{});
+            QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+            QCOMPARE(client.marketplaceSearch().value("phase").toString(),QString("unavailable"));
+            QVERIFY(client.marketplaceSearchResults().isEmpty());
+        }
+        const auto before=server.requests().size();
+        client.startMarketplaceSearch("example",{"live","movies"});
+        client.startMarketplaceSearch(QString(257,'x'),{});
+        client.startMarketplaceSearch("example",{},"bad/cursor");
+        QCOMPARE(server.requests().size(),before);
+        auto connector=marketplaceCard();connector.insert("media_tags",QJsonArray{});
+        page=marketplaceSearchResponse(QJsonArray{connector});client.startMarketplaceSearch("example",{});
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(client.marketplaceSearchResults().size(),1);
+    }
+
+    void marketplace_target_reads_use_checked_cards_and_reject_changed_or_unbounded_control_snapshots() {
+        FakeHttpServer server; QVERIFY(server.start());
+        auto page = marketplaceTargetResponse();
+        bool listed=true;
+        QJsonObject requestBody; QByteArray authorization;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if (request.path == "/api/v1/marketplace/search") return marketplaceQueryAccepted();
+            if (request.path.startsWith("/api/v1/marketplace/search/"))
+                return {200,QJsonDocument(marketplaceSearchResponse(listed?QJsonArray{marketplaceCard()}:QJsonArray{})).toJson(),0};
+            requestBody=QJsonDocument::fromJson(request.body).object();
+            authorization=request.headers.value("authorization");
+            return {200,QJsonDocument(page).toJson(),20};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        const auto extension=marketplaceCard().value("extension_id").toString();
+        client.fetchMarketplaceInstallTargets(extension);
+        QCOMPARE(server.requests().size(),0);
+        client.startMarketplaceSearch("example",{"movies"});
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        client.fetchMarketplaceInstallTargets(extension); client.fetchMarketplaceInstallTargets(extension);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(server.countPath("/api/v1/marketplace/install/targets"),1);
+        QCOMPARE(authorization,QByteArray("Bearer owner-token"));
+        QCOMPARE(requestBody,QJsonObject({{"schema_version",1},{"extension_id",extension}}));
+        QCOMPARE(client.marketplaceInstallTargets().value("new_instance").toMap().value("expected_revision").toInt(),0);
+        QCOMPARE(client.marketplaceInstallTargets().value("installation_ready").toBool(),false);
+        // Existing, pending and paginated choices remain DATA; the client
+        // echoes their observed cursor, never inventing a newer revision.
+        page.insert("new_instance",QJsonObject{{"expected_revision",0},{"controls",QJsonObject{{"kind","new_instance"},{"extension_revision",7}}}});
+        QJsonArray rows;
+        for(int n=0;n<20;++n) {
+            const auto id=QString("80000000-0000-4000-8000-%1").arg(n+1,12,16,QChar('0'));
+            rows.append(QJsonObject{{"instance_id",id},{"name",QString("Target %1").arg(n)},
+                {"enabled",false},{"expected_revision",2},{"pending",n==0},
+                {"controls",n==0?QJsonValue(QJsonValue::Null):QJsonValue(QJsonObject{{"kind","existing"},{"extension_revision",7},{"instance_revision",9}})}});
+        }
+        const QJsonObject observedCursor{{"instance_id",rows.last().toObject().value("instance_id")},{"extension_revision",7}};
+        page.insert("instances",rows); page.insert("next_cursor",observedCursor);
+        client.fetchMarketplaceInstallTargets(extension);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(client.marketplaceInstallTargets().value("instances").toList().size(),20);
+        QCOMPARE(client.marketplaceInstallTargets().value("next_cursor").toMap(),observedCursor.toVariantMap());
+        page.insert("instances",QJsonArray{rows.last()}); page.insert("next_cursor",QJsonValue::Null);
+        client.fetchMarketplaceInstallTargets(extension,observedCursor.toVariantMap());
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(client.marketplaceInstallTargets().value("instances").toList().size(),1);
+        QCOMPARE(requestBody.value("after").toObject(),observedCursor);
+        for (const auto &fault : {QString("schema"),QString("unknown"),QString("control"),QString("revision"),QString("cursor"),QString("count"),QString("review_type"),QString("legacy_ready")}) {
+            page=marketplaceTargetResponse();
+            if(fault=="schema") page.insert("schema_version",2);
+            if(fault=="unknown") page.insert("native_owner",true);
+            if(fault=="control") page.insert("new_instance",QJsonObject{{"expected_revision",0},{"controls",QJsonObject{{"kind","absent"},{"revision",1}}}});
+            if(fault=="revision") page.insert("new_instance",QJsonObject{{"expected_revision",1},{"controls",QJsonObject{{"kind","absent"}}}});
+            if(fault=="cursor") page.insert("next_cursor",QJsonObject{{"instance_id",kMarketplaceOperationId},{"extension_revision",1}});
+            if(fault=="count") { QJsonArray entries; for(int n=0;n<21;++n) entries.append(QJsonObject{}); page.insert("instances",entries); }
+            if(fault=="review_type") page.insert("review_available","true");
+            if(fault=="legacy_ready") page.insert("installation_ready",true);
+            client.fetchMarketplaceInstallTargets(extension);
+            QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+            QVERIFY2(client.marketplaceInstallTargets().isEmpty(),qPrintable(fault));
+            QVERIFY(!client.marketplaceInstallationNotice().isEmpty());
+        }
+        page=marketplaceTargetResponse(); client.fetchMarketplaceInstallTargets(extension);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        listed=false; client.pollMarketplaceSearch();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QVERIFY(client.marketplaceInstallTargets().isEmpty());
+        client.clearMarketplaceSearch(); QVERIFY(client.marketplaceInstallTargets().isEmpty());
+    }
+
+    void marketplace_current_operation_reads_are_versioned_offline_capable_and_retain_only_the_original_id_after_errors() {
+        FakeHttpServer server; QVERIFY(server.start());
+        auto operation=marketplaceOperationResponse();
+        QJsonValue current=operation; bool fail=false; QByteArray authorization;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            authorization=request.headers.value("authorization");
+            if(fail) return {503,"{}",0};
+            if(request.path.endsWith("/current")) return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"operation",current}}).toJson(),20};
+            return {200,QJsonDocument(operation).toJson(),20};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        client.fetchCurrentMarketplaceInstallation(); client.fetchCurrentMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(server.countPath("/api/v1/marketplace/installations/current"),1);
+        QCOMPARE(client.marketplaceInstallation().value("operation_id").toString(),kMarketplaceOperationId);
+        QCOMPARE(authorization,QByteArray("Bearer owner-token"));
+        client.clearMarketplaceSearch(); QVERIFY(!client.marketplaceInstallation().isEmpty());
+        fail=true; client.pollMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QVERIFY(client.marketplaceInstallation().isEmpty());
+        fail=false; client.pollMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(client.marketplaceInstallation().value("operation_id").toString(),kMarketplaceOperationId);
+        QCOMPARE(server.countPath(("/api/v1/marketplace/installations/"+kMarketplaceOperationId).toUtf8()),2);
+        operation.insert("available_actions",QJsonArray{"activate","activate"}); client.pollMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QVERIFY(client.marketplaceInstallation().isEmpty());
+        current=QJsonValue::Null; client.fetchCurrentMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        const auto before=server.requests().size(); client.pollMarketplaceInstallation();
+        QCOMPARE(server.requests().size(),before);
+        for(const auto &request:server.requests()) QCOMPARE(request.method,QByteArray("GET"));
+    }
+
+    void marketplace_owner_reads_reject_late_context_responses_expired_cards_and_oversized_transport() {
+        FakeHttpServer server; QVERIFY(server.start());
+        bool huge=false; int delay=150;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(huge) return {200,QByteArray(128*1024+1,'x'),0};
+            if(request.path=="/api/v1/marketplace/search") return marketplaceQueryAccepted();
+            if(request.path.startsWith("/api/v1/marketplace/search/")) return {200,QJsonDocument(marketplaceSearchResponse(QJsonArray{marketplaceCard()},1)).toJson(),0};
+            if(request.path=="/api/v1/marketplace/install/targets") return {200,QJsonDocument(marketplaceTargetResponse()).toJson(),1200};
+            return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"operation",marketplaceOperationResponse()}}).toJson(),delay};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        client.fetchCurrentMarketplaceInstallation(); client.clearMarketplaceInstallation();
+        QTest::qWait(200); QVERIFY(client.marketplaceInstallation().isEmpty());
+        delay=0; client.fetchCurrentMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QVERIFY(!client.marketplaceInstallation().isEmpty());
+        huge=true; client.pollMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QVERIFY(client.marketplaceInstallation().isEmpty());
+        huge=false; client.startMarketplaceSearch("example",{"movies"});
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        client.fetchMarketplaceInstallTargets(marketplaceCard().value("extension_id").toString());
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QVERIFY(client.marketplaceInstallTargets().isEmpty());
+        client.fetchCurrentMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QVERIFY(!client.marketplaceInstallation().isEmpty());
+        client.setBaseUrl("http://127.0.0.1:1");
+        QVERIFY(client.marketplaceInstallation().isEmpty());
+    }
+
+    void marketplace_reviews_reject_unsupported_access_and_resource_shapes_before_actions() {
+        FakeHttpServer server; QVERIFY(server.start());
+        auto valid=marketplaceOperationResponse(); marketplaceReview(valid);
+        marketplacePhase(valid,"awaiting_approval",QJsonArray{"approve","cancel"});
+        auto response=valid;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.method!="GET") return {503,"{}",0};
+            return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"operation",response}}).toJson(),0};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        client.fetchCurrentMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QVERIFY(!client.marketplaceInstallation().isEmpty());
+        QList<QJsonObject> invalid;
+        const auto review=valid.value("review").toObject(), scope=review.value("scope").toObject();
+        const auto badScope=[&](const QString &field,const QJsonValue &value) {
+            auto changed=scope; changed.insert(field,value); auto badReview=review; badReview.insert("scope",changed);
+            auto bad=valid; bad.insert("review",badReview); invalid.append(bad);
+        };
+        badScope("policy_version",2); badScope("unexpected",true);
+        badScope("extension_id","elx:"+QString(52,'b')+"/foreign");
+        badScope("runtime_profile","source-js-v2"); badScope("runtime_profile","declarative-v1");
+        badScope("authority_contract","unverified");
+        badScope("permissions",QJsonArray{"unreviewed.permission"});
+        badScope("permissions",QJsonArray{"network.egress","network.egress"});
+        badScope("permissions",QJsonArray{"runtime.manage_containers","network.egress"});
+        badScope("secret_keys","api_key"); badScope("secret_keys",QJsonArray{"bad/key"});
+        badScope("secret_keys",QJsonArray{"api_key","api_key"});
+        QJsonArray tooMany; for(int i=0;i<65;i++) tooMany.append("key"+QString::number(i));
+        badScope("secret_keys",tooMany); badScope("runtime",QJsonValue::Null);
+        const auto resource=scope.value("runtime").toObject();
+        const auto badResource=[&](const QString &field,const QJsonValue &value) {
+            auto changed=resource; changed.insert(field,value); badScope("runtime",changed);
+        };
+        badResource("memory_bytes",4097.0*1024*1024); badResource("memory_bytes",128*1024*1024+0.5);
+        badResource("cpu_millicores",8001); badResource("pids",513); badResource("state_bytes",17*1024*1024);
+        badResource("unexpected",true); badResource("temporary_mounts",QJsonArray{});
+        badResource("temporary_mounts",QJsonArray{QJsonObject{{"path","/data"},{"bytes",8*1024*1024}}});
+        badResource("temporary_mounts",QJsonArray{QJsonObject{{"path","/tmp"},{"bytes",128*1024*1024}}});
+        auto extra=review; extra.insert("credentials",QJsonObject{});
+        auto bad=valid; bad.insert("review",extra); invalid.append(bad);
+        for(const auto &candidate:invalid) {
+            response=candidate; client.fetchCurrentMarketplaceInstallation();
+            QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+            QVERIFY(client.marketplaceInstallation().isEmpty());
+            client.approveMarketplaceInstallation(false); client.submitMarketplaceInstallationSetup({});
+        }
+        for(const auto &request:server.requests()) QCOMPARE(request.method,QByteArray("GET"));
+        response=valid; client.fetchCurrentMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QVERIFY(!client.marketplaceInstallation().isEmpty());
+    }
+
+    void marketplace_install_lifecycle_builds_only_observed_inputs_and_does_not_cache_setup_values() {
+        // HTTP transport/schema fixture only, NOT native/permission authority.
+        FakeHttpServer server; QVERIFY(server.start());
+        auto page=marketplaceTargetResponse(); auto operation=marketplaceOperationResponse();
+        QJsonObject start,approval,setup,activation; QJsonArray requests;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.path=="/api/v1/marketplace/search") return marketplaceQueryAccepted();
+            if(request.path.startsWith("/api/v1/marketplace/search/")) return {200,QJsonDocument(marketplaceSearchResponse()).toJson(),0};
+            if(request.path=="/api/v1/marketplace/install/targets") return {200,QJsonDocument(page).toJson(),0};
+            if(request.path=="/api/v1/marketplace/installations") {
+                start=QJsonDocument::fromJson(request.body).object(); operation.insert("initial_request",start);
+                marketplaceReview(operation); marketplacePhase(operation,"awaiting_approval",QJsonArray{"approve","cancel"});
+                return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"operation_id",kMarketplaceOperationId}}).toJson(),20};
+            }
+            if(request.method=="POST") {
+                const auto action=QJsonDocument::fromJson(request.body).object().value("request").toObject();
+                requests.append(action); const auto kind=action.value("action").toString();
+                if(kind=="approve") { approval=action; marketplacePhase(operation,"awaiting_setup",QJsonArray{"setup","cancel"}); }
+                if(kind=="setup") { setup=action; marketplacePhase(operation,"awaiting_commit",QJsonArray{"activate","cancel"}); }
+                if(kind=="activate") { activation=action; operation.insert("activation_request_id",action.value("mutation_id")); marketplacePhase(operation,"activated",QJsonArray{}); }
+                const QJsonObject receipt{{"request_id",action.value("mutation_id")},{"kind",kind},{"status","acknowledged"}};
+                operation.insert("latest_action",receipt);
+                return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"operation_id",kMarketplaceOperationId},{"receipt",receipt}}).toJson(),20};
+            }
+            if(request.path.endsWith("/current")) return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"operation",operation}}).toJson(),0};
+            return {200,QJsonDocument(operation).toJson(),0};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        QCOMPARE(client.homeRole(),QString("owner")); QCOMPARE(client.activeProfileType(),QString("account"));
+        const auto card=marketplaceCard(); const auto extension=card.value("extension_id").toString(), release=card.value("release_id").toString();
+        client.startMarketplaceSearch("example",{"movies"});
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        client.fetchMarketplaceInstallTargets(extension);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        client.startMarketplaceInstallation(extension,release,"A");
+        QCOMPARE(server.countPath("/api/v1/marketplace/installations"),0);
+        page.remove("review_available"); client.fetchMarketplaceInstallTargets(extension);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QVERIFY(!client.marketplaceInstallTargets().isEmpty());
+        client.startMarketplaceInstallation(extension,release,"Legacy read-only server");
+        QCOMPARE(server.countPath("/api/v1/marketplace/installations"),0);
+        page.insert("review_available",true); client.fetchMarketplaceInstallTargets(extension);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        client.startMarketplaceInstallation(extension,release,QString(129,'x'));
+        QCOMPARE(server.countPath("/api/v1/marketplace/installations"),0);
+        client.startMarketplaceInstallation(extension,release,"Exact target");
+        client.startMarketplaceInstallation(extension,release,"Do not queue another");
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(server.countPath("/api/v1/marketplace/installations"),1);
+        QCOMPARE(start.value("query_id").toString(),kMarketplaceQueryId);
+        QCOMPARE(start.value("target").toObject().value("name").toString(),QString("Exact target"));
+        QCOMPARE(start.value("expected_revision").toInt(),0);
+        QCOMPARE(start.value("controls").toObject(),QJsonObject({{"kind","absent"}}));
+        QVERIFY(!start.contains("review_available"));
+        QVERIFY(!start.contains("installation_ready"));
+        QCOMPARE(client.marketplaceInstallation().value("initial_request").toMap(),start.toVariantMap());
+        client.approveMarketplaceInstallation(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(approval.value("review_id"),operation.value("review_id"));
+        QCOMPARE(approval.value("expected_revision").toInt(),0); QVERIFY(approval.value("automatic_updates").isBool());
+        QVERIFY(!approval.value("automatic_updates").toBool());
+        const auto before=requests.size();
+        client.submitMarketplaceInstallationSetup({{"unapproved","never-send"}});
+        client.submitMarketplaceInstallationSetup({{"api_key",QString(65537,'x')}});
+        QCOMPARE(requests.size(),before);
+        client.submitMarketplaceInstallationSetup({{"api_key","setup-private-lifecycle"}});
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        const auto change=setup.value("credentials").toArray().first().toObject();
+        QCOMPARE(change.value("key").toString(),QString("api_key"));
+        QCOMPARE(change.value("value").toString(),QString("setup-private-lifecycle"));
+        QVERIFY(!QJsonDocument(QJsonObject::fromVariantMap(client.marketplaceInstallation())).toJson().contains("setup-private-lifecycle"));
+        const auto count=requests.size(); client.retryMarketplaceInstallationAction(); QCOMPARE(requests.size(),count);
+        QVERIFY(client.marketplaceInstallationNotice().contains("not cached"));
+        client.activateMarketplaceInstallation();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        const auto original=activation; client.retryMarketplaceInstallationAction();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(activation,original);
+        QCOMPARE(client.marketplaceInstallation().value("phase").toString(),QString("activated"));
+    }
+
+    void marketplace_unknown_start_and_reconnected_cancellation_retry_only_original_mutations() {
+        FakeHttpServer server; QVERIFY(server.start());
+        auto page=marketplaceTargetResponse(); page.insert("review_available",true);
+        auto operation=marketplaceOperationResponse(); QJsonObject original; QJsonArray starts,cancels;
+        const QString cancellation="a0000000-0000-4000-8000-00000000000a";
+        bool accepted=false;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.path=="/api/v1/marketplace/search") return marketplaceQueryAccepted();
+            if(request.path.startsWith("/api/v1/marketplace/search/")) return {200,QJsonDocument(marketplaceSearchResponse()).toJson(),0};
+            if(request.path=="/api/v1/marketplace/install/targets") return {200,QJsonDocument(page).toJson(),0};
+            if(request.path=="/api/v1/marketplace/installations") {
+                const auto body=QJsonDocument::fromJson(request.body).object(); starts.append(body);
+                if(!accepted) { original=body; accepted=true; return {503,"{}",0}; }
+                operation.insert("initial_request",original); marketplacePhase(operation,"preparing",QJsonArray{"cancel"});
+                return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"operation_id",kMarketplaceOperationId}}).toJson(),0};
+            }
+            if(request.method=="POST") {
+                const auto action=QJsonDocument::fromJson(request.body).object().value("request").toObject(); cancels.append(action);
+                marketplacePhase(operation,"cancelled",QJsonArray{});
+                const QJsonObject receipt{{"request_id",action.value("mutation_id")},{"kind","cancel"},{"status","acknowledged"}};
+                operation.insert("latest_action",receipt);
+                return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"operation_id",kMarketplaceOperationId},{"receipt",receipt}}).toJson(),0};
+            }
+            if(request.path.endsWith("/current")) return {200,QJsonDocument(QJsonObject{{"schema_version",1},{"operation",operation}}).toJson(),0};
+            return {200,QJsonDocument(operation).toJson(),0};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token"); client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        const auto extension=marketplaceCard().value("extension_id").toString(), release=marketplaceCard().value("release_id").toString();
+        client.startMarketplaceSearch("example",{"movies"}); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        client.fetchMarketplaceInstallTargets(extension); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        client.startMarketplaceInstallation(extension,release,"Original"); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QVERIFY(client.marketplaceInstallationHasOriginalStart());
+        client.startMarketplaceInstallation(extension,release,"Replacement is forbidden"); QCOMPARE(starts.size(),1);
+        client.retryMarketplaceInstallationStart(); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
+        QCOMPARE(starts.size(),2); QCOMPARE(starts[0],starts[1]);
+        operation.insert("cancellation_request_id",cancellation); marketplacePhase(operation,"recovery_required",QJsonArray{"cancel"});
+        ApiClient reconnected; reconnected.setBaseUrl(server.baseUrl()); reconnected.setAuthToken("owner-token"); reconnected.setSessionState(marketplaceOwnerSession().toVariantMap());
+        reconnected.fetchCurrentMarketplaceInstallation(); QTRY_VERIFY_WITH_TIMEOUT(!reconnected.marketplaceInstallationLoading(),5000);
+        QCOMPARE(reconnected.marketplaceInstallation().value("initial_request").toMap(),original.toVariantMap());
+        reconnected.cancelMarketplaceInstallation(); QTRY_VERIFY_WITH_TIMEOUT(!reconnected.marketplaceInstallationLoading(),5000);
+        QCOMPARE(cancels.first().toObject().value("mutation_id").toString(),cancellation);
+        const auto request=cancels.first(); reconnected.retryMarketplaceInstallationAction();
+        QTRY_VERIFY_WITH_TIMEOUT(!reconnected.marketplaceInstallationLoading(),5000);
+        QCOMPARE(cancels.last(),request);
+    }
+
+    void marketplace_status_poll_keeps_preferences_but_never_failed_or_malformed_health() {
+        FakeHttpServer server;QVERIFY(server.start());
+        auto response=marketplaceResponse(7,marketplacePreferences("off"));
+        response.insert("startup",QJsonObject{{"configured",true},{"retry_owner_present",true},{"retry_after_seconds",240}});
+        int status=200,delay=0;
+        server.setHandler([&](const HttpRequest &)->HttpResponse{return {status,QJsonDocument(response).toJson(),delay};});
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        client.fetchMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        const auto settings=client.marketplaceSettings().value("settings");
+        QCOMPARE(client.marketplaceSettings().value("startup").toMap().value("retry_after_seconds").toInt(),240);
+        delay=80;
+        const auto count=server.requests().size();
+        client.pollMarketplaceSettings();client.pollMarketplaceSettings();
+        QCOMPARE(client.marketplaceSettings().value("settings"),settings);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(server.requests().size(),count+1);
+        status=503;delay=0;
+        client.pollMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(client.marketplaceSettings().value("settings"),settings);
+        QVERIFY(!client.marketplaceSettings().value("runtime_fresh").toBool());
+        QVERIFY(!client.marketplaceSettings().contains("startup"));
+        QCOMPARE(client.marketplaceSettings().value("runtime_status").toString(),QString("unknown"));
+        status=200;
+        auto startup=response.value("startup").toObject();startup.insert("retry_after_seconds",301);response.insert("startup",startup);
+        client.pollMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(client.marketplaceSettings().value("settings"),settings);
+        QVERIFY(!client.marketplaceSettings().value("runtime_fresh").toBool());
+        startup.insert("retry_after_seconds",10);response.insert("startup",startup);
+        client.pollMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QVERIFY(client.marketplaceSettings().value("runtime_fresh").toBool());
+        QCOMPARE(client.marketplaceSettings().value("startup").toMap().value("retry_after_seconds").toInt(),10);
+        delay=80;client.pollMarketplaceSettings();client.setAuthToken(QString());
+        QTest::qWait(150);QVERIFY(client.marketplaceSettings().isEmpty());
+    }
+
+    void marketplace_provider_choice_requires_current_consent_and_sends_no_identity_or_native_configuration() {
+        FakeHttpServer server; QVERIFY(server.start());
+        auto response=marketplaceResponse(1,marketplacePreferences("off"));
+        response.insert("provider_setup",QJsonObject{{"schema_version",1},{"revision",0},{"enabled",false},
+            {"consent_current",false},{"consent_version","elixir-marketplace-warp-v1"}});
+        QList<QJsonObject> submitted;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.method=="GET")return {200,QJsonDocument(response).toJson(),0};
+            if(request.method!="PATCH" || request.path!="/api/v1/marketplace/connection/provider")return {500,"{}",0};
+            const auto body=QJsonDocument::fromJson(request.body).object(); submitted.append(body);
+            auto setup=response.value("provider_setup").toObject();
+            setup.insert("revision",setup.value("revision").toInt()+1);
+            setup.insert("enabled",body.value("enabled"));setup.insert("consent_current",body.value("enabled"));
+            response.insert("provider_setup",setup);
+            return {200,QJsonDocument(response).toJson(),60};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        client.saveMarketplaceProviderSetup(true,"elixir-marketplace-warp-v1"); QCOMPARE(submitted.size(),0);
+        client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        client.fetchMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        client.saveMarketplaceProviderSetup(true,""); QCOMPARE(submitted.size(),0);
+        client.saveMarketplaceProviderSetup(true,"elixir-marketplace-warp-v1");
+        client.saveMarketplaceProviderSetup(true,"elixir-marketplace-warp-v1");
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceConnectionSaving(),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(submitted.size(),1);
+        QCOMPARE(submitted[0].keys(),QStringList({"consent_version","enabled","expected_revision","mutation_id","schema_version"}));
+        QCOMPARE(submitted[0].value("expected_revision"),QJsonValue(0));
+        QVERIFY(!QUuid(submitted[0].value("mutation_id").toString()).isNull());
+        QVERIFY(client.marketplaceSettings().value("provider_setup").toMap().value("enabled").toBool());
+        QCOMPARE(client.marketplaceSettings().value("runtime_status").toString(),QString("not_connected"));
+        client.saveMarketplaceProviderSetup(false,"");
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceConnectionSaving(),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(submitted.size(),2);
+        QCOMPARE(submitted[1].value("expected_revision"),QJsonValue(1));
+        QVERIFY(submitted[1].value("consent_version").isNull());
+        QVERIFY(!client.marketplaceSettings().value("provider_setup").toMap().value("enabled").toBool());
+    }
+
+    void marketplace_provider_status_rejects_extra_authority_and_late_old_account_mutations() {
+        FakeHttpServer server;QVERIFY(server.start());
+        auto response=marketplaceResponse(1,marketplacePreferences("off"));
+        auto setup=QJsonObject{{"schema_version",1},{"revision",0},{"enabled",false},
+            {"consent_current",false},{"consent_version","elixir-marketplace-warp-v1"}};
+        response.insert("provider_setup",setup);int mutations=0;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.method=="GET")return {200,QJsonDocument(response).toJson(),0};
+            mutations++;auto accepted=response;auto chosen=setup;chosen.insert("revision",1);
+            chosen.insert("enabled",true);chosen.insert("consent_current",true);accepted.insert("provider_setup",chosen);
+            return {200,QJsonDocument(accepted).toJson(),150};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        client.fetchMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QVERIFY(client.marketplaceSettings().value("runtime_fresh").toBool());
+        auto invalid=setup;invalid.insert("protected",true);response.insert("provider_setup",invalid);
+        client.pollMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QVERIFY(!client.marketplaceSettings().value("runtime_fresh").toBool());
+        QVERIFY(!client.marketplaceSettings().contains("provider_setup"));
+        client.saveMarketplaceProviderSetup(true,"elixir-marketplace-warp-v1");QCOMPARE(mutations,0);
+        response.insert("provider_setup",setup);client.pollMarketplaceSettings();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        client.saveMarketplaceProviderSetup(true,"elixir-marketplace-warp-v1");
+        QTRY_COMPARE_WITH_TIMEOUT(mutations,1,5000);
+        client.setAuthToken(QString());QTest::qWait(200);
+        QVERIFY(client.marketplaceSettings().isEmpty());QVERIFY(!client.marketplaceConnectionSaving());
+    }
+
+    void marketplace_connection_retry_is_authenticated_bounded_and_does_not_claim_readiness() {
+        FakeHttpServer server;QVERIFY(server.start());QJsonObject submitted;QByteArray authorization;int posts=0;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.method=="GET")return {200,QJsonDocument(marketplaceResponse()).toJson(),0};
+            if(request.path!="/api/v1/marketplace/connection/retry")return {500,"{}",0};
+            submitted=QJsonDocument::fromJson(request.body).object();authorization=request.headers.value("authorization");posts++;
+            return {200,R"({"schema_version":1,"requested":true})",80};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        client.retryMarketplaceConnection();QCOMPARE(posts,0);
+        client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        client.retryMarketplaceConnection();client.retryMarketplaceConnection();client.saveMarketplaceWireguard("must-not-send");
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceConnectionSaving(),5000);
+        QCOMPARE(posts,1);QCOMPARE(submitted,QJsonObject({{"schema_version",1}}));
+        QCOMPARE(authorization,QByteArray("Bearer owner-token"));
+        QVERIFY(client.marketplaceConnectionNotice().contains("Retry requested"));
+        QVERIFY(!client.marketplaceConnectionNotice().contains("protected connection confirmed"));
+        client.retryMarketplaceConnection();client.setAuthToken(QString());
+        QTest::qWait(150);QVERIFY(client.marketplaceConnectionNotice().isEmpty());
+        QVERIFY(!client.marketplaceConnectionSaving());
+    }
+
+    void marketplace_settings_cas_is_bearer_authenticated_and_not_optimistic() {
+        FakeHttpServer server; QVERIFY(server.start());
+        QJsonObject body; QByteArray authorization;
+        server.setHandler([&](const HttpRequest &request) -> HttpResponse {
+            if (request.method=="GET") return {200,QJsonDocument(marketplaceResponse()).toJson(),0};
+            body=QJsonDocument::fromJson(request.body).object(); authorization=request.headers.value("authorization");
+            return {200,QJsonDocument(marketplaceResponse(1,body.value("preferences").toObject())).toJson(),100};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        QSignalSpy saved(&client,&ApiClient::marketplaceSettingsSaved);
+        client.fetchMarketplaceSettings();client.fetchMarketplaceSettings();
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(server.requests().size(),1);
+        client.saveMarketplaceSettings(marketplacePreferences("off").toVariantMap());
+        QCOMPARE(saved.count(),0);
+        QCOMPARE(client.marketplaceSettings().value("settings").toMap().value("revision").toInt(),0);
+        QTRY_COMPARE_WITH_TIMEOUT(saved.count(),1,5000);
+        QCOMPARE(authorization,QByteArray("Bearer owner-token"));
+        QCOMPARE(body.value("expected_revision").toInt(),0);
+        QVERIFY(!QUuid(body.value("mutation_id").toString()).isNull());
+        QVERIFY(!body.value("preferences").toObject().value("paid_support_consent").toBool());
+        QCOMPARE(client.marketplaceSettings().value("settings").toMap().value("revision").toInt(),1);
+    }
+
+    void marketplace_connection_import_is_purpose_bound_without_switching_or_caching_credentials() {
+        FakeHttpServer server;QVERIFY(server.start());QJsonObject submitted;int posts=0;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.method=="GET")return {200,QJsonDocument(marketplaceResponse()).toJson(),0};
+            submitted=QJsonDocument::fromJson(request.body).object();posts++;
+            return {200,R"({"profile":{"id":"marketplace-network","scope":"marketplace_network","kind":"wireguard_config","enabled":true,"strict":true},"checks":[],"blocker":null})",80};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        client.saveMarketplaceWireguard(" dedicated-private-config ");client.saveMarketplaceWireguard("duplicate");
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceConnectionSaving(),5000);QCOMPARE(posts,1);
+        QCOMPARE(submitted.value("purpose").toString(),QString("marketplace_network"));
+        QCOMPARE(submitted.value("profileId").toString(),QString("marketplace-network"));
+        QCOMPARE(submitted.value("config").toString(),QString("dedicated-private-config"));
+        QVERIFY(!submitted.contains("gatewayImage"));QVERIFY(!submitted.contains("forwardedPort"));
+        QVERIFY(client.marketplaceConnectionNotice().contains("Configuration saved"));
+        QVERIFY(!client.marketplaceConnectionNotice().contains("dedicated-private-config"));
+        for(const auto &request:server.requests())QVERIFY(!request.path.contains("switch"));
+        client.setAuthToken(QString());QVERIFY(client.marketplaceConnectionNotice().isEmpty());
+        client.saveMarketplaceWireguard("signed-out secret");QTest::qWait(20);QCOMPARE(posts,1);
+    }
+
+    void marketplace_connection_rejects_stale_context_and_wrong_purpose_success() {
+        FakeHttpServer server;QVERIFY(server.start());
+        server.setHandler([](const HttpRequest &request)->HttpResponse {
+            if(request.method=="GET")return {200,QJsonDocument(marketplaceResponse()).toJson(),0};
+            return {200,R"({"profile":{"id":"marketplace-network","scope":"managed_downloaders","kind":"wireguard_config","enabled":true,"strict":true},"blocker":null})",100};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        client.setSessionState(marketplaceOwnerSession().toVariantMap());
+        client.saveMarketplaceWireguard("private-config");QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceConnectionSaving(),5000);
+        QVERIFY(client.marketplaceConnectionNotice().contains("not confirmed"));
+        client.saveMarketplaceWireguard("private-config");client.setAuthToken(QString());
+        QTest::qWait(150);QVERIFY(client.marketplaceConnectionNotice().isEmpty());QVERIFY(!client.marketplaceConnectionSaving());
+    }
+
+    void marketplace_conflict_requires_reload_without_retry_or_positive_cached_state() {
+        FakeHttpServer server;QVERIFY(server.start());
+        server.setHandler([](const HttpRequest &request)->HttpResponse {
+            if(request.method=="GET")return {200,QJsonDocument(marketplaceResponse()).toJson(),0};
+            return {409,R"({"code":"conflict","message":"reload"})",0};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        QSignalSpy failures(&client,&ApiClient::requestFailed);
+        client.fetchMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        client.saveMarketplaceSettings(marketplacePreferences("off").toVariantMap());
+        QTRY_COMPARE_WITH_TIMEOUT(failures.count(),1,5000);
+        QVERIFY(client.marketplaceSettings().isEmpty());
+        client.saveMarketplaceSettings(marketplacePreferences("off").toVariantMap());
+        QCOMPARE(server.requests().size(),2);
+    }
+
+    void marketplace_auth_retry_keeps_the_exact_mutation_id_and_preferences() {
+        FakeHttpServer server;QVERIFY(server.start());
+        QList<QByteArray> bodies;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.path=="/api/v1/auth/refresh")
+                return {200,QJsonDocument(tokenResponse("fresh-token","refresh-2")).toJson(),0};
+            if(request.path=="/api/v1/auth/session")
+                return {200,QJsonDocument(sessionResponse()).toJson(),0};
+            if(request.method=="GET")return {200,QJsonDocument(marketplaceResponse()).toJson(),0};
+            bodies.append(request.body);
+            if(bodies.size()==1)return {401,R"({"message":"refresh"})",0};
+            const auto preferences=QJsonDocument::fromJson(request.body).object().value("preferences").toObject();
+            return {200,QJsonDocument(marketplaceResponse(1,preferences)).toJson(),0};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        client.setRefreshToken("refresh-1");client.setAccessTokenExpiresAt(futureTimestamp());
+        client.setSessionState(QVariantMap{{"session_id",kSessionId},{"home_id",kHomeId},
+            {"active_profile_id",kProfileId},{"active_profile_name","Owner"},{"active_profile_type","account"},
+            {"role","owner"},{"capability_revision",1},
+            {"capabilities",QStringList{"library_read","live_browse","live_play"}}});
+        client.fetchMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QSignalSpy saved(&client,&ApiClient::marketplaceSettingsSaved);
+        client.saveMarketplaceSettings(marketplacePreferences("off").toVariantMap());
+        QTRY_COMPARE_WITH_TIMEOUT(saved.count(),1,5000);
+        QCOMPARE(bodies.size(),2);
+        QCOMPARE(bodies[0],bodies[1]);
+        QCOMPARE(server.countPath("/api/v1/auth/refresh"),1);
+    }
+
+    void marketplace_stale_context_reply_and_oversized_response_cannot_restore_settings() {
+        FakeHttpServer server;QVERIFY(server.start());
+        bool oversized=false;
+        server.setHandler([&](const HttpRequest &)->HttpResponse {
+            auto response=marketplaceResponse();
+            if(oversized)response.insert("issuer_disclosure",QString(32000,'x'));
+            return {200,QJsonDocument(response).toJson(),100};
+        });
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        client.fetchMarketplaceSettings();
+        client.setSessionState(QVariantMap{{"session_id",kSessionId},{"home_id",kHomeId},{"active_profile_id",kProfileId}});
+        QTest::qWait(250);
+        QVERIFY(client.marketplaceSettings().isEmpty());
+        QVERIFY(!client.marketplaceSettingsLoading());
+        oversized=true;QSignalSpy failures(&client,&ApiClient::requestFailed);
+        client.fetchMarketplaceSettings();
+        QTRY_VERIFY_WITH_TIMEOUT(failures.count()>0,5000);
+        QVERIFY(client.marketplaceSettings().isEmpty());
+        QVERIFY(!client.marketplaceSettingsLoading());
+    }
+
+    void marketplace_runtime_ack_requires_matching_revision_and_noncontributing_off_roles() {
+        FakeHttpServer server;QVERIFY(server.start());
+        const QJsonObject consumer{{"consumer",true},{"catalog",false},{"routing",false}};
+        auto response=marketplaceResponse(1,marketplacePreferences("off"));
+        response.insert("runtime_status","running");response.insert("participation_applied",true);
+        QJsonObject state{{"phase","running"},{"preferences_revision",2},
+            {"desired_roles",consumer},{"applied_roles",consumer},{"package_sharing_active",false}};
+        response.insert("runtime",QJsonObject{{"phase","running"},{"participation",state}});
+        server.setHandler([&](const HttpRequest &)->HttpResponse{return {200,QJsonDocument(response).toJson(),0};});
+        ApiClient client;client.setBaseUrl(server.baseUrl());client.setAuthToken("owner-token");
+        QSignalSpy failures(&client,&ApiClient::requestFailed);
+        client.fetchMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(failures.count(),1);QVERIFY(client.marketplaceSettings().isEmpty());
+        state.insert("preferences_revision",1);
+        auto serving=consumer;serving.insert("catalog",true);
+        state.insert("desired_roles",serving);state.insert("applied_roles",serving);
+        response.insert("runtime",QJsonObject{{"phase","running"},{"participation",state}});
+        client.fetchMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(failures.count(),2);QVERIFY(client.marketplaceSettings().isEmpty());
+        state.insert("desired_roles",consumer);state.insert("applied_roles",consumer);
+        response.insert("runtime",QJsonObject{{"phase","running"},{"participation",state}});
+        client.fetchMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(failures.count(),2);QVERIFY(!client.marketplaceSettings().isEmpty());
+        response.insert("runtime_status","stopped");response.insert("participation_applied",false);
+        state.insert("phase","stopped");
+        response.insert("runtime",QJsonObject{{"phase","stopped"},{"participation",state}});
+        client.fetchMarketplaceSettings();QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(failures.count(),3);QVERIFY(client.marketplaceSettings().isEmpty());
+    }
+
+    void marketplace_catalog_progress_schema_and_age_validation_fail_closed() {
+        FakeHttpServer server; QVERIFY(server.start());
+        auto response = marketplaceResponse(1,marketplacePreferences("auto"));
+        const QJsonObject consumer{{"consumer",true},{"catalog",false},{"routing",false}};
+        QJsonObject progress{{"phase","waiting"},{"observed_seconds",0},{"last_peer_page_seconds",40},
+            {"last_peer_scan_seconds",60},{"last_page_examined",0}};
+        QJsonObject state{{"phase","running"},{"preferences_revision",1},{"desired_roles",consumer},
+            {"applied_roles",consumer},{"package_sharing_active",false},{"catalog",progress}};
+        response.insert("runtime_status","running"); response.insert("participation_applied",false);
+        response.insert("runtime",QJsonObject{{"phase","running"},{"participation",state}});
+        server.setHandler([&](const HttpRequest &)->HttpResponse {return {200,QJsonDocument(response).toJson(),0};});
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        QSignalSpy failures(&client,&ApiClient::requestFailed);
+        const auto read = [&]() {client.fetchMarketplaceSettings();};
+        read(); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(failures.count(),0); QVERIFY(!client.marketplaceSettings().isEmpty());
+        QList<QJsonObject> invalid;
+        auto bad = progress; bad.insert("ready",true); invalid.append(bad);
+        bad = progress; bad.insert("last_page_examined",21); invalid.append(bad);
+        bad = progress; bad.insert("observed_seconds",-1); invalid.append(bad);
+        bad = progress; bad.insert("observed_seconds",QJsonValue::Null); invalid.append(bad);
+        bad = progress; bad.insert("last_peer_page_seconds",QJsonValue::Null); invalid.append(bad);
+        bad = progress; bad.insert("last_peer_scan_seconds",20); invalid.append(bad);
+        bad = progress; bad.insert("phase","ready"); invalid.append(bad);
+        bad = progress; bad.insert("observed_seconds",0.5); invalid.append(bad);
+        bad = progress; bad.insert("peer","must-not-be-exposed"); invalid.append(bad);
+        int rejected = 0;
+        for (const auto &value : invalid) {
+            state.insert("catalog",value);
+            response.insert("runtime",QJsonObject{{"phase","running"},{"participation",state}});
+            read(); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+            QCOMPARE(failures.count(),++rejected); QVERIFY(client.marketplaceSettings().isEmpty());
+        }
+        progress.insert("observed_seconds",31); state.insert("catalog",progress);
+        response.insert("runtime",QJsonObject{{"phase","running"},{"participation",state}});
+        read(); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QCOMPARE(failures.count(),rejected);
+        QCOMPARE(client.marketplaceSettings().value("runtime").toMap().value("participation").toMap()
+            .value("catalog").toMap().value("phase").toString(),QString("unavailable"));
+    }
+
+    void marketplace_runtime_progress_expires_without_erasing_preferences_or_crossing_sessions() {
+        FakeHttpServer server; QVERIFY(server.start());
+        auto response = marketplaceResponse(1,marketplacePreferences("auto"));
+        const QJsonObject roles{{"consumer",true},{"catalog",false},{"routing",false}};
+        const QJsonObject catalog{{"phase","waiting"},{"observed_seconds",0},{"last_peer_page_seconds",40},
+            {"last_peer_scan_seconds",60},{"last_page_examined",5}};
+        const QJsonObject state{{"phase","running"},{"preferences_revision",1},{"desired_roles",roles},
+            {"applied_roles",roles},{"package_sharing_active",false},{"catalog",catalog}};
+        response.insert("runtime_status","running"); response.insert("participation_applied",false);
+        response.insert("runtime",QJsonObject{{"phase","running"},{"participation",state}});
+        server.setHandler([&](const HttpRequest &)->HttpResponse {return {200,QJsonDocument(response).toJson(),80};});
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        client.fetchMarketplaceSettings(); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QVERIFY(client.marketplaceSettings().value("runtime_fresh").toBool());
+        const auto saved = client.marketplaceSettings().value("settings");
+        QVERIFY(client.marketplaceSettings().value("runtime").toMap().value("participation").toMap()
+            .value("catalog").toMap().value("last_peer_page_seconds").toDouble() >= 41);
+        auto *expiry = client.findChild<QTimer *>("marketplaceRuntimeFreshness"); QVERIFY(expiry);
+        QVERIFY(expiry->isActive()); QVERIFY(expiry->interval() <= 30000 && expiry->interval() > 29000);
+        QCOMPARE(expiry->timerType(),Qt::PreciseTimer);
+        expiry->start(1); // Exercise the real callback without a 30-second fixture sleep.
+        QTRY_VERIFY(!client.marketplaceSettings().value("runtime_fresh").toBool());
+        QCOMPARE(client.marketplaceSettings().value("settings"),saved);
+        QVERIFY(!client.marketplaceSettings().contains("runtime"));
+        client.fetchMarketplaceSettings(); QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSettingsLoading(),5000);
+        QVERIFY(expiry->isActive());
+        client.setAuthToken(QString());
+        QVERIFY(!expiry->isActive()); QVERIFY(client.marketplaceSettings().isEmpty());
+        bool loggedOutDuringNotification = false;
+        connect(&client,&ApiClient::marketplaceSettingsChanged,&client,[&]() {
+            if (!loggedOutDuringNotification && client.marketplaceSettings().value("runtime_fresh").toBool()) {
+                loggedOutDuringNotification = true; client.setAuthToken(QString());
+            }
+        });
+        client.setAuthToken("replacement-token"); client.fetchMarketplaceSettings();
+        QTRY_VERIFY_WITH_TIMEOUT(loggedOutDuringNotification,5000);
+        QVERIFY(client.marketplaceSettings().isEmpty()); QVERIFY(!expiry->isActive());
     }
 
     void a13_refresh_token_is_vaulted_and_server_scoped() {

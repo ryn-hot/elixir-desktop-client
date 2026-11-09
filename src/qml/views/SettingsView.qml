@@ -1738,6 +1738,13 @@ Item {
                     Layout.fillWidth: true
                 }
 
+                MarketplaceSettingsView {
+                    id: marketplaceSettingsSection
+                    objectName: "settingsMarketplaceSettings"
+                    visible: canManage
+                    Layout.fillWidth: true
+                }
+
                 Rectangle {
                     height: 1
                     color: Theme.border

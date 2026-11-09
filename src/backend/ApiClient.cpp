@@ -13,12 +13,110 @@
 #include <QLocale>
 #include <QSysInfo>
 #include <QTimer>
+#include <QRegularExpression>
+#include <QUuid>
 #include <algorithm>
 #include <cmath>
 #include <utility>
 
 namespace {
 constexpr int kMaxPendingAuthRequests = 256;
+const QString kMarketplaceSettingsPath = QStringLiteral("/api/v1/marketplace/settings");
+const QString kMarketplaceSearchPath = QStringLiteral("/api/v1/marketplace/search");
+constexpr double kMarketplaceMaxRevision = 9007199254740991.0;
+
+bool validMarketplaceRevision(const QJsonValue &value) {
+    const double number = value.toDouble(-1);
+    return value.isDouble() && std::isfinite(number) && number >= 0
+        && number <= kMarketplaceMaxRevision && std::floor(number) == number;
+}
+
+bool validMarketplacePreferences(const QJsonObject &preferences) {
+    QStringList expected{"schema_version", "contribution", "metering",
+        "contribution_disclosure_version", "paid_support_consent", "issuer_disclosure_version"};
+    QStringList actual = preferences.keys();
+    expected.sort(); actual.sort();
+    const auto disclosure = [](const QJsonValue &value) {
+        return value.isNull() || (value.isDouble() && value.toDouble() == 1);
+    };
+    return actual == expected && preferences.value("schema_version").isDouble()
+        && preferences.value("schema_version").toDouble() == 1
+        && QStringList{"auto", "on", "off"}.contains(preferences.value("contribution").toString())
+        && QStringList{"unknown", "metered", "unmetered"}.contains(preferences.value("metering").toString())
+        && disclosure(preferences.value("contribution_disclosure_version"))
+        && disclosure(preferences.value("issuer_disclosure_version"))
+        && preferences.value("paid_support_consent").isBool()
+        && (!preferences.value("paid_support_consent").toBool()
+            || preferences.value("issuer_disclosure_version").toDouble() == 1);
+}
+
+bool validMarketplaceRuntime(const QJsonObject &object) {
+    const QString phase = object.value("runtime_status").toString();
+    if (!object.contains("runtime"))
+        return phase == "not_connected" && !object.contains("participation_applied");
+    const QJsonObject runtime = object.value("runtime").toObject();
+    if (!QStringList{"not_connected", "starting", "running", "applying", "waiting_for_protection",
+                     "stopping", "stopped", "failed"}.contains(phase)
+        || runtime.value("phase").toString() != phase
+        || !object.value("participation_applied").isBool()) return false;
+    const bool applied = object.value("participation_applied").toBool();
+    if (runtime.value("participation").isNull()) return !applied;
+    if (!runtime.value("participation").isObject()) return false;
+    const QJsonObject state = runtime.value("participation").toObject();
+    const auto progressValue = state.value("catalog");
+    if (!progressValue.isUndefined() && !progressValue.isNull()) {
+        const auto progress = progressValue.toObject();
+        const auto optionalAge = [](const QJsonValue &value) {
+            return value.isNull() || validMarketplaceRevision(value);
+        };
+        if (!progressValue.isObject()
+            || progress.keys() != QStringList{"last_page_examined", "last_peer_page_seconds",
+                "last_peer_scan_seconds", "observed_seconds", "phase"}
+            || !QStringList{"not_started", "refreshing", "waiting", "paused", "unavailable", "unsupported"}
+                .contains(progress.value("phase").toString())
+            || !optionalAge(progress.value("observed_seconds"))
+            || !optionalAge(progress.value("last_peer_page_seconds"))
+            || !optionalAge(progress.value("last_peer_scan_seconds"))
+            || !optionalAge(progress.value("last_page_examined"))
+            || (!progress.value("last_page_examined").isNull() && progress.value("last_page_examined").toDouble() > 20)
+            || progress.value("last_peer_page_seconds").isNull() != progress.value("last_page_examined").isNull()
+            || (!progress.value("last_peer_scan_seconds").isNull()
+                && (progress.value("last_peer_page_seconds").isNull()
+                    || progress.value("last_peer_scan_seconds").toDouble() < progress.value("last_peer_page_seconds").toDouble()))
+            || (!progress.value("last_peer_page_seconds").isNull()
+                && (progress.value("observed_seconds").isNull()
+                    || progress.value("observed_seconds").toDouble() > progress.value("last_peer_page_seconds").toDouble()))
+            || (progress.value("phase").toString() == "refreshing" && progress.value("observed_seconds").isNull())) return false;
+    }
+    const auto validRoles = [](const QJsonValue &value) {
+        if (!value.isObject()) return false;
+        const auto roles = value.toObject();
+        return roles.size() == 3 && roles.value("consumer").isBool()
+            && roles.value("catalog").isBool() && roles.value("routing").isBool();
+    };
+    if (!validRoles(state.value("desired_roles"))
+        || (!state.value("applied_roles").isNull() && !validRoles(state.value("applied_roles")))
+        || !state.value("package_sharing_active").isBool()
+        || (!state.value("preferences_revision").isNull() && !validMarketplaceRevision(state.value("preferences_revision")))) return false;
+    if (phase == "not_connected") return false;
+    if ((phase == "stopping" || phase == "failed") && !state.value("applied_roles").isNull()) return false;
+    if (phase == "stopped") {
+        const auto stopped = state.value("applied_roles").toObject();
+        if (state.value("phase").toString() != "stopped" || !validRoles(state.value("applied_roles"))
+            || stopped.value("consumer").toBool() || stopped.value("catalog").toBool()
+            || stopped.value("routing").toBool() || state.value("package_sharing_active").toBool()) return false;
+    }
+    if (!applied) return true;
+    const auto settings = object.value("settings").toObject();
+    const auto roles = state.value("applied_roles").toObject();
+    return phase == "running" && state.value("phase").toString() == "running"
+        && state.value("preferences_revision") == settings.value("revision")
+        && state.value("applied_roles") == state.value("desired_roles")
+        && validRoles(state.value("applied_roles"))
+        && (settings.value("preferences").toObject().value("contribution").toString() != "off"
+            || (roles.value("consumer").toBool() && !roles.value("catalog").toBool() && !roles.value("routing").toBool()
+                && !state.value("package_sharing_active").toBool()));
+}
 
 QString encodedPathSegment(const QString &value) {
     return QString::fromUtf8(QUrl::toPercentEncoding(value));
@@ -377,12 +475,27 @@ void insertForwardedPort(QJsonObject &body, int port, const QString &protocol, c
 }
 } // namespace
 
-ApiClient::ApiClient(QObject *parent)
-    : QObject(parent) {}
-
-QString ApiClient::baseUrl() const {
-    return m_baseUrl;
+ApiClient::ApiClient(QObject *parent) : QObject(parent) {
+    m_marketplaceRuntimeExpiry.setParent(this);
+    m_marketplaceRuntimeExpiry.setObjectName("marketplaceRuntimeFreshness");
+    m_marketplaceRuntimeExpiry.setSingleShot(true);
+    m_marketplaceRuntimeExpiry.setTimerType(Qt::PreciseTimer);
+    connect(&m_marketplaceRuntimeExpiry, &QTimer::timeout, this, &ApiClient::invalidateMarketplaceRuntime);
+    m_marketplaceSearchExpiry.setSingleShot(true);
+    m_marketplaceSearchExpiry.setTimerType(Qt::PreciseTimer);
+    connect(&m_marketplaceSearchExpiry, &QTimer::timeout, this, [this]() {
+        m_marketplaceSearchResults.clear();
+        m_marketplaceSearchLatest.clear();
+        m_marketplaceSearch.insert("phase", "stale");
+        m_marketplaceInstallTargets.clear();
+        m_marketplaceTargetsQuery.clear();
+        emit marketplaceInstallationChanged();
+        emit marketplaceSearchResultsChanged();
+        emit marketplaceSearchChanged();
+    });
 }
+
+QString ApiClient::baseUrl() const { return m_baseUrl; }
 
 void ApiClient::setBaseUrl(const QString &value) {
     const QString normalized = normalizeBaseUrl(value);
@@ -407,6 +520,7 @@ void ApiClient::setAuthToken(const QString &value) {
         return;
     }
     m_authToken = accepted;
+    if (accepted.isEmpty()) resetMarketplaceSettings();
     emit authTokenChanged();
 }
 
@@ -545,6 +659,7 @@ void ApiClient::setSessionState(const QVariantMap &state) {
     m_homeRole = role;
     m_capabilities = capabilities;
     m_capabilityRevision = revision;
+    resetMarketplaceSettings();
     emit sessionStateChanged();
 }
 
@@ -767,6 +882,9 @@ QVariantMap ApiClient::animeInferenceSettings() const {
 bool ApiClient::animeInferenceSettingsLoading() const {
     return m_animeInferenceSettingsLoading;
 }
+
+QVariantMap ApiClient::marketplaceSettings() const { return m_marketplaceSettings; }
+bool ApiClient::marketplaceSettingsLoading() const { return m_marketplaceSettingsLoading; }
 
 QVariantMap ApiClient::playbackAdminDiagnostics() const {
     return m_playbackAdminDiagnostics;
@@ -3084,6 +3202,487 @@ void ApiClient::fetchAnimeInferenceSettings() {
         });
 }
 
+void ApiClient::setMarketplaceSettingsLoading(bool loading) {
+    if (m_marketplaceSettingsLoading == loading) return;
+    m_marketplaceSettingsLoading = loading;
+    emit marketplaceSettingsLoadingChanged();
+}
+
+void ApiClient::resetMarketplaceSettings() {
+    ++m_marketplaceConnectionRequestId;
+    m_marketplaceConnectionSaving = false;
+    m_marketplaceConnectionNotice.clear();
+    emit marketplaceConnectionChanged();
+    clearMarketplaceInstallation();
+    clearMarketplaceSearch();
+    ++m_marketplaceSettingsRequestId;
+    m_marketplaceRuntimeExpiry.stop();
+    m_marketplaceSettings.clear();
+    emit marketplaceSettingsChanged();
+    setMarketplaceSettingsLoading(false);
+}
+
+bool ApiClient::marketplaceSearchFresh() const {
+    const auto now = QDateTime::currentDateTimeUtc();
+    return m_marketplaceSearchUntil.isValid() && now >= m_marketplaceSearchReceived &&
+           now < m_marketplaceSearchUntil && m_marketplaceSearchAge.isValid() &&
+           m_marketplaceSearchAge.elapsed() < m_marketplaceSearchLifetimeMs;
+}
+void ApiClient::setMarketplaceSearchLifetime(qint64 milliseconds) {
+    m_marketplaceSearchLifetimeMs = std::clamp<qint64>(milliseconds, 0, 300000);
+    m_marketplaceSearchReceived = QDateTime::currentDateTimeUtc();
+    m_marketplaceSearchUntil = m_marketplaceSearchReceived.addMSecs(m_marketplaceSearchLifetimeMs);
+    m_marketplaceSearchAge.start();
+    m_marketplaceSearchExpiry.start(static_cast<int>(m_marketplaceSearchLifetimeMs));
+}
+QVariantMap ApiClient::marketplaceSearch() const {
+    if (!m_marketplaceSearch.isEmpty() && !marketplaceSearchFresh())
+        return {{"phase", "stale"}};
+    return m_marketplaceSearch;
+}
+QVariantList ApiClient::marketplaceSearchResults() const {
+    return marketplaceSearchFresh() ? m_marketplaceSearchResults : QVariantList{};
+}
+bool ApiClient::marketplaceSearchLoading() const { return m_marketplaceSearchLoading; }
+int ApiClient::marketplaceSearchAvailableCount() const {
+    return marketplaceSearchFresh() ? static_cast<int>(m_marketplaceSearchLatest.size()) : 0;
+}
+void ApiClient::clearMarketplaceSearch() {
+    const bool hadResults = !m_marketplaceSearchResults.isEmpty();
+    m_marketplaceInstallTargets.clear();
+    m_marketplaceTargetsQuery.clear();
+    emit marketplaceInstallationChanged();
+    ++m_marketplaceSearchRequestId;
+    m_marketplaceSearchId.clear();
+    m_marketplaceSearch.clear();
+    m_marketplaceSearchResults.clear();
+    m_marketplaceSearchLatest.clear();
+    m_marketplaceSearchLoading = false;
+    m_marketplaceSearchExpiry.stop();
+    m_marketplacePrepareCatalog = false;
+    m_marketplaceSearchAge.invalidate();
+    m_marketplaceSearchLifetimeMs = 0;
+    m_marketplaceSearchUntil = {};
+    m_marketplaceSearchReceived = {};
+    if (hadResults)
+        emit marketplaceSearchResultsChanged();
+    emit marketplaceSearchChanged();
+}
+void ApiClient::failMarketplaceSearch() {
+    const bool hadResults = !m_marketplaceSearchResults.isEmpty();
+    m_marketplaceInstallTargets.clear();
+    m_marketplaceTargetsQuery.clear();
+    emit marketplaceInstallationChanged();
+    m_marketplaceSearchLoading = false;
+    m_marketplaceSearchResults.clear();
+    m_marketplaceSearchLatest.clear();
+    m_marketplaceSearch = {{"phase", "unavailable"}};
+    setMarketplaceSearchLifetime(300000);
+    if (hadResults)
+        emit marketplaceSearchResultsChanged();
+    emit marketplaceSearchChanged();
+}
+void ApiClient::startMarketplaceSearch(const QString &text, const QStringList &tags,
+                                       const QString &cursor, bool prepareCatalog) {
+    if (m_marketplaceSearchLoading)
+        return;
+    clearMarketplaceSearch();
+    m_marketplacePrepareCatalog = prepareCatalog;
+    if (prepareCatalog && (!text.isEmpty() || !tags.isEmpty() || !cursor.isEmpty())) {
+        failMarketplaceSearch();
+        return;
+    }
+    if (text.toUtf8().size() > 256 || tags.size() > 3 || cursor.size() > 128 ||
+        (!cursor.isEmpty() && !QRegularExpression("^[A-Za-z0-9_-]+$").match(cursor).hasMatch())) {
+        failMarketplaceSearch();
+        return;
+    }
+    QSet<QString> distinct;
+    for (const auto &tag : tags) {
+        if (!QStringList{"anime", "movies", "tv", "live"}.contains(tag) || distinct.contains(tag)) {
+            failMarketplaceSearch();
+            return;
+        }
+        distinct.insert(tag);
+    }
+    if (distinct.contains("live") && distinct.size() != 1) {
+        failMarketplaceSearch();
+        return;
+    }
+    QJsonArray selected;
+    for (const auto &tag : tags)
+        selected.append(tag);
+    QJsonObject request{{"query", QJsonObject{{"text", text}, {"tags", selected}, {"limit", 20}}}};
+    if (!cursor.isEmpty())
+        request.insert("cursor", cursor);
+    if (prepareCatalog)
+        request.insert("prepare_catalog", true);
+    m_marketplaceSearchLoading = true;
+    m_marketplaceSearch = {{"phase", "checking"}};
+    setMarketplaceSearchLifetime(60000);
+    const auto generation = m_marketplaceSearchRequestId;
+    emit marketplaceSearchChanged();
+    sendRequest(
+        "POST", kMarketplaceSearchPath, request,
+        [this, generation](const QJsonDocument &doc) {
+            if (generation != m_marketplaceSearchRequestId)
+                return;
+            const auto object = doc.object();
+            const auto id = object.value("query_id").toString();
+            if (!object.value("schema_version").isDouble() ||
+                object.value("schema_version").toDouble() != 1 || QUuid(id).isNull()) {
+                failMarketplaceSearch();
+                return;
+            }
+            m_marketplaceSearchId = id;
+            m_marketplaceSearchLoading = false;
+            emit marketplaceSearchChanged();
+            pollMarketplaceSearch();
+        },
+        [this, generation](const QString &) {
+            if (generation == m_marketplaceSearchRequestId)
+                failMarketplaceSearch();
+        });
+}
+void ApiClient::pollMarketplaceSearch() {
+    if (m_marketplaceSearchLoading || m_marketplaceSearchId.isEmpty())
+        return;
+    const auto generation = m_marketplaceSearchRequestId;
+    const auto id = m_marketplaceSearchId;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    m_marketplaceSearchLoading = true;
+    // A wall-clock rollback can invalidate a receipt before its monotonic
+    // timer fires. Splitting the display notifier must not retain stale cards.
+    if (!marketplaceSearchFresh() && !m_marketplaceSearchResults.isEmpty())
+        emit marketplaceSearchResultsChanged();
+    emit marketplaceSearchChanged();
+    sendRequest(
+        "GET", kMarketplaceSearchPath + "/" + encodedPathSegment(id), {},
+        [this, generation, id, elapsed](const QJsonDocument &doc) {
+            if (generation != m_marketplaceSearchRequestId || id != m_marketplaceSearchId)
+                return;
+            m_marketplaceSearchLoading = false;
+            if (!doc.isObject() || !updateMarketplaceSearch(doc.object(), elapsed.elapsed()))
+                failMarketplaceSearch();
+        },
+        [this, generation](const QString &) {
+            if (generation == m_marketplaceSearchRequestId)
+                failMarketplaceSearch();
+        });
+}
+bool ApiClient::updateMarketplaceSearch(const QJsonObject &object, qint64 elapsedMs) {
+    const auto phase = object.value("phase").toString();
+    const auto positiveBool = [](const QJsonValue &v) { return v.isBool() && v.toBool(); };
+    const auto preparation = object.value("preparation");
+    if (m_marketplacePrepareCatalog != preparation.isObject())
+        return false;
+    if (m_marketplacePrepareCatalog) {
+        const auto progress = preparation.toObject();
+        auto actual = progress.keys();
+        QStringList expected{"schema_version", "phase", "scope", "examined", "available", "omitted",
+                             "pages", "received", "local_pass_complete", "network_complete", "metadata_only"};
+        actual.sort(); expected.sort();
+        const auto state = progress.value("phase").toString();
+        if (actual != expected || progress.value("schema_version") != QJsonValue(1) ||
+            progress.value("scope") != QJsonValue(QStringLiteral("current_local_catalog")) ||
+            !QStringList{"checking", "discovering", "waiting", "complete", "limited", "unavailable"}.contains(state) ||
+            !positiveBool(progress.value("metadata_only")) ||
+            progress.value("network_complete") != QJsonValue(false) ||
+            !progress.value("local_pass_complete").isBool() ||
+            progress.value("local_pass_complete").toBool() != (state == "complete"))
+            return false;
+        for (const auto &field : {"examined", "available", "omitted", "pages"})
+            if (!validMarketplaceRevision(progress.value(field)) ||
+                progress.value(field).toDouble() > (QString(field) == "pages" ? 512 : 10000))
+                return false;
+        if (!validMarketplaceRevision(progress.value("received")) || progress.value("received").toDouble() > 10240)
+            return false;
+        // First-page freshness/eligibility is checked below, independently of
+        // background progress. Warming never grants a display/install receipt.
+        if (progress.value("examined").toDouble() != progress.value("available").toDouble() + progress.value("omitted").toDouble())
+            return false;
+    }
+    if (!object.value("schema_version").isDouble() ||
+        object.value("schema_version").toDouble() != 1 ||
+        object.value("query_id").toString() != m_marketplaceSearchId ||
+        !QStringList{"checking", "ready", "unavailable", "stale"}.contains(phase) ||
+        !positiveBool(object.value("metadata_only")) ||
+        !positiveBool(object.value("ranking_partial")) ||
+        !object.value("network_complete").isBool() || object.value("network_complete").toBool() ||
+        !object.value("results").isArray() || object.value("results").toArray().size() > 20 ||
+        !validMarketplaceRevision(object.value("valid_for_seconds")) ||
+        object.value("valid_for_seconds").toDouble() > 300 ||
+        (object.contains("local_page_complete") &&
+         !object.value("local_page_complete").isBool()) ||
+        (object.contains("searching_peers") &&
+         (!object.value("searching_peers").isBool() ||
+          (object.value("searching_peers").toBool() && phase != "checking"))))
+        return false;
+    for (const auto &field : {"checked", "omitted", "pending"})
+        if (!validMarketplaceRevision(object.value(field)) || object.value(field).toDouble() > 20)
+            return false;
+    const auto cursor = object.value("next_cursor");
+    if (!cursor.isNull() &&
+        (!cursor.isString() || cursor.toString().size() > 128 ||
+         !QRegularExpression("^[A-Za-z0-9_-]+$").match(cursor.toString()).hasMatch()))
+        return false;
+    QSet<QString> ids;
+    QVariantList latest;
+    const QRegularExpression digest("^sha256:[0-9a-f]{64}$"),
+        identity("^elx:[a-z2-7]{52}/[a-z0-9]+(?:-[a-z0-9]+)*$");
+    for (const auto &entry : object.value("results").toArray()) {
+        if (!entry.isObject())
+            return false;
+        const auto card = entry.toObject();
+        const auto id = card.value("extension_id").toString();
+        if (!identity.match(id).hasMatch() || id.size() > 121 || ids.contains(id) ||
+            !digest.match(card.value("release_id").toString()).hasMatch() ||
+            !positiveBool(card.value("metadata_only")) ||
+            !positiveBool(card.value("ranking_partial")))
+            return false;
+        for (const auto &field : {"name", "publisher", "version", "description"}) {
+            const int limit = QString(field) == "description" ? 1024
+                              : QString(field) == "version"   ? 64
+                                                              : 128;
+            if (!card.value(field).isString() || card.value(field).toString().isEmpty() ||
+                card.value(field).toString().toUtf8().size() > limit)
+                return false;
+        }
+        const auto support = card.value("support").toObject();
+        if (!validMarketplaceRevision(support.value("verified_supporters")) ||
+            support.value("verified_supporters").toDouble() < 5 ||
+            support.value("verified_supporters").toDouble() > 4096 ||
+            !validMarketplaceRevision(support.value("weighted_score")) ||
+            support.value("weighted_score").toDouble() <
+                support.value("verified_supporters").toDouble() ||
+            support.value("weighted_score").toDouble() >
+                4 * support.value("verified_supporters").toDouble() ||
+            !support.value("capped").isBool() ||
+            support.value("capped").toBool() !=
+                (support.value("verified_supporters").toDouble() == 4096) ||
+            !positiveBool(support.value("discovery_qualified")) ||
+            !support.value("is_global_total").isBool() || support.value("is_global_total").toBool())
+            return false;
+        if (!card.value("media_tags").isArray())
+            return false;
+        QSet<QString> tags;
+        for (const auto &tag : card.value("media_tags").toArray()) {
+            if (!tag.isString() ||
+                !QStringList{"anime", "movies", "tv", "live"}.contains(tag.toString()) ||
+                tags.contains(tag.toString()))
+                return false;
+            tags.insert(tag.toString());
+        }
+        if (tags.size() > 3 || (tags.contains("live") && tags.size() != 1))
+            return false;
+        ids.insert(id);
+        latest.append(card.toVariantMap());
+    }
+    QVariantList stable;
+    QSet<QString> displayed;
+    if (m_marketplaceSearchResults.isEmpty())
+        stable = latest;
+    else {
+        for (const auto &old : m_marketplaceSearchResults)
+            for (const auto &current : latest)
+                if (old.toMap().value("extension_id") == current.toMap().value("extension_id")) {
+                    stable.append(current);
+                    displayed.insert(current.toMap().value("extension_id").toString());
+                    break;
+                }
+        // Fill the checked page automatically without moving existing cards.
+        // Only this same authenticated/fresh reply's validated rows can enter;
+        // missing/withdrawn rows above are removed before any new append.
+        for (const auto &current : latest)
+            if (!displayed.contains(current.toMap().value("extension_id").toString()))
+                stable.append(current);
+    }
+    const bool resultsChanged = m_marketplaceSearchResults != stable ||
+                                !marketplaceSearchFresh();
+    m_marketplaceSearch = object.toVariantMap();
+    m_marketplaceSearchResults = stable;
+    m_marketplaceSearchLatest = latest;
+    // The receipt ages while in transit or waiting for auth refresh, too.
+    setMarketplaceSearchLifetime(static_cast<qint64>(object.value("valid_for_seconds").toInt()) *
+                                     1000 -
+                                 std::max<qint64>(elapsedMs, 0));
+    if (marketplaceInstallTargets().isEmpty()) {
+        m_marketplaceInstallTargets.clear();
+        m_marketplaceTargetsQuery.clear();
+    }
+    emit marketplaceInstallationChanged();
+    // Loading/progress/TTL notifications must not rebuild the QML card model.
+    // Actual row changes and lost/restored freshness still invalidate it.
+    if (resultsChanged || !marketplaceSearchFresh())
+        emit marketplaceSearchResultsChanged();
+    emit marketplaceSearchChanged();
+    return true;
+}
+void ApiClient::acceptMarketplaceSearchResults() {
+    if (!marketplaceSearchFresh()) {
+        emit marketplaceSearchResultsChanged();
+        emit marketplaceSearchChanged();
+        return;
+    }
+    if (m_marketplaceSearchResults != m_marketplaceSearchLatest) {
+        m_marketplaceSearchResults = m_marketplaceSearchLatest;
+        emit marketplaceSearchResultsChanged();
+    }
+    emit marketplaceSearchChanged();
+}
+
+bool ApiClient::updateMarketplaceSettings(const QJsonObject &object, qint64 elapsedMs) {
+    if (object.contains("provider_setup")) {
+        const auto setup = object.value("provider_setup").toObject();
+        if (!object.value("provider_setup").isObject()
+            || setup.keys() != QStringList{"consent_current", "consent_version", "enabled", "revision", "schema_version"}
+            || setup.value("schema_version") != QJsonValue(1)
+            || !validMarketplaceRevision(setup.value("revision"))
+            || !setup.value("enabled").isBool() || !setup.value("consent_current").isBool()
+            || setup.value("consent_version") != QJsonValue("elixir-marketplace-warp-v1")
+            || (setup.value("consent_current").toBool() && (!setup.value("enabled").toBool()
+                || setup.value("revision").toDouble() == 0))
+            || (setup.value("revision").toDouble() == 0 && setup.value("enabled").toBool()))
+            return false;
+    }
+    if (object.contains("startup")) {
+        const auto startup = object.value("startup").toObject();
+        const auto delay = startup.value("retry_after_seconds");
+        if (startup.keys() != QStringList{"configured", "retry_after_seconds", "retry_owner_present"}
+            || !startup.value("configured").isBool()
+            || !startup.value("retry_owner_present").isBool()
+            || (!delay.isNull() && (!validMarketplaceRevision(delay) || delay.toDouble() > 300))
+            || (!startup.value("configured").toBool() && startup.value("retry_owner_present").toBool())
+            || (!startup.value("retry_owner_present").toBool() && !delay.isNull()))
+            return false;
+    }
+    const QJsonObject settings = object.value("settings").toObject();
+    if (!validMarketplaceRevision(settings.value("revision")) ||
+        !validMarketplacePreferences(settings.value("preferences").toObject()) ||
+        object.value("contribution_disclosure_version").toDouble() != 1 ||
+        object.value("issuer_disclosure_version").toDouble() != 1 ||
+        !object.value("runtime_status").isString() ||
+        object.value("runtime_status").toString().isEmpty() ||
+        object.value("runtime_status").toString().size() > 64 || !validMarketplaceRuntime(object))
+        return false;
+    for (const QString &key :
+         {QStringLiteral("contribution_disclosure"), QStringLiteral("issuer_disclosure")}) {
+        if (!object.value(key).isString() || object.value(key).toString().isEmpty() ||
+            object.value(key).toString().size() > 4096)
+            return false;
+    }
+    m_marketplaceSettings = object.toVariantMap();
+    // Account conservatively for transport/auth-retry time. Diagnostic ages
+    // must not become younger while a valid response is waiting in flight.
+    auto runtime = m_marketplaceSettings.value("runtime").toMap();
+    auto participation = runtime.value("participation").toMap();
+    auto catalog = participation.value("catalog").toMap();
+    if (!catalog.isEmpty()) {
+        const double seconds = std::ceil(static_cast<double>(std::max<qint64>(elapsedMs, 0)) / 1000.0);
+        for (const auto &key : {"observed_seconds", "last_peer_page_seconds", "last_peer_scan_seconds"})
+            if (!catalog.value(key).isNull())
+                catalog.insert(key, std::min(kMarketplaceMaxRevision, catalog.value(key).toDouble() + seconds));
+        if (QStringList{"refreshing", "waiting"}.contains(catalog.value("phase").toString())
+            && (catalog.value("observed_seconds").isNull() || catalog.value("observed_seconds").toDouble() > 30))
+            catalog.insert("phase", "unavailable");
+        participation.insert("catalog", catalog); runtime.insert("participation", participation);
+        m_marketplaceSettings.insert("runtime", runtime);
+    }
+    m_marketplaceSettings.insert("runtime_fresh", true);
+    if (elapsedMs >= 30000) invalidateMarketplaceRuntime();
+    else {
+        // Arm before notifying: a session change in a notification handler
+        // must be able to stop this SAME timer, not leave an old one armed.
+        m_marketplaceRuntimeExpiry.start(static_cast<int>(30000 - std::max<qint64>(elapsedMs, 0)));
+        emit marketplaceSettingsChanged();
+    }
+    return true;
+}
+
+void ApiClient::fetchMarketplaceSettings() {
+    readMarketplaceSettings(false);
+}
+void ApiClient::pollMarketplaceSettings() {
+    if (m_authToken.isEmpty() || !marketplaceOwner()) return;
+    readMarketplaceSettings(true);
+}
+void ApiClient::invalidateMarketplaceRuntime() {
+    m_marketplaceRuntimeExpiry.stop();
+    if (m_marketplaceSettings.isEmpty()) return;
+    m_marketplaceSettings.insert("runtime_fresh", false);
+    m_marketplaceSettings.insert("runtime_status", "unknown");
+    m_marketplaceSettings.remove("runtime");
+    m_marketplaceSettings.remove("startup");
+    m_marketplaceSettings.remove("provider_setup");
+    m_marketplaceSettings.insert("participation_applied", false);
+    emit marketplaceSettingsChanged();
+}
+void ApiClient::readMarketplaceSettings(bool preservePreferences) {
+    if (m_marketplaceSettingsLoading)
+        return;
+    if (!preservePreferences) {
+        m_marketplaceSettings.clear();
+        emit marketplaceSettingsChanged();
+    }
+    setMarketplaceSettingsLoading(true);
+    const quint64 requestId = ++m_marketplaceSettingsRequestId;
+    QElapsedTimer elapsed; elapsed.start();
+    sendRequest(
+        "GET", kMarketplaceSettingsPath, {},
+        [this, requestId, elapsed](const QJsonDocument &doc) {
+            if (requestId != m_marketplaceSettingsRequestId)
+                return;
+            setMarketplaceSettingsLoading(false);
+            if (!doc.isObject() || !updateMarketplaceSettings(doc.object(), elapsed.elapsed())) {
+                invalidateMarketplaceRuntime();
+                emit requestFailed(kMarketplaceSettingsPath,
+                                   "Marketplace settings were not a supported "
+                                   "response. Reload before editing.");
+            }
+        },
+        [this, requestId](const QString &) {
+            if (requestId == m_marketplaceSettingsRequestId) {
+                invalidateMarketplaceRuntime();
+                setMarketplaceSettingsLoading(false);
+            }
+        });
+}
+
+void ApiClient::saveMarketplaceSettings(const QVariantMap &preferences) {
+    if (m_marketplaceSettingsLoading) return;
+    const QJsonObject snapshot = QJsonObject::fromVariantMap(m_marketplaceSettings.value("settings").toMap());
+    const QJsonObject selected = QJsonObject::fromVariantMap(preferences);
+    if (!validMarketplaceRevision(snapshot.value("revision"))
+        || snapshot.value("revision").toDouble() >= kMarketplaceMaxRevision
+        || !validMarketplacePreferences(selected)) {
+        emit requestFailed(kMarketplaceSettingsPath, "Reload valid marketplace settings and review the disclosures before saving.");
+        return;
+    }
+    const QJsonObject body{{"expected_revision", snapshot.value("revision")},
+        {"mutation_id", QUuid::createUuid().toString(QUuid::WithoutBraces)}, {"preferences", selected}};
+    // This UUID stays in the pending request through the single auth retry.
+    // There is no optimistic role/consent change or automatic conflict retry.
+    setMarketplaceSettingsLoading(true);
+    const quint64 requestId = ++m_marketplaceSettingsRequestId;
+    QElapsedTimer elapsed; elapsed.start();
+    sendRequest("PATCH", kMarketplaceSettingsPath, body,
+        [this, requestId, elapsed](const QJsonDocument &doc) {
+            if (requestId != m_marketplaceSettingsRequestId) return;
+            setMarketplaceSettingsLoading(false);
+            if (!doc.isObject() || !updateMarketplaceSettings(doc.object(), elapsed.elapsed())) {
+                m_marketplaceSettings.clear(); emit marketplaceSettingsChanged();
+                emit requestFailed(kMarketplaceSettingsPath, "Save was not confirmed. Reload before retrying.");
+                return;
+            }
+            emit marketplaceSettingsSaved();
+        }, [this, requestId](const QString &) {
+            if (requestId != m_marketplaceSettingsRequestId) return;
+            setMarketplaceSettingsLoading(false);
+            m_marketplaceSettings.clear(); emit marketplaceSettingsChanged();
+        });
+}
+
 void ApiClient::setAnimeInferenceSlowHardwareEnabled(bool enabled) {
     setAnimeInferenceSettingsLoading(true);
     QJsonObject body;
@@ -5361,10 +5960,13 @@ void ApiClient::dispatchRequest(PendingRequest request) {
     }
 
     QNetworkReply *reply = nullptr;
+    const auto jsonFormat = request.path == "/api/v1/marketplace/import"
+        || request.path == "/api/v1/marketplace/installations/direct"
+        ? QJsonDocument::Compact : QJsonDocument::Indented;
     if (request.method == "GET") {
         reply = m_manager.get(networkRequest);
     } else if (request.method == "POST") {
-        reply = m_manager.post(networkRequest, QJsonDocument(request.body).toJson());
+        reply = m_manager.post(networkRequest, QJsonDocument(request.body).toJson(jsonFormat));
     } else {
         reply = m_manager.sendCustomRequest(
             networkRequest,
@@ -5373,72 +5975,95 @@ void ApiClient::dispatchRequest(PendingRequest request) {
     }
     m_activeReplies.insert(reply);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, request = std::move(request)]() mutable {
-        m_activeReplies.remove(reply);
-        if (request.generation != m_requestGeneration) {
-            reply->deleteLater();
-            return;
-        }
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const QByteArray payload = reply->readAll();
-        const bool okStatus = status >= 200 && status < 300;
-        qInfo() << "API response" << request.path << "status" << status
-                << "bytes" << payload.size() << "error" << reply->error();
+    const bool boundedMarketplace = request.path == kMarketplaceSettingsPath
+        || request.path == "/api/v1/marketplace/import"
+        || request.path == kMarketplaceSearchPath || request.path.startsWith(kMarketplaceSearchPath + "/")
+        || request.path == "/api/v1/marketplace/install/targets"
+        || request.path == "/api/v1/marketplace/installations"
+        || request.path.startsWith("/api/v1/marketplace/installations/");
+    if (boundedMarketplace) {
+        // A finite response budget and absolute deadline, including drip feeds.
+        const qint64 limit = request.path == kMarketplaceSettingsPath ? 16 * 1024 : 128 * 1024;
+        reply->setReadBufferSize(limit + 1);
+        connect(reply, &QIODevice::readyRead, reply, [reply, limit]() {
+            if (reply->bytesAvailable() > limit)
+                reply->abort();
+        });
+        // The explicit reference check may wait for the existing protected
+        // health cycle. Ordinary cached search/status keeps its 15s bound.
+        const int deadline = request.path == "/api/v1/marketplace/import" ? 150000 : 15000;
+        QTimer::singleShot(deadline, reply, [reply]() {
+            if (!reply->isFinished())
+                reply->abort();
+        });
+    }
 
-        if (reply->error() != QNetworkReply::NoError || !okStatus) {
-            const QVariantMap errorDetail =
-                parseApiErrorPayload(payload, reply->errorString(), status, request.path);
-            const QString detail = errorDetail.value("message").toString();
-            if (status == 401
-                && request.attachAuthorization
-                && canRefreshRequest(request.path)
-                && request.retryCount == 0
-                && hasRefreshToken()) {
-                ++request.retryCount;
-                reply->deleteLater();
-                queueForRefresh(std::move(request));
-                return;
-            }
-            if (status == 401 && request.attachAuthorization && !m_refreshInFlight) {
-                clearAuthenticationState(true);
-                emit authExpired(
-                    detail.isEmpty()
-                        ? QStringLiteral("This device was signed out.")
-                        : detail);
-            }
-            emitRequestError(request, errorDetail, detail);
-            reply->deleteLater();
-            return;
-        }
-
-        if (!request.onSuccess) {
-            reply->deleteLater();
-            return;
-        }
-
-        QJsonParseError parseError;
-        const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
-        if (parseError.error != QJsonParseError::NoError) {
-            if (request.allowNonJson) {
-                qInfo() << "API response (non-JSON)" << request.path << "bytes" << payload.size();
-                request.onSuccess(QJsonDocument());
+    connect(
+        reply, &QNetworkReply::finished, this,
+        [this, reply, boundedMarketplace, request = std::move(request)]() mutable {
+            m_activeReplies.remove(reply);
+            if (request.generation != m_requestGeneration) {
                 reply->deleteLater();
                 return;
             }
-            const QString detail = QString("Invalid JSON: %1").arg(parseError.errorString());
-            const QVariantMap errorDetail{
-                {"endpoint", request.path},
-                {"code", "invalid_json"},
-                {"message", detail},
-            };
-            emitRequestError(request, errorDetail, detail);
-            reply->deleteLater();
-            return;
-        }
+            const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QByteArray payload =
+                boundedMarketplace && !reply->isOpen() ? QByteArray() : reply->readAll();
+            const bool okStatus = status >= 200 && status < 300;
+            qInfo() << "API response" << request.path << "status" << status << "bytes"
+                    << payload.size() << "error" << reply->error();
 
-        request.onSuccess(doc);
-        reply->deleteLater();
-    });
+            if (reply->error() != QNetworkReply::NoError || !okStatus) {
+                const QVariantMap errorDetail =
+                    parseApiErrorPayload(payload, reply->errorString(), status, request.path);
+                const QString detail = errorDetail.value("message").toString();
+                if (status == 401 && request.attachAuthorization &&
+                    canRefreshRequest(request.path) && request.retryCount == 0 &&
+                    hasRefreshToken()) {
+                    ++request.retryCount;
+                    reply->deleteLater();
+                    queueForRefresh(std::move(request));
+                    return;
+                }
+                if (status == 401 && request.attachAuthorization && !m_refreshInFlight) {
+                    clearAuthenticationState(true);
+                    emit authExpired(
+                        detail.isEmpty() ? QStringLiteral("This device was signed out.") : detail);
+                }
+                emitRequestError(request, errorDetail, detail);
+                reply->deleteLater();
+                return;
+            }
+
+            if (!request.onSuccess) {
+                reply->deleteLater();
+                return;
+            }
+
+            QJsonParseError parseError;
+            const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
+            if (parseError.error != QJsonParseError::NoError) {
+                if (request.allowNonJson) {
+                    qInfo() << "API response (non-JSON)" << request.path << "bytes"
+                            << payload.size();
+                    request.onSuccess(QJsonDocument());
+                    reply->deleteLater();
+                    return;
+                }
+                const QString detail = QString("Invalid JSON: %1").arg(parseError.errorString());
+                const QVariantMap errorDetail{
+                    {"endpoint", request.path},
+                    {"code", "invalid_json"},
+                    {"message", detail},
+                };
+                emitRequestError(request, errorDetail, detail);
+                reply->deleteLater();
+                return;
+            }
+
+            request.onSuccess(doc);
+            reply->deleteLater();
+        });
 }
 
 void ApiClient::queueForRefresh(PendingRequest request) {
@@ -5577,6 +6202,7 @@ void ApiClient::cancelOutstandingRequests(const QString &reason) {
     ++m_requestGeneration;
     ++m_extensionsCatalogRequestId;
     ++m_extensionControlRequestId;
+    resetMarketplaceSettings();
     const bool wasRefreshing = m_refreshInFlight;
     m_refreshInFlight = false;
     m_refreshRestoring = false;
@@ -5611,6 +6237,7 @@ void ApiClient::cancelOutstandingRequests(const QString &reason) {
 void ApiClient::clearAuthenticationState(bool clearRefreshToken) {
     m_profileSwitchInFlight = false;
     m_logoutInFlight = false;
+    resetMarketplaceSettings();
     setAuthToken(QString());
     setAccessTokenExpiresAt(QString());
     if (clearRefreshToken) {

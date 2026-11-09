@@ -41,6 +41,22 @@ TestCase {
         signal extensionsCatalogChanged()
         signal extensionsPlanChanged()
         property string authToken: ""
+        property string homeRole: "member"
+        property string activeProfileType: "account"
+        property var capabilities: []
+        property var marketplaceSearch: ({})
+        property var marketplaceSettings: ({})
+        property bool marketplaceSettingsLoading: false
+        property var marketplaceSearchResults: []
+        property bool marketplaceSearchLoading: false
+        property int marketplaceSearchAvailableCount: 0
+        property var marketplaceInstallation: ({})
+        property var marketplaceInstallTargets: ({})
+        property bool marketplaceInstallationLoading: false
+        property string marketplaceInstallationNotice: ""
+        property bool marketplaceInstallationHasOriginalStart: false
+        property bool marketplaceInstallationHasOriginalAction: false
+        property int marketplaceClears: 0
         property string baseUrl: "http://127.0.0.1:3000"
         property bool extensionControlLoading: false
         property var extensionControlSurface: ({})
@@ -84,6 +100,12 @@ TestCase {
         property var extensionsRun: ({})
 
         function refreshExtensionsCatalog() {}
+        function clearMarketplaceSearch() { marketplaceClears++ }
+        function fetchCurrentMarketplaceInstallation() {}
+        function startMarketplaceSearch(text, tags, cursor) {}
+        function pollMarketplaceSearch() {}
+        function pollMarketplaceSettings() {}
+        function acceptMarketplaceSearchResults() {}
         function fetchExtensionsCatalog() {}
         function fetchExtensionInstances() {}
         function fetchInstanceSecrets() {}
@@ -134,9 +156,12 @@ TestCase {
         id: extensionControlViewComponent
         Views.ExtensionControlView {}
     }
+    Component { id: stackViewComponent; StackView {} }
 
     function init() {
         apiClient.authToken = ""
+        apiClient.homeRole = "member"; apiClient.activeProfileType = "account"
+        apiClient.capabilities = []; apiClient.marketplaceClears = 0
         apiClient.extensionsStatusItems = [{
             "extensionId": "fixture.live.provider",
             "name": "Fixture Live Provider",
@@ -176,6 +201,27 @@ TestCase {
         tryVerify(function() { return openLive && openLive.visible })
         mouseClick(openLive)
         compare(openLiveCalls, 1)
+    }
+
+    function test_community_marketplace_navigation_preserves_owner_scope() {
+        var stack = createTemporaryObject(stackViewComponent, host, {width: 1000, height: 800})
+        stack.push(extensionsViewComponent, {stackView: stack})
+        var view = stack.currentItem
+        var button = findChild(view, "communityMarketplaceButton")
+        verify(button); verify(!button.visible)
+        apiClient.authToken = "owner-token"; apiClient.homeRole = "owner"
+        apiClient.capabilities = ["extensions_manage", "settings_manage", "server_admin"]
+        verify(button.visible); verify(button.enabled)
+        button.clicked()
+        tryCompare(stack, "depth", 2)
+        compare(stack.currentItem.objectName, "communityMarketplaceView")
+        compare(stack.currentItem.client, apiClient)
+        verify(stack.currentItem.canManage)
+        apiClient.activeProfileType = "managed"
+        verify(!stack.currentItem.canManage)
+        stack.pop()
+        tryCompare(stack, "depth", 1)
+        tryVerify(function() { return apiClient.marketplaceClears > 0 })
     }
 
     function test_live_provider_startup_is_dynamic_progress_not_needs_setup() {

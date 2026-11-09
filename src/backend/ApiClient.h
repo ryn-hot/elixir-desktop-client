@@ -4,9 +4,12 @@
 #include <QNetworkAccessManager>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QDateTime>
+#include <QElapsedTimer>
 #include <QList>
 #include <QSet>
 #include <QStringList>
+#include <QTimer>
 #include <QUrl>
 #include <QVariant>
 #include <functional>
@@ -80,6 +83,22 @@ class ApiClient : public QObject {
     Q_PROPERTY(bool playbackHardwareLoading READ playbackHardwareLoading NOTIFY playbackHardwareLoadingChanged)
     Q_PROPERTY(QVariantMap animeInferenceSettings READ animeInferenceSettings NOTIFY animeInferenceSettingsChanged)
     Q_PROPERTY(bool animeInferenceSettingsLoading READ animeInferenceSettingsLoading NOTIFY animeInferenceSettingsLoadingChanged)
+    Q_PROPERTY(QVariantMap marketplaceSettings READ marketplaceSettings NOTIFY marketplaceSettingsChanged)
+    Q_PROPERTY(bool marketplaceSettingsLoading READ marketplaceSettingsLoading NOTIFY marketplaceSettingsLoadingChanged)
+    Q_PROPERTY(bool marketplaceConnectionSaving READ marketplaceConnectionSaving NOTIFY marketplaceConnectionChanged)
+    Q_PROPERTY(QString marketplaceConnectionNotice READ marketplaceConnectionNotice NOTIFY marketplaceConnectionChanged)
+    Q_PROPERTY(QVariantMap marketplaceSearch READ marketplaceSearch NOTIFY marketplaceSearchChanged)
+    Q_PROPERTY(QVariantList marketplaceSearchResults READ marketplaceSearchResults NOTIFY marketplaceSearchResultsChanged)
+    Q_PROPERTY(bool marketplaceSearchLoading READ marketplaceSearchLoading NOTIFY marketplaceSearchChanged)
+    Q_PROPERTY(int marketplaceSearchAvailableCount READ marketplaceSearchAvailableCount NOTIFY marketplaceSearchChanged)
+    Q_PROPERTY(QVariantMap marketplaceInstallTargets READ marketplaceInstallTargets NOTIFY marketplaceInstallationChanged)
+    Q_PROPERTY(QVariantMap marketplaceDirectReference READ marketplaceDirectReference NOTIFY marketplaceInstallationChanged)
+    Q_PROPERTY(bool marketplaceDirectReferenceLoading READ marketplaceDirectReferenceLoading NOTIFY marketplaceInstallationChanged)
+    Q_PROPERTY(QVariantMap marketplaceInstallation READ marketplaceInstallation NOTIFY marketplaceInstallationChanged)
+    Q_PROPERTY(bool marketplaceInstallationLoading READ marketplaceInstallationLoading NOTIFY marketplaceInstallationChanged)
+    Q_PROPERTY(QString marketplaceInstallationNotice READ marketplaceInstallationNotice NOTIFY marketplaceInstallationChanged)
+    Q_PROPERTY(bool marketplaceInstallationHasOriginalStart READ marketplaceInstallationHasOriginalStart NOTIFY marketplaceInstallationChanged)
+    Q_PROPERTY(bool marketplaceInstallationHasOriginalAction READ marketplaceInstallationHasOriginalAction NOTIFY marketplaceInstallationChanged)
     Q_PROPERTY(QVariantMap playbackAdminDiagnostics READ playbackAdminDiagnostics NOTIFY playbackAdminDiagnosticsChanged)
     Q_PROPERTY(bool playbackAdminDiagnosticsLoading READ playbackAdminDiagnosticsLoading NOTIFY playbackAdminDiagnosticsLoadingChanged)
     Q_PROPERTY(QVariantMap playbackInteractionPreferences READ playbackInteractionPreferences NOTIFY playbackInteractionPreferencesChanged)
@@ -192,6 +211,22 @@ public:
     bool playbackHardwareLoading() const;
     QVariantMap animeInferenceSettings() const;
     bool animeInferenceSettingsLoading() const;
+    QVariantMap marketplaceSettings() const;
+    bool marketplaceSettingsLoading() const;
+    bool marketplaceConnectionSaving() const;
+    QString marketplaceConnectionNotice() const;
+    QVariantMap marketplaceSearch() const;
+    QVariantList marketplaceSearchResults() const;
+    bool marketplaceSearchLoading() const;
+    int marketplaceSearchAvailableCount() const;
+    QVariantMap marketplaceInstallTargets() const;
+    QVariantMap marketplaceDirectReference() const;
+    bool marketplaceDirectReferenceLoading() const;
+    QVariantMap marketplaceInstallation() const;
+    bool marketplaceInstallationLoading() const;
+    QString marketplaceInstallationNotice() const;
+    bool marketplaceInstallationHasOriginalStart() const;
+    bool marketplaceInstallationHasOriginalAction() const;
     QVariantMap playbackAdminDiagnostics() const;
     bool playbackAdminDiagnosticsLoading() const;
     QVariantMap playbackInteractionPreferences() const;
@@ -343,6 +378,32 @@ public:
     Q_INVOKABLE void refreshPlaybackHardwareStatus(bool diagnostics = false);
     Q_INVOKABLE void fetchAnimeInferenceSettings();
     Q_INVOKABLE void setAnimeInferenceSlowHardwareEnabled(bool enabled);
+    Q_INVOKABLE void fetchMarketplaceSettings();
+    Q_INVOKABLE void pollMarketplaceSettings();
+    Q_INVOKABLE void retryMarketplaceConnection();
+    Q_INVOKABLE void saveMarketplaceSettings(const QVariantMap &preferences);
+    Q_INVOKABLE void saveMarketplaceWireguard(const QString &config);
+    Q_INVOKABLE void saveMarketplaceProviderSetup(bool enabled, const QString &consentVersion);
+    Q_INVOKABLE void startMarketplaceSearch(const QString &text, const QStringList &tags, const QString &cursor = QString(), bool prepareCatalog = false);
+    Q_INVOKABLE void pollMarketplaceSearch();
+    Q_INVOKABLE void acceptMarketplaceSearchResults();
+    Q_INVOKABLE void clearMarketplaceSearch();
+    Q_INVOKABLE void fetchMarketplaceInstallTargets(const QString &extensionId, const QVariantMap &cursor = QVariantMap());
+    Q_INVOKABLE void previewMarketplaceDirectReference(const QString &publicationJson);
+    Q_INVOKABLE void clearMarketplaceDirectReference();
+    Q_INVOKABLE void fetchMarketplaceDirectInstallTargets(const QVariantMap &cursor = QVariantMap());
+    Q_INVOKABLE void startMarketplaceDirectInstallation(const QString &name, const QString &instanceId, bool acceptUnqualified);
+    Q_INVOKABLE void fetchCurrentMarketplaceInstallation();
+    Q_INVOKABLE void pollMarketplaceInstallation();
+    void clearMarketplaceInstallation();
+    Q_INVOKABLE void startMarketplaceInstallation(const QString &extensionId, const QString &releaseId, const QString &name, const QString &instanceId = QString());
+    Q_INVOKABLE void retryMarketplaceInstallationStart();
+    Q_INVOKABLE void approveMarketplaceInstallation(bool automaticUpdates);
+    Q_INVOKABLE void submitMarketplaceInstallationSetup(const QVariantMap &credentials);
+    Q_INVOKABLE void activateMarketplaceInstallation();
+    Q_INVOKABLE void cancelMarketplaceInstallation();
+    Q_INVOKABLE void retryMarketplaceInstallationStage();
+    Q_INVOKABLE void retryMarketplaceInstallationAction();
     Q_INVOKABLE void fetchPlaybackAdminDiagnostics();
     Q_INVOKABLE void stopPlaybackAdminSession(const QString &sessionId);
     Q_INVOKABLE void applyFirstRunDownloadSetup(const QString &choice, bool acceptedWarpDisclosure = false);
@@ -495,6 +556,13 @@ signals:
     void playbackHardwareLoadingChanged();
     void animeInferenceSettingsChanged();
     void animeInferenceSettingsLoadingChanged();
+    void marketplaceSettingsChanged();
+    void marketplaceSettingsLoadingChanged();
+    void marketplaceSettingsSaved();
+    void marketplaceConnectionChanged();
+    void marketplaceSearchChanged();
+    void marketplaceSearchResultsChanged();
+    void marketplaceInstallationChanged();
     void playbackAdminDiagnosticsChanged();
     void playbackAdminDiagnosticsLoadingChanged();
     void playbackInteractionPreferencesChanged();
@@ -630,6 +698,25 @@ private:
     void updatePlaybackHardwareWarnings(const QJsonArray &warnings);
     void setAnimeInferenceSettingsLoading(bool loading);
     void updateAnimeInferenceSettings(const QJsonObject &obj);
+    void setMarketplaceSettingsLoading(bool loading);
+    bool updateMarketplaceSettings(const QJsonObject &obj, qint64 elapsedMs = 0);
+    void resetMarketplaceSettings();
+    void readMarketplaceSettings(bool preservePreferences);
+    void invalidateMarketplaceRuntime();
+    bool updateMarketplaceSearch(const QJsonObject &object, qint64 elapsedMs);
+    bool marketplaceSearchFresh() const;
+    void failMarketplaceSearch();
+    void setMarketplaceSearchLifetime(qint64 milliseconds);
+    void readMarketplaceInstallation(bool current);
+    bool marketplaceDirectReferenceFresh() const;
+    void fetchMarketplaceSourceTargets(const QString &extensionId, const QVariantMap &cursor, bool direct);
+    void startMarketplaceSourceInstallation(const QString &extensionId, const QString &releaseId, const QString &name, const QString &instanceId, bool direct);
+    void failMarketplaceInstallationRead(const QString &message);
+    bool marketplaceOwner() const;
+    bool marketplaceActionAvailable(const QString &kind) const;
+    void marketplaceInstallationMessage(const QString &message);
+    void sendOriginalMarketplaceStart();
+    void sendMarketplaceInstallationAction(QJsonObject request, bool retry = false);
     void setPlaybackAdminDiagnosticsLoading(bool loading);
     void updatePlaybackAdminDiagnostics(const QJsonObject &obj);
     void setMediaSegmentJobsLoading(bool loading);
@@ -749,6 +836,44 @@ private:
     bool m_playbackHardwareLoading = false;
     QVariantMap m_animeInferenceSettings;
     bool m_animeInferenceSettingsLoading = false;
+    QVariantMap m_marketplaceSettings;
+    QTimer m_marketplaceRuntimeExpiry;
+    bool m_marketplaceSettingsLoading = false;
+    quint64 m_marketplaceSettingsRequestId = 0;
+    bool m_marketplaceConnectionSaving = false;
+    QString m_marketplaceConnectionNotice;
+    quint64 m_marketplaceConnectionRequestId = 0;
+    QVariantMap m_marketplaceSearch;
+    QVariantList m_marketplaceSearchResults;
+    QVariantList m_marketplaceSearchLatest;
+    QString m_marketplaceSearchId;
+    bool m_marketplaceSearchLoading = false;
+    bool m_marketplacePrepareCatalog = false;
+    quint64 m_marketplaceSearchRequestId = 0;
+    QDateTime m_marketplaceSearchReceived;
+    QDateTime m_marketplaceSearchUntil;
+    QElapsedTimer m_marketplaceSearchAge;
+    qint64 m_marketplaceSearchLifetimeMs = 0;
+    QTimer m_marketplaceSearchExpiry;
+    QVariantMap m_marketplaceInstallTargets;
+    QVariantMap m_marketplaceDirectReference;
+    QJsonObject m_marketplaceDirectPublication;
+    QElapsedTimer m_marketplaceDirectAge;
+    qint64 m_marketplaceDirectLifetimeMs = 0;
+    QTimer *m_marketplaceDirectExpiry = nullptr;
+    bool m_marketplaceDirectLoading = false;
+    quint64 m_marketplaceDirectEpoch = 0;
+    quint64 m_marketplaceDirectRequestEpoch = 0;
+    QVariantMap m_marketplaceInstallation;
+    QString m_marketplaceTargetsQuery;
+    QString m_marketplaceInstallationId;
+    QString m_marketplaceInstallationNotice;
+    bool m_marketplaceInstallationLoading = false;
+    quint64 m_marketplaceInstallationEpoch = 0;
+    QJsonObject m_marketplaceOriginalStart;
+    // Never stores setup values: only action kind/mutation and non-secret data.
+    QJsonObject m_marketplaceOriginalAction;
+    QString m_marketplaceActionOperation;
     QVariantMap m_playbackAdminDiagnostics;
     bool m_playbackAdminDiagnosticsLoading = false;
     QVariantMap m_playbackInteractionPreferences;

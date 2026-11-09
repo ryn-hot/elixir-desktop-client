@@ -23,9 +23,12 @@
 #include <QUrl>
 #include <QtGlobal>
 #include <QtQml>
+#include <utility>
 
+#include "ClientApplication.h"
 #include "backend/ApiClient.h"
 #include "backend/ControlPlaneClient.h"
+#include "backend/CredentialStore.h"
 #include "backend/LibraryModel.h"
 #include "backend/LivePlayerController.h"
 #include "backend/MpvItem.h"
@@ -97,9 +100,10 @@ void logMessageHandler(QtMsgType type, const QMessageLogContext &context,
   }
 }
 
-void initLogging() {
-  const QString logDir =
-      QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+void initLogging(const QString &directory) {
+  const QString logDir = directory.isEmpty()
+      ? QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
+      : directory;
   if (!logDir.isEmpty()) {
     QDir().mkpath(logDir);
     const QString logPath = logDir + "/client.log";
@@ -122,7 +126,8 @@ void loadFonts() {
 }
 } // namespace
 
-int main(int argc, char *argv[]) {
+int runClientApplication(int argc, char *argv[],
+                         ClientApplicationOptions options) {
   qputenv("QSG_RHI_BACKEND", "opengl");
   QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
 
@@ -132,12 +137,14 @@ int main(int argc, char *argv[]) {
   QCoreApplication::setApplicationVersion("0.1.0");
 
   QQuickStyle::setStyle("Fusion");
-  initLogging();
+  initLogging(options.logDirectory);
   loadFonts();
   qInfo() << "Elixir client starting"
           << QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
 
-  SessionManager sessionManager;
+  SessionManager sessionManager(options.credentialStore
+                                    ? std::move(options.credentialStore)
+                                    : createPlatformCredentialStore());
   const QString automationBaseUrl =
       qEnvironmentVariable("ELIXIR_CLIENT_BASE_URL").trimmed();
   const QString automationAuthToken =
@@ -467,3 +474,7 @@ int main(int argc, char *argv[]) {
 
   return app.exec();
 }
+
+#ifndef ELIXIR_CLIENT_TEST_ENTRY
+int main(int argc, char *argv[]) { return runClientApplication(argc, argv); }
+#endif

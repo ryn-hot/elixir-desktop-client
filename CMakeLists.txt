@@ -43,6 +43,7 @@ set(SOURCES
 
 add_library(elixir-client-auth STATIC
     src/backend/ApiClient.cpp
+    src/backend/ApiClientMarketplace.cpp
     src/backend/CredentialStore.cpp
     src/backend/SessionManager.cpp
 )
@@ -102,38 +103,33 @@ endif()
 
 qt_add_executable(elixir-client ${SOURCES})
 
-target_include_directories(elixir-client PRIVATE src)
-target_include_directories(elixir-client SYSTEM PRIVATE ${MPVQT_INCLUDE_ROOT})
-
-target_link_libraries(elixir-client
-    PRIVATE
-    Qt6::Core
-    Qt6::Gui
-    Qt6::Qml
-    Qt6::Quick
-    Qt6::QuickControls2
-    Qt6::Network
-    elixir-client-auth
-    elixir-client-live
-    elixir-client-live-player
-    MpvQt::MpvQt
-)
-
-if(APPLE)
-    target_compile_definitions(elixir-client PRIVATE ELIXIR_HAS_DNSSD=1)
-else()
-    check_include_file_cxx(dns_sd.h ELIXIR_HAS_DNSSD_HEADER)
-    if(ELIXIR_HAS_DNSSD_HEADER)
-        find_library(DNSSD_LIBRARY dns_sd)
-        if(DNSSD_LIBRARY)
-            target_compile_definitions(elixir-client PRIVATE ELIXIR_HAS_DNSSD=1)
-            target_link_libraries(elixir-client PRIVATE ${DNSSD_LIBRARY})
-            if(WIN32)
-                target_link_libraries(elixir-client PRIVATE ws2_32)
+function(elixir_configure_application target)
+    target_include_directories(${target} PRIVATE src)
+    target_include_directories(${target} SYSTEM PRIVATE ${MPVQT_INCLUDE_ROOT})
+    target_link_libraries(${target}
+        PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Network
+        elixir-client-auth elixir-client-live elixir-client-live-player
+        MpvQt::MpvQt
+    )
+    if(APPLE)
+        target_compile_definitions(${target} PRIVATE ELIXIR_HAS_DNSSD=1)
+    else()
+        check_include_file_cxx(dns_sd.h ELIXIR_HAS_DNSSD_HEADER)
+        if(ELIXIR_HAS_DNSSD_HEADER)
+            find_library(DNSSD_LIBRARY dns_sd)
+            if(DNSSD_LIBRARY)
+                target_compile_definitions(${target} PRIVATE ELIXIR_HAS_DNSSD=1)
+                target_link_libraries(${target} PRIVATE ${DNSSD_LIBRARY})
+                if(WIN32)
+                    target_link_libraries(${target} PRIVATE ws2_32)
+                endif()
             endif()
         endif()
     endif()
-endif()
+endfunction()
+
+elixir_configure_application(elixir-client)
 
 set_target_properties(elixir-client PROPERTIES
     MACOSX_BUNDLE TRUE
@@ -164,6 +160,21 @@ if(BUILD_TESTING)
     qt_add_executable(elixir-auth-real-server-tests
         tests/RealServerAuthTests.cpp
     )
+    # Explicit protected-fixture child only; not a credential-bearing CTest.
+    qt_add_executable(elixir-marketplace-real-server-tests
+        tests/RealServerMarketplaceTests.cpp
+        resources/qml.qrc
+    )
+    # Same production main/models/resources; only the entry point and explicit
+    # credential/log dependencies differ. Live credentials arrive via stdin.
+    qt_add_executable(elixir-marketplace-full-app-tests
+        ${SOURCES}
+        tests/FullApplicationMarketplaceTests.cpp
+    )
+    elixir_configure_application(elixir-marketplace-full-app-tests)
+    target_compile_definitions(elixir-marketplace-full-app-tests
+        PRIVATE ELIXIR_CLIENT_TEST_ENTRY=1)
+    target_link_libraries(elixir-marketplace-full-app-tests PRIVATE Qt6::Test)
     qt_add_executable(elixir-client-live-tests
         tests/LiveClientTests.cpp
     )
@@ -192,6 +203,9 @@ if(BUILD_TESTING)
         elixir-auth-real-server-tests
         PRIVATE elixir-client-auth Qt6::Test Qt6::Network)
     target_link_libraries(
+        elixir-marketplace-real-server-tests
+        PRIVATE elixir-client-auth Qt6::Test Qt6::Gui Qt6::Quick Qt6::Qml Qt6::QuickControls2)
+    target_link_libraries(
         elixir-client-live-tests
         PRIVATE elixir-client-live elixir-client-test-support Qt6::Test Qt6::Network)
     target_link_libraries(
@@ -210,6 +224,8 @@ if(BUILD_TESTING)
         elixir-client-qml-tests
         elixir-auth-tests
         elixir-auth-real-server-tests
+        elixir-marketplace-real-server-tests
+        elixir-marketplace-full-app-tests
         elixir-client-live-tests
         elixir-client-live-real-server-tests
         elixir-client-live-player-tests
@@ -224,6 +240,11 @@ if(BUILD_TESTING)
     add_test(NAME c10-foundation COMMAND elixir-client-foundation-tests)
     add_test(NAME c10-qml COMMAND elixir-client-qml-tests)
     add_test(NAME a13-auth-transport COMMAND elixir-auth-tests)
+    add_test(NAME marketplace-full-app-offline
+        COMMAND elixir-marketplace-full-app-tests --offline)
+    set_tests_properties(marketplace-full-app-offline PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        TIMEOUT 30)
     add_test(NAME c11-live-client COMMAND elixir-client-live-tests)
     add_test(NAME c20-live-player COMMAND elixir-client-live-player-tests)
     add_test(
@@ -297,6 +318,40 @@ if(BUILD_TESTING)
             LiveNetworkSettings::test_capability_and_status_gate
             LiveNetworkSettings::test_fallback_visibility_and_cas_mutation
             LiveNetworkSettings::test_profile_scope_and_compact_accessibility)
+    add_test(
+        NAME marketplace-setup-qml
+        COMMAND elixir-client-qml-tests
+            -input "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/tst_MarketplaceSetup.qml")
+    add_test(
+        NAME marketplace-settings-qml
+        COMMAND elixir-client-qml-tests
+            -input "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/tst_MarketplaceSettings.qml")
+    add_test(
+        NAME marketplace-search-qml
+        COMMAND elixir-client-qml-tests
+            -input "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/tst_CommunityMarketplace.qml")
+    add_test(
+        NAME marketplace-installation-qml
+        COMMAND elixir-client-qml-tests
+            -input "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/tst_MarketplaceInstallation.qml")
+    add_test(
+        NAME marketplace-navigation-qml
+        COMMAND elixir-client-qml-tests
+            -input "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/tst_Extensions.qml"
+            Extensions::test_community_marketplace_navigation_preserves_owner_scope)
+    add_test(
+        NAME marketplace-packaged-native-qml
+        COMMAND elixir-marketplace-real-server-tests packaged_views_have_no_authority_without_login)
+    add_test(
+        NAME marketplace-visual-item-native-qml
+        COMMAND elixir-marketplace-real-server-tests visual_lookup_does_not_depend_on_qobject_ownership)
+    add_test(
+        NAME marketplace-keyboard-native-qml
+        COMMAND elixir-marketplace-real-server-tests keyboard_input_replaces_existing_text)
+    set_tests_properties(marketplace-setup-qml marketplace-settings-qml marketplace-search-qml marketplace-installation-qml marketplace-navigation-qml marketplace-packaged-native-qml marketplace-visual-item-native-qml marketplace-keyboard-native-qml PROPERTIES
+        TIMEOUT 30
+        LABELS "client;marketplace;qml"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1")
     set_tests_properties(
         c10-foundation
         c10-qml

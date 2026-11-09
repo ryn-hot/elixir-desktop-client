@@ -338,6 +338,7 @@ private slots:
   void frozenEnvelopesParseStrictlyAndPreserveUnknownExtensionFields();
   void malformedMetaAndNonUtcDatesFailClosed();
   void transportUsesBearerHeaderAndCancellationIsTerminal();
+  void providerReadAllowanceKeepsControlDeadlinesAndCancellation();
   void catalogFilterQueryPreservesLiteralPlus();
   void modelSuppressesOldGenerationAndConvertsUtcForDisplay();
   void modelSurfacesStructuredErrorsAndItemStreams();
@@ -447,6 +448,36 @@ void LiveClientTests::transportUsesBearerHeaderAndCancellationIsTerminal() {
   QCOMPARE(received.count(), 1);
   QCOMPARE(received.first().at(0).toULongLong(), successId);
   QCOMPARE(received.first().at(1).toULongLong(), quint64{8});
+}
+
+void LiveClientTests::providerReadAllowanceKeepsControlDeadlinesAndCancellation() {
+  ApiClient auth;
+  auth.setBaseUrl(QStringLiteral("https://server.example"));
+  auth.setAuthToken(QStringLiteral("test-access-token"));
+  DeterministicScheduler scheduler;
+  ScriptedNetworkAccessManager network(scheduler);
+  LiveApiClient live(&auth, &network);
+  QSignalSpy cancelled(&live, &LiveApiClient::requestCancelled);
+  QSignalSpy catalogs(&live, &LiveApiClient::catalogsReceived);
+  for (int kind = 0; kind < 5; ++kind) {
+    network.enqueue(jsonResponse(catalogsEnvelope(), 200, 20'000));
+    quint64 id = 0;
+    switch (kind) {
+    case 0: id = live.listCatalogs(17); break;
+    case 1: id = live.listCatalogItems(kProviderId, QStringLiteral("live_events"),
+                                      {}, {}, 10, 17); break;
+    case 2: id = live.getItem(kProviderId, QStringLiteral("lvk1.item.fixture-key-value"), 17); break;
+    case 3: id = live.listProviders(17); break;
+    case 4: id = live.getSession(kSessionId, 17); break;
+    }
+    QCOMPARE(network.capturedRequests().size(), kind + 1);
+    QCOMPARE(network.capturedRequests().last().transferTimeoutMs,
+             kind < 3 ? 135'000 : 15'000);
+    live.cancel(id);
+    QCOMPARE(cancelled.count(), kind + 1);
+  }
+  scheduler.advance(20'000);
+  QCOMPARE(catalogs.count(), 0);
 }
 
 void LiveClientTests::catalogFilterQueryPreservesLiteralPlus() {
