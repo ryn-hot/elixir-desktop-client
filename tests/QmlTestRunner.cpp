@@ -1,4 +1,5 @@
 #include <QFile>
+#include <QElapsedTimer>
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
@@ -10,6 +11,17 @@
 #include <QUrl>
 #include <QtQml>
 #include <QtQuickTest/quicktest.h>
+
+// Test-only monotonic timing. Never client telemetry or a source/permission fact.
+class MarketplaceRenderClock final : public QObject {
+  Q_OBJECT
+public:
+  explicit MarketplaceRenderClock(QObject *parent) : QObject(parent) {}
+  Q_INVOKABLE void start() { m_elapsed.start(); }
+  Q_INVOKABLE qint64 elapsed() const { return m_elapsed.elapsed(); }
+private:
+  QElapsedTimer m_elapsed;
+};
 
 class QmlTestSetup final : public QObject {
   Q_OBJECT
@@ -49,6 +61,11 @@ public slots:
     engine->rootContext()->setContextProperty(
         QStringLiteral("marketplaceCaptureDir"),
         qEnvironmentVariable("ELIXIR_MARKETPLACE_CAPTURE_DIR"));
+    engine->rootContext()->setContextProperty(
+        QStringLiteral("marketplaceRenderPerformance"),
+        qEnvironmentVariable("ELIXIR_MARKETPLACE_RENDER_PERFORMANCE") == "1");
+    engine->rootContext()->setContextProperty(
+        QStringLiteral("marketplaceRenderClock"), new MarketplaceRenderClock(engine));
     // Match ApiClient's QJsonObject::toVariantMap() projection, including the
     // native nested empty tag list. A JS-only mock can hide Qt list-conversion
     // problems in the setup-to-browse handoff.

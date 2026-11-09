@@ -80,6 +80,57 @@ TestCase {
             media_tags: ["movies"], extension_id: "elx:" + "a".repeat(52) + "/example", release_id:"sha256:"+"a".repeat(64),
             support: {verified_supporters: 5, weighted_score: 10}}
     }
+    function test_renderer_only_twenty_card_profile() {
+        if (!marketplaceRenderPerformance) skip("Explicit renderer-only measurement; excludes API/server/VPN/Tor and scale")
+        var view = createView()
+        client.marketplaceSearch = {phase:"ready", query_id:"renderer-only", local_page_complete:true}
+        verify(waitForRendering(view))
+        function countCards(item) {
+            var count = item.objectName === "communityMarketplaceCard" ? 1 : 0
+            var children = item.children || []
+            for (var n = 0; n < children.length; ++n) count += countCards(children[n])
+            return count
+        }
+        function p95(values) {
+            return values.slice().sort(function(a,b) { return a-b })[Math.ceil(values.length*0.95)-1]
+        }
+        for (var size of [128, 1024]) {
+            var samples = []
+            for (var round = 0; round < 32; ++round) {
+                var hadCards = client.marketplaceSearchResults.length > 0
+                client.marketplaceSearchResults = []
+                if (hadCards) verify(waitForRendering(view))
+                compare(countCards(view),0)
+                var rows = []
+                for (var row = 0; row < 20; ++row) {
+                    var value = card()
+                    value.name = "Renderer sample " + round + " row " + row
+                    value.extension_id += "-" + row
+                    value.description = ("Plain-text renderer-only fixture. ").repeat(32).slice(0,size)
+                    rows.push(value)
+                }
+                marketplaceRenderClock.start()
+                client.marketplaceSearchResults = rows
+                var assigned = marketplaceRenderClock.elapsed()
+                verify(waitForRendering(view))
+                var rendered = marketplaceRenderClock.elapsed()
+                compare(countCards(view),20)
+                compare(findChild(view,"communityCardName").text,rows[0].name)
+                var image = grabImage(view)
+                compare(image.width,760); compare(image.height,850)
+                samples.push({assign_ms:assigned,frame_ms:rendered,capture_ms:marketplaceRenderClock.elapsed()})
+                if (round === 31 && marketplaceCaptureDir.length > 0)
+                    image.save(marketplaceCaptureDir + "/renderer-20-" + size + ".png")
+            }
+            console.info("marketplace_renderer_profile " + JSON.stringify({
+                cards:20,description_bytes:size,samples:samples,
+                assign_p95_ms:p95(samples.map(function(s) { return s.assign_ms })),
+                frame_p95_ms:p95(samples.map(function(s) { return s.frame_ms })),
+                capture_p95_ms:p95(samples.map(function(s) { return s.capture_ms })),
+                scope:"QML render-only software/offscreen; excludes API validation, HTTP, server, VPN/Tor, physical display, playback and catalog scale"
+            }))
+        }
+    }
     function test_first_result_fast_poll_window_is_bounded_and_not_renewed_by_progress() {
         var view = createView()
         verify(view.viewActive)
@@ -359,8 +410,57 @@ TestCase {
         view.search(""); compare(client.starts, 1)
         compare(client.lastRequest.text, "Example"); compare(client.lastRequest.cursor, "")
         client.marketplaceSearchLoading = true
-        verify(!findChild(view, "communitySearchButton").enabled)
+        verify(findChild(view, "communitySearchButton").enabled)
         view.search(""); compare(client.starts, 1)
+    }
+    function test_search_click_and_enter_coalesce_while_a_status_read_is_busy() {
+        var view = createView()
+        var field = findChild(view,"communitySearchText")
+        var search = findChild(view,"communitySearchButton")
+        client.marketplaceSearchLoading = true
+        field.text = "First"
+        mouseClick(search)
+        field.text = "Latest"
+        field.accepted()
+        tryCompare(findChild(view,"communitySearchDebounce"),"running",false,1000)
+        compare(client.starts,0)
+        verify(view.draftPending)
+        client.marketplaceSearchLoading = false
+        tryCompare(client,"starts",1,1000)
+        compare(client.lastRequest,{text:"Latest",tags:[],cursor:""})
+        wait(450); compare(client.starts,1)
+
+        // A queued read cannot survive logout or turn into a stale cursor read.
+        client.marketplaceSearchLoading = true
+        mouseClick(search)
+        verify(view.draftPending)
+        view.search("stale_cursor"); compare(client.starts,1)
+        client.authToken = ""
+        verify(!view.draftPending)
+        client.marketplaceSearchLoading = false
+        wait(50); compare(client.starts,1)
+    }
+    function test_current_card_can_be_inspected_during_background_refresh_without_installing() {
+        client.marketplaceSearch = {phase:"checking",query_id:"original",searching_peers:true}
+        client.marketplaceSearchResults = [card()]
+        var view = createView()
+        verify(waitForRendering(view))
+        client.marketplaceSearchLoading = true
+        var review = findChild(view,"communityReviewInstallation")
+        verify(review.enabled)
+        // Its own target/action request is still single-flight; a second
+        // selection must not be silently dropped by ApiClient's read guard.
+        client.marketplaceInstallationLoading = true
+        verify(!review.enabled)
+        client.marketplaceInstallationLoading = false
+        verify(review.enabled)
+        mouseClick(review)
+        compare(client.targetFetches,1)
+        compare(findChild(view,"marketplaceInstallationPane").selectedListing.release_id,card().release_id)
+        verify(!findChild(view,"marketplaceStartInstallation").enabled)
+        client.marketplaceSearchResults = [] // Real ApiClient removes expired/revoked cards.
+        compare(view.results.length,0)
+        verify(findChild(view,"communityReviewInstallation") === null)
     }
     function test_typing_and_filters_coalesce_to_one_latest_draft() {
         var view = createView()

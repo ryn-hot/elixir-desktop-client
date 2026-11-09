@@ -727,6 +727,35 @@ private slots:
         QCOMPARE(client.marketplaceSearchResults().size(),1);
     }
 
+    void marketplace_current_card_target_reads_do_not_wait_for_status_poll_but_disappear_on_withdrawal() {
+        FakeHttpServer server; QVERIFY(server.start());
+        bool refreshing=false;
+        server.setHandler([&](const HttpRequest &request)->HttpResponse {
+            if(request.path=="/api/v1/marketplace/search") return marketplaceQueryAccepted();
+            if(request.path.startsWith("/api/v1/marketplace/search/"))
+                return {200,QJsonDocument(marketplaceSearchResponse(refreshing?QJsonArray{}:QJsonArray{marketplaceCard()})).toJson(),refreshing?200:0};
+            if(request.path=="/api/v1/marketplace/install/targets")
+                return {200,QJsonDocument(marketplaceTargetResponse()).toJson(),0};
+            return {400,"{}",0};
+        });
+        ApiClient client; client.setBaseUrl(server.baseUrl()); client.setAuthToken("owner-token");
+        client.startMarketplaceSearch("example",{"movies"});
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QCOMPARE(client.marketplaceSearchResults().size(),1);
+        refreshing=true;
+        client.pollMarketplaceSearch();
+        QVERIFY(client.marketplaceSearchLoading());
+        client.fetchMarketplaceInstallTargets(marketplaceCard().value("extension_id").toString());
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),1000);
+        QVERIFY(client.marketplaceSearchLoading());
+        QVERIFY(!client.marketplaceInstallTargets().isEmpty());
+        QCOMPARE(server.countPath("/api/v1/marketplace/install/targets"),1);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceSearchLoading(),5000);
+        QVERIFY(client.marketplaceSearchResults().isEmpty());
+        QVERIFY(client.marketplaceInstallTargets().isEmpty());
+        QCOMPARE(server.countPath("/api/v1/marketplace/installations"),0);
+    }
+
     void marketplace_target_reads_use_checked_cards_and_reject_changed_or_unbounded_control_snapshots() {
         FakeHttpServer server; QVERIFY(server.start());
         auto page = marketplaceTargetResponse();

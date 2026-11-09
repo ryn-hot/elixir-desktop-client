@@ -231,10 +231,10 @@ Item {
                 TextField {
                     id: searchText; objectName: "communitySearchText"; Layout.fillWidth: true
                     placeholderText: "Find an extension"; maximumLength: 256; enabled: root.canManage
-                    onAccepted: root.search("")
+                    onAccepted: root.scheduleSearch(true)
                     onTextEdited: root.scheduleSearch()
                 }
-                Button { objectName: "communitySearchButton"; text: "Search"; enabled: root.canManage && !root.busy; onClicked: root.search("") }
+                Button { objectName: "communitySearchButton"; text: "Search"; enabled: root.canManage; onClicked: root.scheduleSearch(true) }
             }
             Flow {
                 Layout.fillWidth: true; spacing: 8
@@ -307,7 +307,10 @@ Item {
                             text: modelData.extension_id; color: Theme.textSecondary; font.pixelSize: 11 }
                         Label { Layout.fillWidth: true; textFormat: Text.PlainText; wrapMode: Text.Wrap
                             text: modelData.support.verified_supporters + " verified paid supporters · partial score " + modelData.support.weighted_score; color: Theme.textSecondary }
-                        Button { objectName:"communityReviewInstallation"; text:"Review installation"; enabled:root.canManage && !root.busy && root.searchFailure === ""
+                        // Inspecting a still-current card is read-only. A status
+                        // poll must not disable it; ApiClient rechecks freshness
+                        // and query ownership, and installation has its own gates.
+                        Button { objectName:"communityReviewInstallation"; text:"Review installation"; enabled:root.canManage && !root.client.marketplaceInstallationLoading && root.searchFailure === ""
                             onClicked: { installation.inspect(modelData); if (scroll.contentItem && scroll.contentItem.contentY !== undefined) scroll.contentItem.contentY=0 } }
                     }
                 }
