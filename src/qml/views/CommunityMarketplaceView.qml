@@ -130,7 +130,10 @@ Item {
         else Qt.callLater(initializeBrowse)
     }
     onBusyChanged: if (!busy) {
-        if (draftPending && !searchDebounce.running) searchDebounce.start()
+        // An expired timer already debounced this latest draft while HTTP was
+        // busy. Submit it now; restarting would add a second full typing delay.
+        // A still-running timer keeps its original deadline and coalescing.
+        if (draftPending && !searchDebounce.running) search("")
         else Qt.callLater(initializeBrowse)
     }
     Component.onCompleted: if (visible && canManage) {

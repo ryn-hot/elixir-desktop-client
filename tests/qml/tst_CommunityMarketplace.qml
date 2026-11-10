@@ -542,6 +542,39 @@ TestCase {
         compare(client.lastRequest, {text:"Latest", tags:["live"], cursor:""})
         wait(450); compare(client.starts, 1)
     }
+    function test_busy_release_does_not_restart_an_already_elapsed_typing_delay() {
+        var view = createView()
+        var field = findChild(view, "communitySearchText")
+        var debounce = findChild(view, "communitySearchDebounce")
+        client.marketplaceSearchLoading = true
+        field.text = "Earlier"; field.textEdited()
+        field.text = "Latest"; field.textEdited()
+        compare(debounce.interval, 400)
+        tryCompare(debounce, "running", false, 1500)
+        verify(view.draftPending); compare(client.starts, 0)
+        client.marketplaceSearchLoading = false
+        // Dispatch is synchronous with releasing busy, not another timed wait.
+        compare(client.starts, 1)
+        compare(client.lastRequest, {text:"Latest", tags:[], cursor:""})
+        verify(!debounce.running); verify(!view.draftPending)
+        client.marketplaceSearchLoading = true
+        client.marketplaceSearchLoading = false
+        compare(client.starts, 1)
+        wait(450); compare(client.starts, 1)
+    }
+    function test_busy_release_preserves_a_still_running_typing_delay() {
+        var view = createView()
+        var field = findChild(view, "communitySearchText")
+        var debounce = findChild(view, "communitySearchDebounce")
+        client.marketplaceSearchLoading = true
+        field.text = "Latest"; field.textEdited()
+        verify(debounce.running)
+        client.marketplaceSearchLoading = false
+        compare(client.starts, 0); verify(debounce.running)
+        tryCompare(client, "starts", 1, 1500)
+        compare(client.lastRequest, {text:"Latest", tags:[], cursor:""})
+        wait(450); compare(client.starts, 1)
+    }
     function test_pending_auto_search_does_not_cross_sessions_or_visibility() {
         var view = createView()
         view.setTag("anime", true)
