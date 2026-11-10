@@ -553,14 +553,29 @@ TestCase {
         tryCompare(debounce, "running", false, 1500)
         verify(view.draftPending); compare(client.starts, 0)
         client.marketplaceSearchLoading = false
-        // Dispatch is synchronous with releasing busy, not another timed wait.
-        compare(client.starts, 1)
+        // Keep response handling non-reentrant, without another 400ms delay.
+        compare(client.starts, 0)
+        compare(debounce.interval, 0); verify(debounce.running)
+        tryCompare(client, "starts", 1, 1500)
         compare(client.lastRequest, {text:"Latest", tags:[], cursor:""})
         verify(!debounce.running); verify(!view.draftPending)
         client.marketplaceSearchLoading = true
         client.marketplaceSearchLoading = false
         compare(client.starts, 1)
         wait(450); compare(client.starts, 1)
+    }
+    function test_queued_elapsed_draft_can_be_cleared_before_the_next_event_turn() {
+        var view = createView()
+        var field = findChild(view, "communitySearchText")
+        var debounce = findChild(view, "communitySearchDebounce")
+        client.marketplaceSearchLoading = true
+        field.text = "Old session"; field.textEdited()
+        tryCompare(debounce, "running", false, 1500)
+        client.marketplaceSearchLoading = false
+        compare(debounce.interval, 0); verify(debounce.running)
+        client.sessionStateChanged()
+        verify(!debounce.running); verify(!view.draftPending)
+        wait(50); compare(client.starts, 0)
     }
     function test_busy_release_preserves_a_still_running_typing_delay() {
         var view = createView()

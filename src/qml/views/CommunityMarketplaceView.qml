@@ -131,9 +131,12 @@ Item {
     }
     onBusyChanged: if (!busy) {
         // An expired timer already debounced this latest draft while HTTP was
-        // busy. Submit it now; restarting would add a second full typing delay.
-        // A still-running timer keeps its original deadline and coalescing.
-        if (draftPending && !searchDebounce.running) search("")
+        // busy. Queue it without another typing delay, but never re-enter the
+        // API response handler. An active timer keeps its original deadline.
+        if (draftPending && !searchDebounce.running) {
+            searchDebounce.interval = 0
+            searchDebounce.start()
+        }
         else Qt.callLater(initializeBrowse)
     }
     Component.onCompleted: if (visible && canManage) {
