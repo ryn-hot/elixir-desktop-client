@@ -1565,13 +1565,29 @@ private:
                         QQuickItem *button, QQuickItem *live, QQuickItem *field) {
     QNetworkAccessManager network;
     const QUrl base(m_url);
+    const auto closedCode = [](const QString &value) {
+      return QRegularExpression("^[a-z][a-z0-9_]{0,95}$").match(value).hasMatch()
+          ? value : QStringLiteral("other");
+    };
+    const auto fail = [&](const char *stage, QJsonObject counters = {}) {
+      counters.insert("schema_version", 1);
+      counters.insert("stage", stage);
+      counters.insert("fixture_only", true);
+      // Closed stage, protocol enums and numeric counters only. Never dump a
+      // response body, source URL, session ID, token or raw server message.
+      std::fprintf(stdout, "ELIXIR_MARKETPLACE_PLAYBACK_DIAGNOSTIC %s\n",
+          QJsonDocument(counters).toJson(QJsonDocument::Compact).constData());
+      std::fflush(stdout);
+      return false;
+    };
+    const char *requestStage = "unclassified_media_request";
     auto ownedUrl = [&](const QUrl &url) {
       return url.isValid() && url.scheme() == "http" && url.host() == "127.0.0.1"
           && url.port() == base.port() && url.userInfo().isEmpty() && url.fragment().isEmpty();
     };
     auto get = [&](const QUrl &url, QByteArray &bytes, qint64 &ms,
                    const std::function<bool()> &during = {}) {
-      if (!ownedUrl(url)) return false;
+      if (!ownedUrl(url)) return fail("unowned_media_url");
       QNetworkRequest request(url);
       request.setRawHeader("Authorization", QByteArray("Bearer ") + client.authToken().toUtf8());
       request.setTransferTimeout(15000);
@@ -1589,9 +1605,12 @@ private:
       const bool finished = until([&] { return reply->isFinished(); }, 16000);
       collect(); ms = timer.elapsed();
       if (!finished) reply->abort();
-      return interaction && finished && !overflow && reply->error() == QNetworkReply::NoError
+      const bool ok = interaction && finished && !overflow && reply->error() == QNetworkReply::NoError
           && reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200
           && !bytes.isEmpty();
+      return ok || fail(requestStage, {{"http_status", reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()},
+          {"network_error", int(reply->error())}, {"finished", finished}, {"overflow", overflow},
+          {"bytes", bytes.size()}, {"interaction", interaction}});
     };
     auto childUrl = [&](const QUrl &parent, const QByteArray &body, QUrl &child) {
       if (!body.startsWith("#EXTM3U")) return false;
@@ -1623,9 +1642,17 @@ private:
       QElapsedTimer start; start.start();
       client.startPlayback(m_playbackItem, m_playbackFile);
       if (!until([&] { return !started.isEmpty() || !failed.isEmpty(); }, 15000)
-          || started.size() != 1 || !failed.isEmpty()) return false;
+          || started.size() != 1 || !failed.isEmpty()) {
+        const auto error = failed.isEmpty() ? QVariantMap{} : failed.last().first().toMap();
+        return fail("playback_start_response_failed", {{"http_status", error.value("status").toInt()},
+            {"code", closedCode(error.value("code").toString())}, {"started", started.size()}, {"failed", failed.size()}});
+      }
       const auto info = started.first().first().toMap();
-      if (info.value("mode") != "direct_stream" || info.value("delivery") != "hls_fmp4") return false;
+      if (!progress("playback_start_response_received")) return false;
+      if (info.value("mode") != "direct_stream" || info.value("delivery") != "hls_fmp4")
+        return fail("unexpected_playback_plan", {{"mode", closedCode(info.value("mode").toString())},
+            {"delivery", closedCode(info.value("delivery").toString())},
+            {"decision_reason", closedCode(info.value("decision_reason").toString())}});
       EndSession session{client, info.value("session_id").toString()};
       if (session.id.isEmpty()) return false;
       const auto master = base.resolved(QUrl(info.value("stream_url").toString()));
@@ -1635,36 +1662,46 @@ private:
         Sample sample;
         return measure(client, view, root, [&] { return click(view, button); }, "", {}, 20, sample);
       };
+      requestStage = "initial_playlist_request_failed";
       if (!get(master, masterBody, ignoredMs, queryWhileStarting)) return false;
+      if (!progress("playback_initial_playlist_received")) return false;
       timing.start = start.elapsed();
       QUrl playlist;
       if (masterBody.contains("#EXTINF:")) playlist = master;
-      else if (!childUrl(master, masterBody, playlist)) return false;
+      else if (!childUrl(master, masterBody, playlist)) return fail("initial_playlist_shape_failed");
       QSet<QString> seen;
       auto fetchSegments = [&](int minimum) {
         QElapsedTimer wait; wait.start();
         while (timing.segments.size() < minimum && wait.elapsed() < 15000) {
           QByteArray body; qint64 ms;
-          if (!get(playlist, body, ms) || !body.startsWith("#EXTM3U")) return false;
+          requestStage = "media_playlist_request_failed";
+          if (!get(playlist, body, ms)) return false;
+          if (!body.startsWith("#EXTM3U")) return fail("media_playlist_shape_failed");
           const QRegularExpression map("#EXT-X-MAP:URI=\"([^\"]+)\"");
           const auto match = map.match(QString::fromUtf8(body));
-          if (!match.hasMatch()) return false;
+          if (!match.hasMatch()) return fail("media_init_reference_missing");
           QByteArray init;
-          if (!get(playlist.resolved(QUrl(match.captured(1))), init, ms) || !init.contains("ftyp")) return false;
+          requestStage = "media_init_request_failed";
+          if (!get(playlist.resolved(QUrl(match.captured(1))), init, ms)) return false;
+          if (!init.contains("ftyp")) return fail("media_init_shape_failed");
           for (const auto &raw : body.split('\n')) {
             const auto line = QString::fromUtf8(raw.trimmed());
             if (line.isEmpty() || line.startsWith('#') || seen.contains(line)) continue;
             const auto url = playlist.resolved(QUrl(line));
             QByteArray segment;
-            if (!get(url, segment, ms) || !segment.contains("moof") || !segment.contains("mdat")) return false;
+            requestStage = "media_segment_request_failed";
+            if (!get(url, segment, ms)) return false;
+            if (!segment.contains("moof") || !segment.contains("mdat")) return fail("media_segment_shape_failed");
             seen.insert(line); timing.segments.append(ms);
             if (timing.segments.size() >= minimum) break;
           }
           if (timing.segments.size() < minimum) QTest::qWait(100);
         }
-        return timing.segments.size() >= minimum;
+        return timing.segments.size() >= minimum || fail("distinct_media_delivery_deadline",
+            {{"received", timing.segments.size()}, {"required", minimum}});
       };
       if (!fetchSegments(2)) return false;
+      if (!progress("playback_initial_segments_received")) return false;
       if (busy) {
         for (int n = 0; n < 32; ++n) {
           Sample sample;
@@ -1689,17 +1726,19 @@ private:
         if (!measure(client, view, root, [&] { return click(view, button); }, "", {}, 20, sample)) return false;
       }
       if (!until([&] { return !seekDone.isEmpty() || !seekFailed.isEmpty(); }, 15000)
-          || seekDone.size() != 1 || !seekFailed.isEmpty()) return false;
+          || seekDone.size() != 1 || !seekFailed.isEmpty()) return fail("playback_seek_response_failed");
+      if (!progress("playback_seek_response_received")) return false;
       timing.seek = seek.elapsed();
       QByteArray afterSeek;
+      requestStage = "seek_playlist_request_failed";
       if (!get(master, afterSeek, ignoredMs)) return false;
       if (afterSeek.contains("#EXTINF:")) playlist = master;
-      else if (!childUrl(master, afterSeek, playlist)) return false;
+      else if (!childUrl(master, afterSeek, playlist)) return fail("seek_playlist_shape_failed");
       seen.clear();
       if (!fetchSegments(timing.segments.size() + 2)) return false;
-      if (!client.endSessionBlocking(session.id, 10000)) return false;
+      if (!client.endSessionBlocking(session.id, 10000)) return fail("normal_session_retirement_failed");
       session.id.clear();
-      if (timing.start > 15000 || timing.seek > 15000) return false;
+      if (timing.start > 15000 || timing.seek > 15000) return fail("playback_timing_bound_exceeded");
     }
     const QJsonObject result{
       {"schema_version",1},{"stage","protected_playback_result"},{"fixture_only",true},
