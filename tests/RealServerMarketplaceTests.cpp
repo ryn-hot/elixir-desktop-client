@@ -18,6 +18,9 @@
 #include <QJsonObject>
 #include <QKeySequence>
 #include <QLoggingCategory>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQuickItem>
@@ -26,6 +29,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
+#include <QScopedPointer>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -240,6 +244,13 @@ private:
     }
     m_name = entries.first().toObject().value("name").toString();
     m_exact = entries.first().toObject().value("extension_id").toString();
+    if (data.contains("playback")) {
+      const auto playback = data.value("playback").toObject();
+      const QRegularExpression uuid("^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$");
+      m_playbackItem = playback.value("media_item_id").toString();
+      m_playbackFile = playback.value("media_file_id").toString();
+      QVERIFY(uuid.match(m_playbackItem).hasMatch() && uuid.match(m_playbackFile).hasMatch());
+    }
     QVERIFY(
         QRegularExpression("^[A-Za-z0-9 ._-]{1,96}$").match(m_name).hasMatch());
     if (installation) {
@@ -927,6 +938,9 @@ private slots:
       fullQueries.append(sample.readyMs);
       QVERIFY(progress("warm_ready", n, sample.firstFrameMs, sample.readyMs));
     }
+    if (!m_playbackItem.isEmpty())
+      QVERIFY2(exercisePlayback(client, view, root, button, live, field),
+               "actual baseline/loaded playback or marketplace interaction failed");
     Sample filter;
     QVERIFY(progress("live_filter_started"));
     QVERIFY(measure(
@@ -1547,7 +1561,163 @@ private:
     return true;
   }
 
-  QString m_url, m_email, m_directory, m_name, m_exact;
+  bool exercisePlayback(ApiClient &client, QQuickView &view, QObject *root,
+                        QQuickItem *button, QQuickItem *live, QQuickItem *field) {
+    QNetworkAccessManager network;
+    const QUrl base(m_url);
+    auto ownedUrl = [&](const QUrl &url) {
+      return url.isValid() && url.scheme() == "http" && url.host() == "127.0.0.1"
+          && url.port() == base.port() && url.userInfo().isEmpty() && url.fragment().isEmpty();
+    };
+    auto get = [&](const QUrl &url, QByteArray &bytes, qint64 &ms,
+                   const std::function<bool()> &during = {}) {
+      if (!ownedUrl(url)) return false;
+      QNetworkRequest request(url);
+      request.setRawHeader("Authorization", QByteArray("Bearer ") + client.authToken().toUtf8());
+      request.setTransferTimeout(15000);
+      request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+      QElapsedTimer timer; timer.start();
+      QScopedPointer<QNetworkReply> reply(network.get(request));
+      reply->setReadBufferSize(4 * 1024 * 1024 + 1);
+      bool overflow = false;
+      auto collect = [&] {
+        bytes += reply->readAll();
+        if (bytes.size() > 4 * 1024 * 1024) { overflow = true; reply->abort(); }
+      };
+      QObject::connect(reply.data(), &QIODevice::readyRead, reply.data(), collect);
+      const bool interaction = !during || during();
+      const bool finished = until([&] { return reply->isFinished(); }, 16000);
+      collect(); ms = timer.elapsed();
+      if (!finished) reply->abort();
+      return interaction && finished && !overflow && reply->error() == QNetworkReply::NoError
+          && reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200
+          && !bytes.isEmpty();
+    };
+    auto childUrl = [&](const QUrl &parent, const QByteArray &body, QUrl &child) {
+      if (!body.startsWith("#EXTM3U")) return false;
+      for (const auto &raw : body.split('\n')) {
+        const auto line = raw.trimmed();
+        if (!line.isEmpty() && !line.startsWith('#')) {
+          child = parent.resolved(QUrl(QString::fromUtf8(line)));
+          return ownedUrl(child);
+        }
+      }
+      return false;
+    };
+    struct EndSession {
+      ApiClient &client; QString id;
+      ~EndSession() { if (!id.isEmpty()) client.endSessionBlocking(id, 10000); }
+    };
+    struct Phase { qint64 start = -1, seek = -1; QList<qint64> segments; } baseline, loaded;
+    QList<qint64> loadedFrames, loadedQueries;
+    qint64 filterMs = -1, textMs = -1, typingMs = -1;
+    client.setNetworkType("lan");
+    client.setClientCapabilities({{"profile_id", "web_chromium"}, {"profile_version", 5},
+                                  {"app_version", "0.1.0"}, {"quality_mode", "original"}});
+    for (int phase = 0; phase < 2; ++phase) {
+      const bool busy = phase == 1;
+      auto &timing = busy ? loaded : baseline;
+      if (!progress(busy ? "playback_loaded_started" : "playback_baseline_started")) return false;
+      QSignalSpy started(&client, &ApiClient::playbackStarted);
+      QSignalSpy failed(&client, &ApiClient::playbackFailed);
+      QElapsedTimer start; start.start();
+      client.startPlayback(m_playbackItem, m_playbackFile);
+      if (!until([&] { return !started.isEmpty() || !failed.isEmpty(); }, 15000)
+          || started.size() != 1 || !failed.isEmpty()) return false;
+      const auto info = started.first().first().toMap();
+      if (info.value("mode") != "direct_stream" || info.value("delivery") != "hls_fmp4") return false;
+      EndSession session{client, info.value("session_id").toString()};
+      if (session.id.isEmpty()) return false;
+      const auto master = base.resolved(QUrl(info.value("stream_url").toString()));
+      QByteArray masterBody; qint64 ignoredMs;
+      auto queryWhileStarting = [&] {
+        if (!busy) return true;
+        Sample sample;
+        return measure(client, view, root, [&] { return click(view, button); }, "", {}, 20, sample);
+      };
+      if (!get(master, masterBody, ignoredMs, queryWhileStarting)) return false;
+      timing.start = start.elapsed();
+      QUrl playlist;
+      if (masterBody.contains("#EXTINF:")) playlist = master;
+      else if (!childUrl(master, masterBody, playlist)) return false;
+      QSet<QString> seen;
+      auto fetchSegments = [&](int minimum) {
+        QElapsedTimer wait; wait.start();
+        while (timing.segments.size() < minimum && wait.elapsed() < 15000) {
+          QByteArray body; qint64 ms;
+          if (!get(playlist, body, ms) || !body.startsWith("#EXTM3U")) return false;
+          const QRegularExpression map("#EXT-X-MAP:URI=\"([^\"]+)\"");
+          const auto match = map.match(QString::fromUtf8(body));
+          if (!match.hasMatch()) return false;
+          QByteArray init;
+          if (!get(playlist.resolved(QUrl(match.captured(1))), init, ms) || !init.contains("ftyp")) return false;
+          for (const auto &raw : body.split('\n')) {
+            const auto line = QString::fromUtf8(raw.trimmed());
+            if (line.isEmpty() || line.startsWith('#') || seen.contains(line)) continue;
+            const auto url = playlist.resolved(QUrl(line));
+            QByteArray segment;
+            if (!get(url, segment, ms) || !segment.contains("moof") || !segment.contains("mdat")) return false;
+            seen.insert(line); timing.segments.append(ms);
+            if (timing.segments.size() >= minimum) break;
+          }
+          if (timing.segments.size() < minimum) QTest::qWait(100);
+        }
+        return timing.segments.size() >= minimum;
+      };
+      if (!fetchSegments(2)) return false;
+      if (busy) {
+        for (int n = 0; n < 32; ++n) {
+          Sample sample;
+          if (!measure(client, view, root, [&] { return click(view, button); }, "", {}, 20, sample)) return false;
+          loadedFrames.append(sample.firstFrameMs); loadedQueries.append(sample.readyMs);
+          if (n % 8 == 7 && !fetchSegments(timing.segments.size() + 1)) return false;
+        }
+        Sample filter, text;
+        if (!measure(client, view, root, [&] { return click(view, live); }, "", {"live"}, 20, filter)) return false;
+        filterMs = filter.readyMs;
+        if (!measure(client, view, root, [&] { return type(view, field, m_name, typingMs); }, m_name, {"live"}, 1, text)) return false;
+        textMs = text.readyMs;
+        Sample reset; qint64 resetTyping;
+        if (!measure(client, view, root, [&] { return type(view, field, "", resetTyping) && click(view, live); }, "", {}, 20, reset)) return false;
+      }
+      QSignalSpy seekDone(&client, &ApiClient::seekCompleted);
+      QSignalSpy seekFailed(&client, &ApiClient::seekFailed);
+      QElapsedTimer seek; seek.start();
+      client.seekPlayback(session.id, 60.0);
+      if (busy) {
+        Sample sample;
+        if (!measure(client, view, root, [&] { return click(view, button); }, "", {}, 20, sample)) return false;
+      }
+      if (!until([&] { return !seekDone.isEmpty() || !seekFailed.isEmpty(); }, 15000)
+          || seekDone.size() != 1 || !seekFailed.isEmpty()) return false;
+      timing.seek = seek.elapsed();
+      QByteArray afterSeek;
+      if (!get(master, afterSeek, ignoredMs)) return false;
+      if (afterSeek.contains("#EXTINF:")) playlist = master;
+      else if (!childUrl(master, afterSeek, playlist)) return false;
+      seen.clear();
+      if (!fetchSegments(timing.segments.size() + 2)) return false;
+      if (!client.endSessionBlocking(session.id, 10000)) return false;
+      session.id.clear();
+      if (timing.start > 15000 || timing.seek > 15000) return false;
+    }
+    const QJsonObject result{
+      {"schema_version",1},{"stage","protected_playback_result"},{"fixture_only",true},
+      {"normal_playback_api",true},{"actual_hls_downloads",true},
+      {"baseline_start_ms",baseline.start},{"baseline_seek_ms",baseline.seek},
+      {"baseline_segment_p95_ms",p95(baseline.segments)},{"baseline_segments",baseline.segments.size()},
+      {"loaded_start_ms",loaded.start},{"loaded_seek_ms",loaded.seek},
+      {"loaded_segment_p95_ms",p95(loaded.segments)},{"loaded_segments",loaded.segments.size()},
+      {"loaded_ui_first_card_p95_ms",p95(loadedFrames)},{"loaded_ui_full_search_p95_ms",p95(loadedQueries)},
+      {"loaded_ui_samples",32},{"loaded_filter_ms",filterMs},{"loaded_text_ms",textMs},
+      {"typing_frame_ms",typingMs},{"sessions_ended",2},
+      {"excludes","physical decoder/display/audio QoE, relay contribution, 10k catalog, off-site peers and full privacy/platform/soak qualification"}};
+    std::fprintf(stdout,"ELIXIR_MARKETPLACE_PLAYBACK_RESULT %s\n",QJsonDocument(result).toJson(QJsonDocument::Compact).constData());
+    std::fflush(stdout);
+    return progress("playback_complete");
+  }
+
+  QString m_url, m_email, m_directory, m_name, m_exact, m_playbackItem, m_playbackFile;
   QStringList m_publications, m_releases;
   QMap<QString, QString> m_expected;
   QTemporaryDir m_settings;
