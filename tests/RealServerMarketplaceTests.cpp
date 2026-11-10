@@ -1728,7 +1728,9 @@ private:
       QSignalSpy seekDone(&client, &ApiClient::seekCompleted);
       QSignalSpy seekFailed(&client, &ApiClient::seekFailed);
       QElapsedTimer seek; seek.start();
-      client.seekPlayback(session.id, 60.0);
+      // The first normal end may save a 60-second resume point. The loaded
+      // phase must perform a different real seek, not seek to that same point.
+      client.seekPlayback(session.id, busy ? 120.0 : 60.0);
       if (busy) {
         Sample sample;
         if (!measure(client, view, root, [&] { return click(view, button); }, "", {}, 20, sample)) return false;
