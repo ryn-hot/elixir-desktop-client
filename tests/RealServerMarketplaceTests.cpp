@@ -1691,7 +1691,15 @@ private:
             QByteArray segment;
             requestStage = "media_segment_request_failed";
             if (!get(url, segment, ms)) return false;
-            if (!segment.contains("moof") || !segment.contains("mdat")) return fail("media_segment_shape_failed");
+            if (!segment.contains("moof") || !segment.contains("mdat"))
+              return fail("media_segment_shape_failed", {{"bytes", segment.size()},
+                  {"playlist_body", segment.startsWith("#EXTM3U")},
+                  {"file_type_box", segment.contains("ftyp")}, {"movie_box", segment.contains("moov")},
+                  {"segment_type_box", segment.contains("styp")}, {"fragment_box", segment.contains("moof")},
+                  {"media_data_box", segment.contains("mdat")},
+                  {"playlist_path", url.path().endsWith(".m3u8")}, {"init_path", url.path().endsWith(".mp4")},
+                  {"fragment_path", url.path().endsWith(".m4s")},
+                  {"transport_stream_sync", !segment.isEmpty() && quint8(segment[0]) == 0x47}});
             seen.insert(line); timing.segments.append(ms);
             if (timing.segments.size() >= minimum) break;
           }
