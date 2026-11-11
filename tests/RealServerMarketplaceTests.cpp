@@ -1489,33 +1489,63 @@ private:
   bool measure(ApiClient &client, QQuickView &view, QObject *root,
                const std::function<bool()> &trigger, const QString &text,
                const QStringList &tags, int count, Sample &sample) {
-    if (!until([&] { return !client.marketplaceSearchLoading(); }, 20000))
+    const auto fail = [&](const char *reason, qint64 elapsedMs) {
+      const auto phase = client.marketplaceSearch().value("phase").toString();
+      const auto known = QStringList{"checking", "ready", "unavailable", "stale"};
+      const auto data =
+          QJsonDocument(QJsonObject{
+                            {"stage", "desktop_search_measure_failed"},
+                            {"reason", reason},
+                            {"phase", known.contains(phase)
+                                          ? phase : QStringLiteral("other")},
+                            {"rows", client.marketplaceSearchResults().size()},
+                            {"expected", count},
+                            {"loading", client.marketplaceSearchLoading()},
+                            {"elapsed_ms", elapsedMs},
+                            {"first_frame_ms", sample.firstFrameMs},
+                            {"ready_ms", sample.readyMs}})
+              .toJson(QJsonDocument::Compact);
+      std::fprintf(stdout, "ELIXIR_MARKETPLACE_MEASURE_FAILURE %s\n",
+                   data.constData());
+      std::fflush(stdout);
       return false;
+    };
+    if (!until([&] { return !client.marketplaceSearchLoading(); }, 20000))
+      return fail("previous_request_busy", -1);
     const auto old = client.marketplaceSearch().value("query_id").toString();
     QElapsedTimer elapsed;
     elapsed.start();
     if (!trigger())
-      return false;
-    bool bad = false;
+      return fail("trigger_failed", elapsed.elapsed());
+    const char *failure = nullptr;
+    QString readyQuery;
     const bool finished = until(
         [&] {
           const auto response = client.marketplaceSearch();
           const auto id = response.value("query_id").toString();
           if (id.isEmpty() || id == old)
             return false;
+          if (!readyQuery.isEmpty() && id != readyQuery) {
+            failure = "query_replaced_before_frame";
+            return true;
+          }
           const auto query = response.value("query").toMap();
           // The server echoes NFKC/lowercase/space-normalized search text.
           // Fixture input is explicitly ASCII, so these Qt transforms agree.
           if (query.value("text").toString() != text.toLower().simplified() ||
               query.value("tags").toStringList() != tags) {
-            bad = true;
+            failure = "query_mismatch";
             return true;
           }
           const auto phase = response.value("phase").toString();
-          bad = phase == "unavailable" || phase == "stale" ||
-                !checkedCards(client);
-          if (bad)
+          if (phase == "unavailable" || phase == "stale") {
+            failure = "query_unavailable_or_stale";
             return true;
+          }
+          if (!checkedCards(client)) {
+            failure = "unverified_card";
+            return true;
+          }
           if (sample.localCompleteMs < 0 && response.value("local_page_complete").toBool()) {
             sample.localCompleteMs = elapsed.elapsed();
             sample.peersPendingAtLocalCompletion = phase == "checking";
@@ -1525,21 +1555,40 @@ private:
               cardFrame(view, root, client.marketplaceSearchResults()))
             sample.firstFrameMs = elapsed.elapsed();
           if (phase == "ready" && !client.marketplaceSearchLoading()) {
-            bad = client.marketplaceSearchResults().size() != count;
-            if (count == 1 && !bad)
-              bad = client.marketplaceSearchResults()
-                        .first()
-                        .toMap()
-                        .value("extension_id")
-                        .toString() != m_exact;
-            sample.readyMs = elapsed.elapsed();
-            return true;
+            if (client.marketplaceSearchResults().size() != count) {
+              failure = "ready_row_count_mismatch";
+              return true;
+            }
+            if (count == 1 && client.marketplaceSearchResults()
+                                      .first()
+                                      .toMap()
+                                      .value("extension_id")
+                                      .toString() != m_exact) {
+              failure = "ready_card_identity_mismatch";
+              return true;
+            }
+            if (sample.readyMs < 0) {
+              sample.readyMs = elapsed.elapsed();
+              readyQuery = id;
+            }
+            if (count == 0 || sample.firstFrameMs >= 0)
+              return true;
+            // The native HTTP model can be ready one event turn before QML
+            // lays out and paints the new card. Record both clocks, and still
+            // require a real verified frame within a bounded window.
+            if (elapsed.elapsed() - sample.readyMs >= 1500) {
+              failure = "card_frame_not_painted_after_ready";
+              return true;
+            }
           }
           return false;
         },
         180000);
-    return finished && !bad && sample.readyMs >= 0 &&
-           (count == 0 || sample.firstFrameMs >= 0);
+    if (failure)
+      return fail(failure, elapsed.elapsed());
+    if (!finished || sample.readyMs < 0 || (count > 0 && sample.firstFrameMs < 0))
+      return fail("query_or_frame_timeout", elapsed.elapsed());
+    return true;
   }
 
   bool type(QQuickView &view, QQuickItem *field, const QString &text,
