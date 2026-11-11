@@ -473,6 +473,33 @@ TestCase {
         compare(client.lastRequest, {text:"Anime", tags:["anime"], cursor:""})
         wait(450); compare(client.starts, 1)
     }
+    function test_typing_refines_a_checked_local_page_faster_without_queueing_edits() {
+        var view = createView()
+        var field = findChild(view, "communitySearchText")
+        var debounce = findChild(view, "communitySearchDebounce")
+        field.text = "A"; field.textEdited()
+        compare(debounce.interval, 400)
+        client.marketplaceSearch = {phase:"ready", query_id:"local", local_page_complete:true}
+        field.text = "An"; field.textEdited()
+        compare(debounce.interval, 400) // Empty local results still coalesce cold edits.
+        client.marketplaceSearchResults = [card()]
+        field.text = "Ani"; field.textEdited()
+        compare(debounce.interval, 150)
+        field.text = "Anime"; field.textEdited()
+        compare(debounce.interval, 150)
+        verify(debounce.running); compare(client.starts, 0)
+        tryCompare(client, "starts", 1, 1000)
+        compare(client.lastRequest, {text:"Anime", tags:[], cursor:""})
+        verify(!view.draftPending); verify(!debounce.running)
+
+        client.marketplaceSearch = {phase:"checking", query_id:"remote",
+            searching_peers:true, local_page_complete:true}
+        field.text = "Anime Movie"; field.textEdited()
+        compare(debounce.interval, 400)
+        compare(client.starts, 1)
+        view.visible = false
+        verify(!view.draftPending); verify(!debounce.running)
+    }
     function test_filter_choices_skip_typing_delay_and_busy_edits_still_coalesce() {
         var view = createView()
         var debounce = findChild(view, "communitySearchDebounce")

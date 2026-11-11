@@ -28,6 +28,10 @@ Item {
     // Presentation only. The server keeps peer lookup/admission running; this
     // is never global completeness or authority to install an unchecked card.
     readonly property bool localSearchComplete: response.local_page_complete === true
+    // Fast typing refinement only after a checked, nonempty local page.
+    // Initial browse, misses and peer search keep the longer coalescing delay.
+    readonly property int typingDelayMs: response.phase === "ready" && localSearchComplete
+        && results.length > 0 ? 150 : 400
     readonly property bool viewActive: visible && canManage
         && Qt.application.state === Qt.ApplicationActive
     readonly property var preparation: response.preparation || ({})
@@ -49,7 +53,7 @@ Item {
         draftPending = true
         // Clicks are complete choices; only typing needs the debounce delay.
         // The same single timer coalesces edits while an HTTP request is busy.
-        searchDebounce.interval = immediate === true ? 0 : 400
+        searchDebounce.interval = immediate === true ? 0 : typingDelayMs
         searchDebounce.restart()
     }
     function search(cursor) {
