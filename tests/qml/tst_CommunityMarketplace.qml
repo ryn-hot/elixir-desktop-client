@@ -139,7 +139,7 @@ TestCase {
         var poll = findChild(view,"communitySearchPoll")
         compare(burst.interval,1000); compare(settling.interval,3000)
         client.marketplaceSearch = {query_id:"first-query",phase:"checking",searching_peers:false}
-        verify(burst.running); verify(settling.running); compare(poll.interval,100)
+        verify(burst.running); verify(settling.running); compare(poll.interval,32)
         tryVerify(function() { return client.polls > 0 },500)
         client.marketplaceSearch = {query_id:"first-query",phase:"checking",searching_peers:false}
         tryCompare(burst,"running",false,1500)
@@ -150,7 +150,7 @@ TestCase {
         client.marketplaceSearch = {query_id:"first-query",phase:"checking",searching_peers:false}
         verify(!burst.running); verify(!settling.running); compare(poll.interval,1000)
         client.marketplaceSearch = {query_id:"next-query",phase:"checking",searching_peers:false}
-        verify(burst.running); compare(poll.interval,100)
+        verify(burst.running); compare(poll.interval,32)
         client.marketplaceSearchLoading = true
         verify(!poll.running)
         verify(settling.running)
@@ -170,9 +170,9 @@ TestCase {
         client.marketplaceSearch = {query_id:"checked-query",phase:"checking",searching_peers:false}
         verify(burst.running)
         client.marketplaceSearchResults = [card()]
-        verify(burst.running); verify(settling.running); compare(poll.interval,100)
+        verify(burst.running); verify(settling.running); compare(poll.interval,32)
         client.marketplaceSearch = {query_id:"checked-query",phase:"checking",searching_peers:false}
-        verify(burst.running); verify(settling.running); compare(poll.interval,100)
+        verify(burst.running); verify(settling.running); compare(poll.interval,32)
         client.marketplaceSearchResults = []
         verify(burst.running)
         tryCompare(burst,"running",false,1500)
@@ -197,19 +197,35 @@ TestCase {
         var poll = findChild(view,"communitySearchPoll")
         client.marketplaceSearchResults = [card()]
         client.marketplaceSearch = {query_id:"partial-query",phase:"checking",searching_peers:false}
-        verify(burst.running); verify(settling.running); compare(poll.interval,100)
+        verify(burst.running); verify(settling.running); compare(poll.interval,32)
         client.requestFailed("/api/v1/marketplace/search/partial-query","failed")
         verify(!burst.running); verify(!settling.running); verify(!poll.running)
         view.searchFailure = ""
         client.marketplaceSearch = {query_id:"partial-query",phase:"checking",searching_peers:false}
         verify(!settling.running); compare(poll.interval,1000)
         client.marketplaceSearch = {query_id:"new-query",phase:"checking",searching_peers:false}
-        verify(burst.running); verify(settling.running); compare(poll.interval,100)
+        verify(burst.running); verify(settling.running); compare(poll.interval,32)
         // Progress and additional partial cards cannot restart either window.
         client.marketplaceSearchResults = [card(),card()]
         client.marketplaceSearch = {query_id:"new-query",phase:"checking",searching_peers:false}
         tryCompare(burst,"running",false,1500)
         verify(settling.running); compare(poll.interval,250)
+    }
+    function test_exactly_two_early_followups_then_backoff_without_reset_on_partial_cards() {
+        var view = createView()
+        var poll = findChild(view,"communitySearchPoll")
+        client.marketplaceSearch = {query_id:"early-query",phase:"checking",searching_peers:false}
+        verify(poll.running); compare(poll.interval,32)
+        poll.triggered(); compare(client.polls,1); compare(poll.interval,64)
+        client.marketplaceSearchResults = [card()]
+        client.marketplaceSearch = {query_id:"early-query",phase:"checking",searching_peers:false}
+        compare(poll.interval,64)
+        poll.triggered(); compare(client.polls,2); compare(poll.interval,150)
+        poll.triggered(); compare(client.polls,3); compare(poll.interval,150)
+        client.marketplaceSearch = {query_id:"early-query",phase:"checking",searching_peers:true}
+        compare(poll.interval,1000)
+        client.marketplaceSearch = {query_id:"next-local-query",phase:"checking",searching_peers:false}
+        compare(poll.interval,32)
     }
     function test_hidden_or_unidentified_queries_never_start_fast_polling() {
         var view = createTemporaryObject(factory,host,{client:client,width:760,height:850,visible:false})

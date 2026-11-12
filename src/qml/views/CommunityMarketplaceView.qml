@@ -15,6 +15,7 @@ Item {
     property bool draftPending: false
     property bool initialRequestAttempted: false
     property string pollingQueryId: ""
+    property int earlyFollowUps: 0
     readonly property bool queryChanged: submittedQuery !== null
         && (searchText.text !== submittedQuery.text
             || JSON.stringify(selectedTags.slice().sort()) !== JSON.stringify(submittedQuery.tags.slice().sort()))
@@ -69,6 +70,7 @@ Item {
         searchDebounce.stop()
         stopSearchPollWindows()
         pollingQueryId = ""
+        earlyFollowUps = 0
         draftPending = false
         submittedQuery = null
         selectedTags = []
@@ -110,12 +112,12 @@ Item {
         var queryId = typeof response.query_id === "string" ? response.query_id : ""
         var changed = queryId !== pollingQueryId
         pollingQueryId = queryId
+        if (changed) earlyFollowUps = 0
         if (changed || response.phase !== "checking" || response.searching_peers === true || localSearchComplete)
             stopSearchPollWindows()
         // Both deadlines start once per new query, never from progress replies.
-        // The first reply may already contain partial cards. Give that reply
-        // the same bounded first-second burst as an initially empty page so
-        // the checked remainder need not wait 250ms between reads.
+        // The first reply may be empty or already contain checked cards. In
+        // either case, spend at most two prompt reads on the same local query.
         // Peer discovery and normal background preparation keep the slow poll.
         if (changed && viewActive && queryId !== "" && response.phase === "checking"
             && response.searching_peers !== true && !localSearchComplete && searchFailure === "") {
@@ -182,16 +184,23 @@ Item {
     }
     Timer {
         objectName: "communitySearchPoll"
+        readonly property bool checkingLocal: root.response.phase === "checking"
+            && root.response.searching_peers !== true && !root.localSearchComplete
+        readonly property bool earlyWindow: checkingLocal && firstResultPollWindow.running && !root.preparingCatalog
         interval: root.response.phase === "checking" || root.preparingCatalog
-            ? (root.response.phase === "checking" && firstResultPollWindow.running
-                && root.response.searching_peers !== true && !root.localSearchComplete ? 100
-                : root.response.phase === "checking" && pagePollWindow.running
-                    && root.response.searching_peers !== true && !root.localSearchComplete ? 250 : 1000)
+            ? (earlyWindow ? (root.earlyFollowUps === 0 ? 32 : root.earlyFollowUps === 1 ? 64 : 150)
+                : checkingLocal && firstResultPollWindow.running ? 100
+                : checkingLocal && pagePollWindow.running ? 250 : 1000)
             : 25000
         repeat: true
         running: root.viewActive && !root.busy && root.searchFailure === ""
             && (root.response.phase === "checking" || root.response.phase === "ready")
-        onTriggered: root.client.pollMarketplaceSearch()
+        onTriggered: {
+            // Shift the first two reads earlier; back off below the old
+            // cadence immediately afterward. Never renew on partial replies.
+            if (earlyWindow && root.earlyFollowUps < 2) ++root.earlyFollowUps
+            root.client.pollMarketplaceSearch()
+        }
     }
     Component.onDestruction: { searchDebounce.stop(); client.clearMarketplaceSearch() }
 
