@@ -22,6 +22,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPointer>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQuickItem>
@@ -34,6 +35,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 #include <QtQml>
 
 #include <algorithm>
@@ -717,6 +719,7 @@ private slots:
         property int calls: 0
         property int directCalls: 0
         property string chosen: ""
+        property alias currentLookupPending: mock.marketplaceInstallationLoading
         QtObject {
           id: mock
           property string authToken: "synthetic-layout-only"
@@ -758,6 +761,11 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(&view));
     auto *button = visualItem(root, "communityReviewInstallation");
     QVERIFY(button && button->mapRectToScene(button->boundingRect()).bottom() > view.height());
+    QVERIFY(root->setProperty("currentLookupPending", true));
+    QVERIFY(!button->isEnabled());
+    QCOMPARE(root->property("calls").toInt(), 0);
+    QTimer::singleShot(50, root, [root] { root->setProperty("currentLookupPending", false); });
+    QVERIFY(waitForInstallationControl(root, "communityReviewInstallation", 1000));
     QVERIFY(installationClick(view, root, "communityReviewInstallation"));
     QVERIFY(until([&] { return root->property("calls").toInt() == 1; }, 1000));
     QCOMPARE(root->property("chosen").toString(), QString("synthetic-layout-only"));
@@ -1194,6 +1202,26 @@ private slots:
         m_expected[m_exact] = m_releases.at(n);
         QVERIFY(checkedCards(client));
         QCOMPARE(client.marketplaceSearchResults().size(), 1);
+        // Rendering a card doesn't mean the newly opened view has finished
+        // checking for an existing installation. Wait for the real control
+        // once; never bypass it or submit a speculative install request.
+        if (!waitForInstallationControl(root, "communityReviewInstallation",
+                                        std::min(10000, remaining()))) {
+          auto *button = visualItem(root, "communityReviewInstallation");
+          qInfo().noquote() << QJsonDocument(QJsonObject{
+            {"stage", "catalog_review_control_not_ready"},
+            {"present", button != nullptr}, {"visible", button && button->isVisible()},
+            {"enabled", button && button->isEnabled()},
+            {"installation_loading", client.marketplaceInstallationLoading()},
+            {"search_failed", !root->property("searchFailure").toString().isEmpty()},
+            {"search_stale", client.marketplaceSearch().value("phase").toString() == "stale"}
+          }).toJson(QJsonDocument::Compact);
+          QFAIL("The actual catalog review control did not become ready.");
+        }
+        if (m_customerSetup && n == 0) {
+          QVERIFY(!setupQueryReplaced);
+          QCOMPARE(client.marketplaceSearch().value("query_id").toString(), m_customerPreparedQuery);
+        }
         QVERIFY(installationClick(view, root, "communityReviewInstallation"));
         QVERIFY(progress("catalog_card_review_selected", n));
       } else {
@@ -1461,20 +1489,28 @@ private:
     }
     return ready;
   }
+  bool waitForInstallationControl(QQuickItem *root, const char *name, int milliseconds) {
+    return milliseconds > 0 && until([&] {
+      const auto *item = visualItem(root, QString::fromLatin1(name));
+      return item && item->isVisible() && item->isEnabled();
+    }, milliseconds);
+  }
   bool installationClick(QQuickView &view, QQuickItem *root, const char *name) {
-    auto *item = visualItem(root, QString::fromLatin1(name));
+    QPointer<QQuickItem> item = visualItem(root, QString::fromLatin1(name));
     if (!item || !item->isVisible() || !item->isEnabled())
       return false;
     // Both the developer-reference Flickable and the shipped catalog's nested
     // ScrollView must scroll their actual viewport, not an unrelated root.
     int depth = 0;
-    for (auto *parent = item->parentItem(); parent && depth++ < 24; parent = parent->parentItem()) {
+    for (QPointer<QQuickItem> parent = item->parentItem(); parent && depth++ < 24; parent = parent->parentItem()) {
       if (!parent->property("contentY").isValid() || !parent->property("contentHeight").isValid()) continue;
       const auto rect = item->mapRectToItem(parent, item->boundingRect());
       if (rect.top() < 0 || rect.bottom() > parent->height()) {
         const auto maximum = std::max(0.0, parent->property("contentHeight").toDouble() - parent->height());
         parent->setProperty("contentY", std::clamp(parent->property("contentY").toDouble() + rect.top() - 24.0, 0.0, maximum));
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        if (!item || !parent)
+          return false;
       }
     }
     return click(view, item);
