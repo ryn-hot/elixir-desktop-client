@@ -1321,6 +1321,8 @@ private slots:
       {"setup_query_reused_for_install", reusedPreparedQuery},
       {"first_run_controls_to_checked_page_ms", m_customerFirstPageMs},
       {"consent_to_checked_page_ms", m_customerConsentPageMs},
+      {"consent_to_protection_observed_ms", m_customerConsentProtectionMs},
+      {"protection_observed_to_checked_page_ms", m_customerProtectionPageMs},
       {"excludes", "native invocation, transport attestation, public discovery, real billing, playback, latency and scale"}};
     std::fprintf(stdout, "ELIXIR_MARKETPLACE_INSTALLATION_UI_RESULT %s\n",
       QJsonDocument(result).toJson(QJsonDocument::Compact).constData());
@@ -1388,12 +1390,18 @@ private:
     }, std::min(20000, remaining())));
     QVERIFY(progress("provider_first_run_consent_saved"));
     bool failed = false;
+    qint64 protectionObserved = -1;
     QVERIFY(until([&] {
       const auto phase = client.marketplaceSearch().value("phase").toString();
       const auto startup = client.marketplaceSettings().value("startup").toMap();
       failed = phase == "unavailable" || phase == "stale"
           || (client.marketplaceSettings().value("runtime_fresh").toBool()
               && !startup.value("retry_owner_present").toBool());
+      if (protectionObserved < 0 && preparation->property("connected").toBool()) {
+        protectionObserved = elapsed.elapsed();
+        failed |= !progress("provider_first_run_protection_observed", -1,
+                            protectionObserved - consentStarted, protectionObserved);
+      }
       return failed || preparation->property("firstResultsReady").toBool();
     }, remaining()));
     QVERIFY2(!failed, "original provider/setup checks became unavailable; do not retry the fixture");
@@ -1409,6 +1417,9 @@ private:
     QVERIFY(QFile::setPermissions(capture, QFileDevice::ReadOwner | QFileDevice::WriteOwner));
     m_customerFirstPageMs = elapsed.elapsed();
     m_customerConsentPageMs = m_customerFirstPageMs - consentStarted;
+    QVERIFY(protectionObserved >= consentStarted && protectionObserved <= m_customerFirstPageMs);
+    m_customerConsentProtectionMs = protectionObserved - consentStarted;
+    m_customerProtectionPageMs = m_customerFirstPageMs - protectionObserved;
     QVERIFY(progress("provider_first_run_checked_page", -1, m_customerConsentPageMs, m_customerFirstPageMs));
     m_customerPrepared = true;
   }
@@ -1932,6 +1943,8 @@ private:
   QString m_customerPreparedQuery;
   qint64 m_customerFirstPageMs = -1;
   qint64 m_customerConsentPageMs = -1;
+  qint64 m_customerConsentProtectionMs = -1;
+  qint64 m_customerProtectionPageMs = -1;
 };
 
 int main(int argc, char **argv) {

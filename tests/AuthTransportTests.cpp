@@ -993,6 +993,11 @@ private slots:
         QCOMPARE(server.countPath("/api/v1/marketplace/installations"),0);
         client.startMarketplaceInstallation(extension,release,"Exact target");
         client.startMarketplaceInstallation(extension,release,"Do not queue another");
+        // The server can accept the selected query before its browse receipt
+        // expires. Removing the browse state while awaiting the response must
+        // not replace or invalidate the original installation request.
+        client.clearMarketplaceSearch();
+        QVERIFY(client.marketplaceSearch().isEmpty());
         QTRY_VERIFY_WITH_TIMEOUT(!client.marketplaceInstallationLoading(),5000);
         QCOMPARE(server.countPath("/api/v1/marketplace/installations"),1);
         QCOMPARE(start.value("query_id").toString(),kMarketplaceQueryId);
