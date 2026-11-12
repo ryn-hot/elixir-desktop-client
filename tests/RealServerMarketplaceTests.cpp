@@ -1127,8 +1127,11 @@ private slots:
     bool setupQueryReplaced = false;
     bool reusedPreparedQuery = false;
     const auto watchSetup = connect(&client, &ApiClient::marketplaceSearchChanged, &client, [&] {
-      if (m_customerSetup && !reusedPreparedQuery &&
-          client.marketplaceSearch().value("query_id").toString() != m_customerPreparedQuery)
+      // Expiry hides the ID in the stale presentation; that is not a new
+      // search and does not undo an already accepted installation request.
+      const auto queryId = client.marketplaceSearch().value("query_id").toString();
+      if (m_customerSetup && !reusedPreparedQuery && !queryId.isEmpty()
+          && queryId != m_customerPreparedQuery)
         setupQueryReplaced = true;
     });
 
@@ -1266,13 +1269,23 @@ private slots:
       }
       if (!m_catalogInstallation)
         QVERIFY(installationClick(view, root, "marketplaceUnqualifiedConsent"));
+      if (m_customerSetup && n == 0) {
+        QVERIFY(!setupQueryReplaced);
+        QCOMPARE(client.marketplaceSearch().value("query_id").toString(),
+                 m_customerPreparedQuery);
+      }
       QVERIFY(installationClick(view, root, "marketplaceStartInstallation"));
       QVERIFY(progress("installation_review_started", n));
       QVERIFY(installationPhase(client, "awaiting_approval", remaining()));
       if (m_customerSetup && n == 0) {
         QVERIFY(!setupQueryReplaced);
-        QCOMPARE(client.marketplaceSearch().value("query_id").toString(),
-                 m_customerPreparedQuery);
+        // Require the actual server request to carry the checked first-page
+        // query even if the browse receipt expired during package review.
+        const auto initial = client.marketplaceInstallation().value("initial_request").toMap();
+        QCOMPARE(initial.value("query_id").toString(), m_customerPreparedQuery);
+        QCOMPARE(initial.value("extension_id").toString(), m_exact);
+        QCOMPARE(initial.value("release_id").toString(), m_releases.at(n));
+        QVERIFY(!initial.contains("direct_reference") && !initial.contains("upload_source"));
         reusedPreparedQuery = true;
         disconnect(watchSetup);
         QVERIFY(progress("installation_review_used_prepared_page", n));
