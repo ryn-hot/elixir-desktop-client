@@ -1102,28 +1102,35 @@ private slots:
     if (m_customerSetup) {
       prepareCustomerProvider(client, std::min(600000, remaining()));
       QVERIFY(m_customerPrepared);
+      QCOMPARE(client.marketplaceSearch().value("query_id").toString(),
+               m_customerPreparedQuery);
+    } else {
+      // This entry point starts without a prepared setup page.
+      client.startMarketplaceSearch(m_exact, {});
+      qint64 nextPoll = 0;
+      bool sourceFailed = false;
+      QVERIFY(until([&] {
+        const auto phase = client.marketplaceSearch().value("phase").toString();
+        sourceFailed = phase == "unavailable" || phase == "stale";
+        if (sourceFailed || (phase == "ready" && !client.marketplaceSearchLoading()))
+          return true;
+        if (original.elapsed() >= nextPoll && !client.marketplaceSearchLoading()) {
+          nextPoll = original.elapsed() + 1000;
+          client.pollMarketplaceSearch();
+        }
+        return false;
+      }, std::min(600000, remaining())));
+      QVERIFY(!sourceFailed && checkedCards(client));
     }
-    // Use the normal client's canonical search request, not a custom HTTP body.
-    // A card prepares discovery only; installation still checks independently.
-    client.startMarketplaceSearch(m_exact, {});
-    qint64 nextPoll = 0;
-    bool sourceFailed = false;
-    QVERIFY(until([&] {
-      const auto phase = client.marketplaceSearch().value("phase").toString();
-      sourceFailed = phase == "unavailable" || phase == "stale";
-      if (sourceFailed)
-        return true;
-      if (phase == "ready" && !client.marketplaceSearchLoading())
-        return true;
-      if (original.elapsed() >= nextPoll && !client.marketplaceSearchLoading()) {
-        nextPoll = original.elapsed() + 1000;
-        client.pollMarketplaceSearch();
-      }
-      return false;
-    }, std::min(600000, remaining())));
-    QVERIFY(!sourceFailed && checkedCards(client));
     QCOMPARE(client.marketplaceSearchResults().size(), 1);
     QVERIFY(progress("installation_first_card_verified"));
+    bool setupQueryReplaced = false;
+    bool reusedPreparedQuery = false;
+    const auto watchSetup = connect(&client, &ApiClient::marketplaceSearchChanged, &client, [&] {
+      if (m_customerSetup && !reusedPreparedQuery &&
+          client.marketplaceSearch().value("query_id").toString() != m_customerPreparedQuery)
+        setupQueryReplaced = true;
+    });
 
     QQuickView view;
     view.resize(1100, 900);
@@ -1155,11 +1162,23 @@ private slots:
           QVERIFY(progress("catalog_update_requested", n));
           QVERIFY(until([&] { return catalogAdvanceReady(); }, std::min(60000, remaining())));
         }
-        auto *text = visualItem(root, "communitySearchText");
-        qint64 frame = -1;
-        QVERIFY(text && type(view, text, m_exact, frame));
-        QVERIFY(installationClick(view, root, "communitySearchButton"));
-        QVERIFY(catalogSearchReady(client, std::min(180000, remaining())));
+        if (m_customerSetup && n == 0) {
+          // Open the shipped browse view with the original checked setup page.
+          // It may still be preparing other entries; don't force a second query.
+          QVERIFY(until([&] {
+            return setupQueryReplaced || (root->property("initialRequestAttempted").toBool()
+                && checkedCards(client) && cardFrame(view, root, client.marketplaceSearchResults()));
+          }, std::min(10000, remaining())));
+          QVERIFY(!setupQueryReplaced);
+          QCOMPARE(client.marketplaceSearch().value("query_id").toString(),
+                   m_customerPreparedQuery);
+        } else {
+          auto *text = visualItem(root, "communitySearchText");
+          qint64 frame = -1;
+          QVERIFY(text && type(view, text, m_exact, frame));
+          QVERIFY(installationClick(view, root, "communitySearchButton"));
+          QVERIFY(catalogSearchReady(client, std::min(180000, remaining())));
+        }
         if (n == 1 && client.marketplaceSearchResults().first().toMap()
                           .value("release_id").toString() == m_releases.first()) {
           // One normal continuation asks community peers after the local card.
@@ -1250,6 +1269,14 @@ private slots:
       QVERIFY(installationClick(view, root, "marketplaceStartInstallation"));
       QVERIFY(progress("installation_review_started", n));
       QVERIFY(installationPhase(client, "awaiting_approval", remaining()));
+      if (m_customerSetup && n == 0) {
+        QVERIFY(!setupQueryReplaced);
+        QCOMPARE(client.marketplaceSearch().value("query_id").toString(),
+                 m_customerPreparedQuery);
+        reusedPreparedQuery = true;
+        disconnect(watchSetup);
+        QVERIFY(progress("installation_review_used_prepared_page", n));
+      }
       auto *automatic = visualItem(root, "marketplaceAutomaticUpdates");
       QVERIFY(automatic && !automatic->property("checked").toBool());
       QVERIFY(installationClick(view, root, "marketplaceApproveInstallation"));
@@ -1278,6 +1305,7 @@ private slots:
       {"catalog_cards_used", m_catalogInstallation}, {"developer_reference_used", !m_catalogInstallation},
       {"catalog_continuation_used", catalogContinuation},
       {"customer_first_run_completed", m_customerPrepared},
+      {"setup_query_reused_for_install", reusedPreparedQuery},
       {"first_run_controls_to_checked_page_ms", m_customerFirstPageMs},
       {"consent_to_checked_page_ms", m_customerConsentPageMs},
       {"excludes", "native invocation, transport attestation, public discovery, real billing, playback, latency and scale"}};
@@ -1290,6 +1318,7 @@ private slots:
 private:
   void prepareCustomerProvider(ApiClient &client, int budget) {
     m_customerPrepared = false;
+    m_customerPreparedQuery.clear();
     QVERIFY(budget > 0);
     QElapsedTimer elapsed; elapsed.start();
     const auto remaining = [&] { return int(std::max<qint64>(0, budget - elapsed.elapsed())); };
@@ -1357,6 +1386,9 @@ private:
     QVERIFY2(!failed, "original provider/setup checks became unavailable; do not retry the fixture");
     QVERIFY(checkedCards(client) && !client.marketplaceSearchResults().isEmpty());
     QVERIFY(preparation->property("connected").toBool());
+    QVERIFY(preparation->property("firstPage").toBool());
+    m_customerPreparedQuery = client.marketplaceSearch().value("query_id").toString();
+    QVERIFY(!m_customerPreparedQuery.isEmpty());
     QCOMPARE(client.marketplaceSettings().value("settings").toMap().value("preferences").toMap()
                  .value("contribution").toString(), QString("off"));
     const auto capture = m_directory + "/provider-first-checked-page.png";
@@ -1884,6 +1916,7 @@ private:
   bool m_catalogInstallation = false;
   bool m_customerSetup = false;
   bool m_customerPrepared = false;
+  QString m_customerPreparedQuery;
   qint64 m_customerFirstPageMs = -1;
   qint64 m_customerConsentPageMs = -1;
 };
