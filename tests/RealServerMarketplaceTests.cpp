@@ -1170,8 +1170,10 @@ private slots:
           // The owner of the ORIGINAL private host advances its signed head.
           // This marker coordinates the test only; the server still verifies
           // the real catalog card/source and every installation independently.
+          // Use the existing overall deadline: this fixture waits for a new
+          // publisher source review and activation, not a customer request.
           QVERIFY(progress("catalog_update_requested", n));
-          QVERIFY(until([&] { return catalogAdvanceReady(); }, std::min(60000, remaining())));
+          QVERIFY(until([&] { return catalogAdvanceReady(); }, remaining()));
         }
         if (m_customerSetup && n == 0) {
           // Open the shipped browse view with the original checked setup page.

@@ -145,11 +145,6 @@ Item {
                 enabled: root.active && root.canManage && !settingsEditor.busy && !settingsEditor.dirty
                 onClicked: root.retry()
             }
-            ActionButton {
-                objectName: "marketplaceSetupLater"; text: "Use Elixir for now"
-                Layout.fillWidth: true; enabled: root.active
-                onClicked: root.requestFinish("home")
-            }
             MarketplaceSettingsView {
                 id: settingsEditor
                 Layout.fillWidth: true
@@ -164,12 +159,12 @@ Item {
             Item { Layout.preferredHeight: 16 }
         }
     }
-    // Keep the prepared page's action on screen rather than below the lengthy
-    // participation disclosures. This changes layout only, not readiness.
+    // Keep both ways forward on screen while the owner scrolls the disclosures
+    // or waits for peers. Deferring never changes the marketplace decision.
     Rectangle {
         id: browseFooter
         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-        visible: root.offered
+        visible: root.active
         height: footerContent.implicitHeight + 24
         color: Theme.appBg
         Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.border }
@@ -180,23 +175,30 @@ Item {
             spacing: 8
             Label {
                 objectName: "marketplaceSetupReadiness"
+                visible: root.offered
                 Layout.fillWidth: true; textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Theme.textSecondary
                 text: root.canBrowse
                     ? "Checked listings are ready to browse. Remaining checks may continue in the background. This is not a complete network scan."
-                    : settingsEditor.browseNeedsRetry || settingsEditor.browseRecovering ? settingsEditor.browseSummary
+                    : root.canPrepare ? settingsEditor.browseSummary
                     : "Save your participation choice and wait for protected browsing to prepare, or use Elixir for now. An empty page does not prove the marketplace is fully synchronized."
             }
             ActionButton {
                 objectName: "marketplaceSetupRetryBrowse"; text: "Retry browse checks"
-                visible: settingsEditor.browseNeedsRetry
+                visible: root.offered && settingsEditor.browseNeedsRetry
                 Layout.fillWidth: true; enabled: root.canRetryBrowse
                 onClicked: root.retryBrowse()
             }
             ActionButton {
                 objectName: "marketplaceSetupBrowse"; text: "Open marketplace"
+                visible: root.offered
                 variant: "primary"
                 Layout.fillWidth: true; enabled: root.canBrowse
                 onClicked: root.requestFinish("browse")
+            }
+            ActionButton {
+                objectName: "marketplaceSetupLater"; text: "Use Elixir for now"
+                Layout.fillWidth: true; enabled: root.active
+                onClicked: root.requestFinish("home")
             }
         }
     }

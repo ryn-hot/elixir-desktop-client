@@ -428,9 +428,19 @@ TestCase {
     function test_native_sequence_packaging_and_compact_controls() {
         var view=createView(360,640)
         reply(snapshot("auto",false,true)); tryCompare(view,"offered",true)
+        reply(snapshot("off",false,true)); tryCompare(client,"searchStarts",1)
+        client.marketplaceSearchLoading=false
+        client.marketplaceSearch={phase:"checking",query_id:"same-checked-page",query:{text:"",tags:[],limit:20},
+            preparation:progress("discovering")}
+        var later=findChild(view,"marketplaceSetupLater")
+        var status=findChild(view,"marketplaceSetupReadiness")
+        tryCompare(status,"text","Checking available extensions…")
+        verify(later.enabled && later.visible)
+        verify(later.mapToItem(view,0,0).y+later.height<=view.height,"deferring must stay visible while checking")
+        compare(view.canBrowse,false)
         client.marketplaceSearch=marketplacePreparedSearchFixture
         client.marketplaceSearchLoading=false; client.marketplaceSearchAvailableCount=2
-        reply(snapshot("off",false,true)); tryCompare(view,"canBrowse",true)
+        tryCompare(view,"canBrowse",true)
         var bundled=Qt.createComponent("qrc:/qml/views/InitialHomeView.qml")
         compare(bundled.status,Component.Ready,bundled.errorString())
         var main=Qt.createComponent("qrc:/qml/main.qml")
@@ -440,7 +450,6 @@ TestCase {
             var control=findChild(view,name)
             verify(control.width<=view.width,name+" overflows")
         }
-        var later=findChild(view,"marketplaceSetupLater")
         verify(later.mapToItem(view,0,0).y+later.height<=view.height,"deferring must be reachable without scrolling through setup")
         var image=grabImage(view)
         verify(image.width>0&&image.height>0)
