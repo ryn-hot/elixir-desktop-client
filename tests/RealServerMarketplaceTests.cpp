@@ -4,6 +4,7 @@
 #include "backend/ApiClient.h"
 
 #include <QColor>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -932,7 +933,7 @@ private slots:
       QVERIFY(progress("warm_started", n));
       QVERIFY(measure(
           client, view, root, [&] { return click(view, button); }, "", {}, 20,
-          sample));
+          sample, "warm"));
       QVERIFY(sample.firstFrameMs >= 0);
       firstFrames.append(sample.firstFrameMs);
       fullQueries.append(sample.readyMs);
@@ -1488,7 +1489,8 @@ private:
 
   bool measure(ApiClient &client, QQuickView &view, QObject *root,
                const std::function<bool()> &trigger, const QString &text,
-               const QStringList &tags, int count, Sample &sample) {
+               const QStringList &tags, int count, Sample &sample,
+               const char *timingArm = nullptr) {
     const auto fail = [&](const char *reason, qint64 elapsedMs) {
       const auto phase = client.marketplaceSearch().value("phase").toString();
       const auto known = QStringList{"checking", "ready", "unavailable", "stale"};
@@ -1515,6 +1517,48 @@ private:
     const auto old = client.marketplaceSearch().value("query_id").toString();
     QElapsedTimer elapsed;
     elapsed.start();
+    // Diagnostic only on the protected fixture executable. Capture the
+    // existing model notifications; do not add polls or alter their cadence.
+    const bool tracePolls = timingArm &&
+        qEnvironmentVariableIntValue("ELIXIR_MARKETPLACE_SEARCH_PAIR_TIMING") == 1;
+    QString traceQuery;
+    QJsonArray reads;
+    qint64 nextRead = -1;
+    bool traceIncomplete = false;
+    QObject traceScope;
+    if (tracePolls) {
+      QObject::connect(&client, &ApiClient::marketplaceSearchChanged, &traceScope, [&] {
+        const auto response = client.marketplaceSearch();
+        const auto id = response.value("query_id").toString();
+        if (id.isEmpty() || id == old || traceIncomplete)
+          return;
+        if (traceQuery.isEmpty())
+          traceQuery = id;
+        if (traceQuery != id) {
+          traceIncomplete = true;
+          return;
+        }
+        const auto now = elapsed.nsecsElapsed() / 1000;
+        if (client.marketplaceSearchLoading()) {
+          if (nextRead < 0)
+            nextRead = now;
+          return;
+        }
+        if (!reads.isEmpty() && nextRead < 0)
+          return; // Unrelated presentation notification, not a settled read.
+        const auto phase = response.value("phase").toString();
+        const int cards = client.marketplaceSearchAvailableCount();
+        if (reads.size() == 8 || cards < 0 || cards > 20 ||
+            (phase != "checking" && phase != "ready")) {
+          traceIncomplete = true;
+          return;
+        }
+        // The initial GET begins before the query ID reaches the model.
+        reads.append(QJsonObject{{"begin_us", nextRead}, {"end_us", now},
+                                 {"phase", phase}, {"cards", cards}});
+        nextRead = -1;
+      });
+    }
     if (!trigger())
       return fail("trigger_failed", elapsed.elapsed());
     const char *failure = nullptr;
@@ -1588,6 +1632,21 @@ private:
       return fail(failure, elapsed.elapsed());
     if (!finished || sample.readyMs < 0 || (count > 0 && sample.firstFrameMs < 0))
       return fail("query_or_frame_timeout", elapsed.elapsed());
+    if (tracePolls && !traceQuery.isEmpty()) {
+      // Hash the synthetic query nonce for offline joins. No input, path,
+      // publisher, token or raw ID reaches the desktop progress file.
+      const auto key = QCryptographicHash::hash(traceQuery.toUtf8(), QCryptographicHash::Sha256).toHex();
+      const auto event = QJsonObject{{"stage", "desktop_search_poll_timing"},
+                                     {"arm", QString::fromLatin1(timingArm)},
+                                     {"query_hash", QString::fromLatin1(key)},
+                                     {"first_frame_ms", sample.firstFrameMs},
+                                     {"ready_ms", sample.readyMs},
+                                     {"incomplete", traceIncomplete || nextRead >= 0},
+                                     {"reads", reads}};
+      const auto bytes = QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n';
+      if (m_progress.write(bytes) != bytes.size() || !m_progress.flush())
+        return fail("poll_timing_write_failed", elapsed.elapsed());
+    }
     return true;
   }
 
@@ -1762,7 +1821,8 @@ private:
       if (busy) {
         for (int n = 0; n < 32; ++n) {
           Sample sample;
-          if (!measure(client, view, root, [&] { return click(view, button); }, "", {}, 20, sample)) return false;
+          if (!measure(client, view, root, [&] { return click(view, button); }, "", {}, 20,
+                       sample, "loaded")) return false;
           loadedFrames.append(sample.firstFrameMs); loadedQueries.append(sample.readyMs);
           if (n % 8 == 7 && !fetchSegments(timing.segments.size() + 1)) return false;
         }
